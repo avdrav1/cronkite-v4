@@ -1,0 +1,831 @@
+# Cronkite Add Feed — Replit Prompt
+
+Build an **Add Feed modal/page** with two methods:
+1. **Browse** — Discover feeds from a curated directory (Awesome RSS Feeds)
+2. **Custom URL** — Paste any RSS/Atom feed URL
+
+Both flows end with folder assignment and priority selection.
+
+---
+
+## Modal Layout
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                                                             ✕   │
+│  Add Feed                                                       │
+│                                                                 │
+│  ┌─────────────────────────┬─────────────────────────┐         │
+│  │      📚 Browse          │      🔗 Custom URL      │         │  ← Tab toggle
+│  └─────────────────────────┴─────────────────────────┘         │
+│                                                                 │
+│  ┌───────────────────────────────────────────────────────────┐ │
+│  │                                                           │ │
+│  │              [Tab content here]                           │ │
+│  │                                                           │ │
+│  └───────────────────────────────────────────────────────────┘ │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Design Tokens
+
+```css
+--bg: #FAFAF9;
+--card: #FFFFFF;
+--card-hover: #F5F5F4;
+--primary: #4F46E5;
+--primary-light: #EEF2FF;
+--accent: #F97316;
+--success: #10B981;
+--text: #18181B;
+--text-muted: #71717A;
+--border: #E4E4E7;
+```
+
+---
+
+## Tab 1: Browse Feeds
+
+### Layout
+```
+┌───────────────────────────────────────────────────────────────┐
+│                                                               │
+│  ┌─────────────────────────────────────────────────────────┐ │
+│  │ 🔍 Search feeds...                                      │ │
+│  └─────────────────────────────────────────────────────────┘ │
+│                                                               │
+│  Categories                                                   │
+│  ┌───────┐ ┌───────┐ ┌───────┐ ┌───────┐ ┌───────┐ ┌──────┐ │
+│  │ All   │ │ Tech  │ │ News  │ │ Dev   │ │ Fun   │ │ More │ │
+│  └───────┘ └───────┘ └───────┘ └───────┘ └───────┘ └──────┘ │
+│                                                               │
+│  ─────────────────────────────────────────────────────────── │
+│                                                               │
+│  Tech (24 feeds)                                              │
+│  ┌─────────────────────────────────────────────────────────┐ │
+│  │ ┌─────────────────────────┐ ┌─────────────────────────┐ │ │
+│  │ │ TechCrunch              │ │ Ars Technica            │ │ │
+│  │ │ Startup and tech news   │ │ Tech, science, culture  │ │ │
+│  │ │ ~15/day     [+ Add]     │ │ ~12/day     [+ Add]     │ │ │
+│  │ └─────────────────────────┘ └─────────────────────────┘ │ │
+│  │ ┌─────────────────────────┐ ┌─────────────────────────┐ │ │
+│  │ │ The Verge               │ │ Wired                   │ │ │
+│  │ │ Tech and culture        │ │ In-depth coverage       │ │ │
+│  │ │ ~20/day     [+ Add]     │ │ ~10/day     [+ Add]     │ │ │
+│  │ └─────────────────────────┘ └─────────────────────────┘ │ │
+│  └─────────────────────────────────────────────────────────┘ │
+│                                                               │
+│  News (18 feeds)                                              │
+│  ┌─────────────────────────────────────────────────────────┐ │
+│  │ ...                                                     │ │
+│  └─────────────────────────────────────────────────────────┘ │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
+```
+
+### Category Pills
+
+Horizontal scrollable row of category filters:
+
+```typescript
+const CATEGORIES = [
+  { id: 'all', label: 'All', icon: '📋' },
+  { id: 'tech', label: 'Tech', icon: '📱' },
+  { id: 'news', label: 'News', icon: '📰' },
+  { id: 'dev', label: 'Dev', icon: '💻' },
+  { id: 'science', label: 'Science', icon: '🔬' },
+  { id: 'gaming', label: 'Gaming', icon: '🎮' },
+  { id: 'business', label: 'Business', icon: '💼' },
+  { id: 'entertainment', label: 'Entertainment', icon: '🎬' },
+  { id: 'sports', label: 'Sports', icon: '⚽' },
+  { id: 'lifestyle', label: 'Lifestyle', icon: '✨' },
+  { id: 'regional', label: 'Regional', icon: '🌍' },
+];
+```
+
+**Pill States:**
+| State | Style |
+|-------|-------|
+| Default | White bg, border, muted text |
+| Hover | Light gray bg |
+| Selected | Indigo bg, white text |
+
+### Feed Card (Browse)
+
+```
+┌─────────────────────────────────────────┐
+│                                         │
+│  TechCrunch                             │  ← 16px semibold
+│  techcrunch.com                         │  ← 13px muted, truncated domain
+│                                         │
+│  Startup and technology news,           │  ← 14px, 2 lines max
+│  covering Silicon Valley and beyond     │
+│                                         │
+│  ~15 articles/day                       │  ← 13px muted
+│                                         │
+│  [+ Add]                                │  ← Primary button (small)
+│                                         │
+└─────────────────────────────────────────┘
+```
+
+**Card States:**
+
+| State | Visual |
+|-------|--------|
+| Default | White card, subtle border |
+| Hover | Lift 2px, stronger shadow |
+| Already Added | Grayed out, "✓ Added" badge, no button |
+
+### Search Behavior
+
+- Filter feeds by name and description
+- Debounced (300ms)
+- Show "No feeds found" if empty
+- Clear button (✕) when text present
+
+### Quick Add Flow
+
+When user clicks **[+ Add]**:
+
+1. Button changes to spinner briefly
+2. Show inline success: "✓ Added to Tech folder"
+3. Card becomes grayed with "✓ Added" badge
+4. Toast notification: "TechCrunch added to your feeds"
+
+**Or** open a quick config popover:
+
+```
+┌─────────────────────────────────────┐
+│  Add TechCrunch                     │
+│                                     │
+│  Folder: [Tech ▼]                   │
+│  Priority: ○ High ● Med ○ Low       │
+│                                     │
+│  [Cancel]  [Add Feed]               │
+└─────────────────────────────────────┘
+```
+
+---
+
+## Tab 2: Custom URL
+
+### Layout
+```
+┌───────────────────────────────────────────────────────────────┐
+│                                                               │
+│  Add any RSS or Atom feed                                     │
+│                                                               │
+│  Feed URL                                                     │
+│  ┌─────────────────────────────────────────────────────────┐ │
+│  │ https://                                                │ │
+│  └─────────────────────────────────────────────────────────┘ │
+│  Paste an RSS, Atom, or JSON Feed URL                        │
+│                                                               │
+│  [Validate Feed]                                              │
+│                                                               │
+│  ─────────────────────────────────────────────────────────── │
+│                                                               │
+│  💡 Tips:                                                     │
+│  • Most blogs have /feed or /rss in the URL                  │
+│  • Try adding /feed.xml or /rss.xml to any site              │
+│  • YouTube channels: youtube.com/feeds/videos.xml?channel_id=│
+│  • Reddit: add .rss to any subreddit URL                     │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
+```
+
+### Validation States
+
+**Validating:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│ https://example.com/feed.xml                                │
+└─────────────────────────────────────────────────────────────┘
+🔄 Checking feed...
+```
+
+**Valid Feed Found:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│ https://example.com/feed.xml                            ✓   │
+└─────────────────────────────────────────────────────────────┘
+
+✅ Valid RSS feed found!
+
+┌─────────────────────────────────────────────────────────────┐
+│                                                             │
+│  Preview                                                    │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │                                                     │   │
+│  │  Example Blog                          RSS 2.0      │   │
+│  │  example.com                                        │   │
+│  │                                                     │   │
+│  │  "A blog about interesting things"                  │   │
+│  │                                                     │   │
+│  │  Last updated: 2 hours ago                          │   │
+│  │  ~8 articles in feed                                │   │
+│  │                                                     │   │
+│  │  Recent articles:                                   │   │
+│  │  • How to Build Better Products                     │   │
+│  │  • The Future of AI in 2025                         │   │
+│  │  • Why Design Systems Matter                        │   │
+│  │                                                     │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                             │
+│  Feed Name                                                  │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ Example Blog                          (auto-filled) │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                             │
+│  Folder                                                     │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ Select folder...                                 ▼  │   │
+│  └─────────────────────────────────────────────────────┘   │
+│  [+ Create new folder]                                      │
+│                                                             │
+│  Priority                                                   │
+│  ○ High    ● Medium    ○ Low                               │
+│  Affects card size in masonry view                          │
+│                                                             │
+│                                      [Cancel]  [Add Feed]   │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Invalid URL:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│ https://example.com/notafeed                            ✕   │
+└─────────────────────────────────────────────────────────────┘
+
+❌ No valid feed found at this URL
+
+Try:
+• Check if the URL is correct
+• Look for an RSS icon on the website
+• Try adding /feed or /rss to the URL
+```
+
+**Already Subscribed:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│ https://techcrunch.com/feed/                            ⚠   │
+└─────────────────────────────────────────────────────────────┘
+
+⚠️ You're already subscribed to this feed
+
+TechCrunch is in your "Tech" folder.
+[Go to Feed Settings →]
+```
+
+---
+
+## Feed Discovery (Auto-detect)
+
+When user pastes a website URL (not a feed URL):
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ https://arstechnica.com                                     │
+└─────────────────────────────────────────────────────────────┘
+🔄 Looking for feeds...
+
+┌─────────────────────────────────────────────────────────────┐
+│                                                             │
+│  Found 3 feeds on this site:                                │
+│                                                             │
+│  ○ Ars Technica - All Content                              │
+│    feeds.arstechnica.com/arstechnica/index                  │
+│                                                             │
+│  ○ Ars Technica - Tech Policy                              │
+│    feeds.arstechnica.com/arstechnica/tech-policy            │
+│                                                             │
+│  ○ Ars Technica - Gaming                                   │
+│    feeds.arstechnica.com/arstechnica/gaming                 │
+│                                                             │
+│  [Use Selected]                                             │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Awesome RSS Feeds Data
+
+Source: https://github.com/plenaryapp/awesome-rss-feeds
+
+### Data Structure
+
+```typescript
+interface AwesomeFeed {
+  id: string;
+  name: string;
+  url: string;
+  domain: string;
+  description: string;
+  category: string;
+  subcategory?: string;
+  country?: string;        // For regional news
+  language?: string;
+  articlesPerDay?: number; // Estimated
+  tags?: string[];
+}
+
+interface Category {
+  id: string;
+  name: string;
+  icon: string;
+  feedCount: number;
+}
+```
+
+### Sample Feed Data
+
+```typescript
+const AWESOME_FEEDS: AwesomeFeed[] = [
+  // Tech
+  {
+    id: 'techcrunch',
+    name: 'TechCrunch',
+    url: 'https://techcrunch.com/feed/',
+    domain: 'techcrunch.com',
+    description: 'Startup and technology news, covering Silicon Valley and beyond',
+    category: 'tech',
+    articlesPerDay: 15,
+    tags: ['startups', 'silicon valley', 'funding'],
+  },
+  {
+    id: 'arstechnica',
+    name: 'Ars Technica',
+    url: 'https://feeds.arstechnica.com/arstechnica/index',
+    domain: 'arstechnica.com',
+    description: 'Technology, science, and culture news and analysis',
+    category: 'tech',
+    articlesPerDay: 12,
+    tags: ['science', 'culture', 'analysis'],
+  },
+  {
+    id: 'theverge',
+    name: 'The Verge',
+    url: 'https://www.theverge.com/rss/index.xml',
+    domain: 'theverge.com',
+    description: 'Technology, science, art, and culture',
+    category: 'tech',
+    articlesPerDay: 20,
+    tags: ['gadgets', 'culture', 'reviews'],
+  },
+  {
+    id: 'wired',
+    name: 'Wired',
+    url: 'https://www.wired.com/feed/rss',
+    domain: 'wired.com',
+    description: 'In-depth technology coverage and analysis',
+    category: 'tech',
+    articlesPerDay: 10,
+    tags: ['longform', 'analysis'],
+  },
+  {
+    id: 'hackernews',
+    name: 'Hacker News',
+    url: 'https://hnrss.org/frontpage',
+    domain: 'news.ycombinator.com',
+    description: 'Top stories from Hacker News',
+    category: 'tech',
+    articlesPerDay: 30,
+    tags: ['programming', 'startups', 'discussion'],
+  },
+
+  // Development
+  {
+    id: 'devto',
+    name: 'DEV Community',
+    url: 'https://dev.to/feed',
+    domain: 'dev.to',
+    description: 'Community of software developers',
+    category: 'dev',
+    articlesPerDay: 50,
+    tags: ['programming', 'tutorials', 'community'],
+  },
+  {
+    id: 'css-tricks',
+    name: 'CSS-Tricks',
+    url: 'https://css-tricks.com/feed/',
+    domain: 'css-tricks.com',
+    description: 'Tips, tricks, and techniques on CSS',
+    category: 'dev',
+    articlesPerDay: 3,
+    tags: ['css', 'frontend', 'tutorials'],
+  },
+  {
+    id: 'smashing',
+    name: 'Smashing Magazine',
+    url: 'https://www.smashingmagazine.com/feed/',
+    domain: 'smashingmagazine.com',
+    description: 'Web design and development articles',
+    category: 'dev',
+    articlesPerDay: 2,
+    tags: ['design', 'frontend', 'ux'],
+  },
+  {
+    id: 'github-blog',
+    name: 'GitHub Blog',
+    url: 'https://github.blog/feed/',
+    domain: 'github.blog',
+    description: 'Updates from GitHub',
+    category: 'dev',
+    articlesPerDay: 1,
+    tags: ['github', 'open source'],
+  },
+
+  // News
+  {
+    id: 'bbc-world',
+    name: 'BBC World News',
+    url: 'http://feeds.bbci.co.uk/news/world/rss.xml',
+    domain: 'bbc.com',
+    description: 'World news from the BBC',
+    category: 'news',
+    articlesPerDay: 50,
+    tags: ['world', 'breaking news'],
+  },
+  {
+    id: 'reuters',
+    name: 'Reuters',
+    url: 'https://www.reutersagency.com/feed/',
+    domain: 'reuters.com',
+    description: 'Breaking news and analysis',
+    category: 'news',
+    articlesPerDay: 60,
+    tags: ['breaking', 'global'],
+  },
+  {
+    id: 'npr',
+    name: 'NPR News',
+    url: 'https://feeds.npr.org/1001/rss.xml',
+    domain: 'npr.org',
+    description: 'National Public Radio news',
+    category: 'news',
+    articlesPerDay: 25,
+    tags: ['us news', 'public radio'],
+  },
+  {
+    id: 'ap-news',
+    name: 'Associated Press',
+    url: 'https://rsshub.app/apnews/topics/apf-topnews',
+    domain: 'apnews.com',
+    description: 'Top stories from AP',
+    category: 'news',
+    articlesPerDay: 40,
+    tags: ['breaking', 'wire service'],
+  },
+
+  // Science
+  {
+    id: 'nature',
+    name: 'Nature',
+    url: 'https://www.nature.com/nature.rss',
+    domain: 'nature.com',
+    description: 'Scientific research and discoveries',
+    category: 'science',
+    articlesPerDay: 8,
+    tags: ['research', 'journals'],
+  },
+  {
+    id: 'sci-american',
+    name: 'Scientific American',
+    url: 'http://rss.sciam.com/ScientificAmerican-Global',
+    domain: 'scientificamerican.com',
+    description: 'Science news for curious minds',
+    category: 'science',
+    articlesPerDay: 6,
+    tags: ['popular science', 'explainers'],
+  },
+  {
+    id: 'nasa',
+    name: 'NASA Breaking News',
+    url: 'https://www.nasa.gov/rss/dyn/breaking_news.rss',
+    domain: 'nasa.gov',
+    description: 'Space and astronomy news from NASA',
+    category: 'science',
+    subcategory: 'space',
+    articlesPerDay: 3,
+    tags: ['space', 'astronomy'],
+  },
+
+  // Gaming
+  {
+    id: 'kotaku',
+    name: 'Kotaku',
+    url: 'https://kotaku.com/rss',
+    domain: 'kotaku.com',
+    description: 'Gaming news and culture',
+    category: 'gaming',
+    articlesPerDay: 18,
+    tags: ['games', 'culture', 'reviews'],
+  },
+  {
+    id: 'ign',
+    name: 'IGN',
+    url: 'https://feeds.feedburner.com/ign/all',
+    domain: 'ign.com',
+    description: 'Video game news, reviews, and walkthroughs',
+    category: 'gaming',
+    articlesPerDay: 25,
+    tags: ['reviews', 'previews'],
+  },
+  {
+    id: 'polygon',
+    name: 'Polygon',
+    url: 'https://www.polygon.com/rss/index.xml',
+    domain: 'polygon.com',
+    description: 'Gaming and entertainment coverage',
+    category: 'gaming',
+    articlesPerDay: 15,
+    tags: ['games', 'entertainment'],
+  },
+
+  // Business
+  {
+    id: 'bloomberg',
+    name: 'Bloomberg',
+    url: 'https://feeds.bloomberg.com/markets/news.rss',
+    domain: 'bloomberg.com',
+    description: 'Financial and business news',
+    category: 'business',
+    articlesPerDay: 30,
+    tags: ['markets', 'finance'],
+  },
+  {
+    id: 'ft',
+    name: 'Financial Times',
+    url: 'https://www.ft.com/rss/home',
+    domain: 'ft.com',
+    description: 'World business and finance news',
+    category: 'business',
+    articlesPerDay: 20,
+    tags: ['finance', 'global'],
+  },
+
+  // Entertainment
+  {
+    id: 'variety',
+    name: 'Variety',
+    url: 'https://variety.com/feed/',
+    domain: 'variety.com',
+    description: 'Entertainment industry news',
+    category: 'entertainment',
+    articlesPerDay: 15,
+    tags: ['movies', 'tv', 'industry'],
+  },
+  {
+    id: 'pitchfork',
+    name: 'Pitchfork',
+    url: 'https://pitchfork.com/feed/feed-news/rss',
+    domain: 'pitchfork.com',
+    description: 'Music news and reviews',
+    category: 'entertainment',
+    subcategory: 'music',
+    articlesPerDay: 8,
+    tags: ['music', 'reviews', 'indie'],
+  },
+
+  // Regional News (examples)
+  {
+    id: 'bbc-us',
+    name: 'BBC US & Canada',
+    url: 'http://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml',
+    domain: 'bbc.com',
+    description: 'US and Canada news from BBC',
+    category: 'regional',
+    country: 'US',
+    articlesPerDay: 20,
+  },
+  {
+    id: 'guardian-uk',
+    name: 'The Guardian UK',
+    url: 'https://www.theguardian.com/uk/rss',
+    domain: 'theguardian.com',
+    description: 'UK news from The Guardian',
+    category: 'regional',
+    country: 'GB',
+    articlesPerDay: 30,
+  },
+  {
+    id: 'times-india',
+    name: 'Times of India',
+    url: 'https://timesofindia.indiatimes.com/rssfeedstopstories.cms',
+    domain: 'timesofindia.com',
+    description: 'Top stories from India',
+    category: 'regional',
+    country: 'IN',
+    articlesPerDay: 40,
+  },
+
+  // Fun / Lifestyle
+  {
+    id: 'lifehacker',
+    name: 'Lifehacker',
+    url: 'https://lifehacker.com/rss',
+    domain: 'lifehacker.com',
+    description: 'Tips and tricks for life',
+    category: 'lifestyle',
+    articlesPerDay: 12,
+    tags: ['productivity', 'tips'],
+  },
+  {
+    id: 'xkcd',
+    name: 'xkcd',
+    url: 'https://xkcd.com/rss.xml',
+    domain: 'xkcd.com',
+    description: 'A webcomic of romance, sarcasm, math, and language',
+    category: 'fun',
+    articlesPerDay: 0.5,
+    tags: ['comics', 'humor', 'science'],
+  },
+  {
+    id: 'the-onion',
+    name: 'The Onion',
+    url: 'https://www.theonion.com/rss',
+    domain: 'theonion.com',
+    description: 'America\'s finest news source (satire)',
+    category: 'fun',
+    articlesPerDay: 10,
+    tags: ['satire', 'humor'],
+  },
+];
+```
+
+---
+
+## Folder Selection
+
+Dropdown with existing folders + create new option:
+
+```
+┌─────────────────────────────────────────┐
+│ Select folder...                     ▼  │
+├─────────────────────────────────────────┤
+│ 📁 Tech                                 │
+│ 📁 News                                 │
+│ 📁 Gaming                               │
+│ 📁 Dev                                  │
+│ ─────────────────────────────────────── │
+│ ➕ Create new folder...                 │
+│ 📋 No folder (uncategorized)            │
+└─────────────────────────────────────────┘
+```
+
+### Create New Folder Inline
+
+```
+┌─────────────────────────────────────────┐
+│ New folder name:                        │
+│ ┌─────────────────────────────────────┐ │
+│ │ Science                             │ │
+│ └─────────────────────────────────────┘ │
+│ [Cancel] [Create]                       │
+└─────────────────────────────────────────┘
+```
+
+---
+
+## Priority Explanation
+
+```
+Priority affects how articles appear in the masonry view:
+
+○ High    — Large cards, top placement
+● Medium  — Standard cards (default)  
+○ Low     — Compact cards, fills gaps
+```
+
+Show a small visual preview:
+```
+High:    [████████]  Large card with image
+Medium:  [████]      Standard card
+Low:     [██]        Compact, title only
+```
+
+---
+
+## Success States
+
+### Single Feed Added (Browse)
+```
+┌────────────────────────────────────────┐
+│ ✓  TechCrunch added                    │
+│    Added to Tech folder                │
+└────────────────────────────────────────┘
+```
+Toast notification, auto-dismiss after 3s.
+
+### Single Feed Added (Custom)
+```
+✅ Feed added successfully!
+
+Example Blog has been added to your Science folder.
+We'll start fetching articles now.
+
+[Add Another]  [Go to Reader]
+```
+
+### Multiple Feeds Added (Browse, if batch select)
+```
+✓ 5 feeds added to your library
+  • TechCrunch → Tech
+  • Ars Technica → Tech  
+  • BBC News → News
+  • NPR → News
+  • xkcd → Fun
+```
+
+---
+
+## Error States
+
+| Error | Message |
+|-------|---------|
+| Invalid URL format | "Please enter a valid URL starting with http:// or https://" |
+| No feed found | "No RSS feed found at this URL. Try adding /feed or /rss to the path." |
+| Network error | "Couldn't reach this URL. Check your connection and try again." |
+| Already subscribed | "You're already subscribed to this feed (in Tech folder)" |
+| Feed parsing error | "Found a feed but couldn't read it. The format may be unsupported." |
+
+---
+
+## Component Structure
+
+```
+AddFeedModal/
+├── AddFeedModal.tsx          # Main container with tabs
+├── BrowseFeeds.tsx           # Browse tab content
+│   ├── CategoryPills.tsx     # Category filter row
+│   ├── FeedGrid.tsx          # Grid of feed cards
+│   └── BrowseFeedCard.tsx    # Individual feed card
+├── CustomURL.tsx             # Custom URL tab content
+│   ├── URLInput.tsx          # URL input with validation
+│   ├── FeedPreview.tsx       # Preview after validation
+│   └── FeedDiscovery.tsx     # Multi-feed selection
+├── FeedConfig.tsx            # Folder + priority selection
+│   ├── FolderSelect.tsx      # Folder dropdown
+│   └── PrioritySelect.tsx    # Priority radio group
+└── AddFeedSuccess.tsx        # Success state
+```
+
+---
+
+## Animations
+
+| Element | Animation |
+|---------|-----------|
+| Modal open | Fade in backdrop + scale up content |
+| Tab switch | Fade content (150ms) |
+| Feed cards | Stagger in (50ms delay each) |
+| Validation spinner | Rotate continuously |
+| Success checkmark | Scale up with overshoot |
+| Toast | Slide in from top-right |
+
+---
+
+## Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `Escape` | Close modal |
+| `Tab` | Navigate between tabs |
+| `/` | Focus search (in Browse) |
+| `Enter` | Submit URL (in Custom) |
+
+---
+
+## Mobile Responsive
+
+- Full-screen modal on mobile
+- Category pills horizontally scrollable
+- Feed cards stack vertically (1 column)
+- Sticky header with close button
+- Bottom sheet for folder/priority selection
+
+---
+
+## Summary
+
+Build an Add Feed modal with two approaches:
+
+**Browse Tab:**
+- Searchable, filterable grid of curated feeds
+- Category pills for quick filtering
+- One-click add with quick folder/priority popover
+- Visual feedback for already-added feeds
+
+**Custom URL Tab:**
+- URL input with real-time validation
+- Auto-detect feeds from website URLs
+- Rich preview (name, description, recent articles)
+- Folder and priority configuration
+- Create new folder inline
+
+Both flows should feel fast, give clear feedback, and handle errors gracefully.

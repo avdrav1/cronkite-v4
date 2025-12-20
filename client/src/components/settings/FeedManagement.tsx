@@ -1,0 +1,258 @@
+import { useState } from "react";
+import { MOCK_FEEDS, Feed } from "@/lib/mock-feeds";
+import { cn } from "@/lib/utils";
+import { 
+  Search, 
+  Plus, 
+  MoreVertical, 
+  Folder, 
+  ChevronDown, 
+  ChevronRight,
+  AlertTriangle,
+  Pause,
+  RefreshCw,
+  Trash2,
+  Edit2,
+  Play
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { formatDistanceToNow } from "date-fns";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+import { AddFeedModal } from "@/components/feed/AddFeedModal";
+
+export function FeedManagement() {
+  const [feeds, setFeeds] = useState<Feed[]>(MOCK_FEEDS);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [expandedFolders, setExpandedFolders] = useState<string[]>(['Tech', 'News', 'Gaming']);
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+
+  // Filter feeds based on search
+  const filteredFeeds = feeds.filter(feed => 
+    feed.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    feed.url.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  // Group by folder
+  const feedsByFolder: Record<string, Feed[]> = {};
+  filteredFeeds.forEach(feed => {
+    if (!feedsByFolder[feed.folder]) {
+      feedsByFolder[feed.folder] = [];
+    }
+    feedsByFolder[feed.folder].push(feed);
+  });
+
+  const toggleFolder = (folder: string) => {
+    setExpandedFolders(prev => 
+      prev.includes(folder) 
+        ? prev.filter(f => f !== folder) 
+        : [...prev, folder]
+    );
+  };
+
+  const getStatusColor = (status: Feed['status']) => {
+    switch (status) {
+      case 'active': return 'bg-emerald-500';
+      case 'paused': return 'bg-zinc-500';
+      case 'error': return 'bg-red-500';
+      default: return 'bg-zinc-500';
+    }
+  };
+
+  const getStatusIcon = (status: Feed['status']) => {
+    switch (status) {
+      case 'active': return null;
+      case 'paused': return <Pause className="h-4 w-4 text-zinc-500" />;
+      case 'error': return <AlertTriangle className="h-4 w-4 text-red-500" />;
+      default: return null;
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="p-6 border-b border-border">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+          <div>
+            <h2 className="text-2xl font-display font-bold">Feed Management</h2>
+            <p className="text-muted-foreground">Manage your subscriptions and organize feeds</p>
+          </div>
+          
+          <div className="flex items-center gap-3 w-full md:w-auto">
+            <div className="relative flex-1 md:w-64">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input 
+                placeholder="Search feeds..." 
+                className="pl-9 bg-muted/50"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+            <Button className="gap-2 bg-primary hover:bg-primary/90" onClick={() => setIsAddModalOpen(true)}>
+              <Plus className="h-4 w-4" /> Add Feed
+            </Button>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-6 text-sm text-muted-foreground">
+          <div className="font-medium text-foreground">{feeds.length} feeds total</div>
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+            {feeds.filter(f => f.status === 'active').length} active
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-zinc-500" />
+            {feeds.filter(f => f.status === 'paused').length} paused
+          </div>
+          <div className="flex items-center gap-2">
+             <span className="w-2 h-2 rounded-full bg-red-500" />
+            {feeds.filter(f => f.status === 'error').length} error
+          </div>
+        </div>
+      </div>
+
+      {/* Feed List */}
+      <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        {Object.entries(feedsByFolder).map(([folder, folderFeeds]) => {
+          const isExpanded = expandedFolders.includes(folder);
+          
+          return (
+            <div key={folder} className="space-y-2">
+              <button 
+                onClick={() => toggleFolder(folder)}
+                className="flex items-center gap-2 w-full text-left p-2 hover:bg-muted/50 rounded-lg group transition-colors"
+              >
+                {isExpanded ? (
+                  <ChevronDown className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-colors" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-colors" />
+                )}
+                <Folder className="h-4 w-4 text-primary fill-primary/10" />
+                <span className="font-semibold text-sm">{folder}</span>
+                <span className="text-xs text-muted-foreground">({folderFeeds.length} feeds)</span>
+              </button>
+
+              {isExpanded && (
+                <div className="pl-4 space-y-3">
+                  {folderFeeds.map(feed => (
+                    <div 
+                      key={feed.id} 
+                      className="group bg-card border border-border rounded-xl p-4 hover:shadow-md transition-all duration-200 hover:border-primary/20"
+                    >
+                      <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-3 mb-1">
+                            <div className={cn("w-2 h-2 rounded-full shrink-0", getStatusColor(feed.status))} />
+                            <h3 className="font-bold text-base truncate">{feed.name}</h3>
+                            {getStatusIcon(feed.status)}
+                            {feed.status === 'error' && (
+                              <span className="text-xs text-red-500 font-medium bg-red-500/10 px-2 py-0.5 rounded">
+                                {feed.errorMessage}
+                              </span>
+                            )}
+                            {feed.status === 'paused' && (
+                              <span className="text-xs text-zinc-500 font-medium bg-zinc-500/10 px-2 py-0.5 rounded">
+                                Paused
+                              </span>
+                            )}
+                          </div>
+                          
+                          <div className="text-sm text-muted-foreground truncate font-mono mb-2 pl-5">
+                            {feed.url}
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-muted-foreground pl-5">
+                            <div className="flex items-center gap-1.5">
+                              <RefreshCw className="h-3 w-3" />
+                              Last sync: {formatDistanceToNow(feed.lastSync, { addSuffix: true })}
+                            </div>
+                            <div>~{feed.articlesPerDay} articles/day</div>
+                            <div className="flex items-center gap-1.5">
+                              Priority: 
+                              <span className={cn(
+                                "font-medium capitalize",
+                                feed.priority === 'high' ? "text-primary" : 
+                                feed.priority === 'low' ? "text-muted-foreground" : "text-foreground"
+                              )}>
+                                {feed.priority}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 self-start md:self-center pl-5 md:pl-0">
+                           {feed.status === 'error' && (
+                             <Button variant="outline" size="sm" className="h-8 text-xs gap-1 border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-900/30 dark:bg-red-900/10 dark:text-red-400">
+                               <RefreshCw className="h-3 w-3" /> Retry Now
+                             </Button>
+                           )}
+                           
+                           <DropdownMenu>
+                             <DropdownMenuTrigger asChild>
+                               <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground">
+                                 <MoreVertical className="h-4 w-4" />
+                               </Button>
+                             </DropdownMenuTrigger>
+                             <DropdownMenuContent align="end">
+                               <DropdownMenuItem>
+                                 <Edit2 className="h-4 w-4 mr-2" /> Edit
+                               </DropdownMenuItem>
+                               {feed.status === 'paused' ? (
+                                 <DropdownMenuItem className="text-emerald-600 focus:text-emerald-600 focus:bg-emerald-50 dark:focus:bg-emerald-900/20">
+                                   <Play className="h-4 w-4 mr-2" /> Resume
+                                 </DropdownMenuItem>
+                               ) : (
+                                 <DropdownMenuItem>
+                                   <Pause className="h-4 w-4 mr-2" /> Pause
+                                 </DropdownMenuItem>
+                               )}
+                               <DropdownMenuSeparator />
+                               <DropdownMenuItem className="text-red-600 focus:text-red-600 focus:bg-red-50 dark:focus:bg-red-900/20">
+                                 <Trash2 className="h-4 w-4 mr-2" /> Delete
+                               </DropdownMenuItem>
+                             </DropdownMenuContent>
+                           </DropdownMenu>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {filteredFeeds.length === 0 && (
+          <div className="text-center py-12 text-muted-foreground">
+            No feeds found matching "{searchQuery}"
+          </div>
+        )}
+      </div>
+
+      <AddFeedModal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} />
+    </div>
+  );
+}

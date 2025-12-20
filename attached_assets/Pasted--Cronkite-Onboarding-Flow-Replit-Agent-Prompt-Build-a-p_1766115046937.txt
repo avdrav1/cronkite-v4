@@ -1,0 +1,600 @@
+# Cronkite Onboarding Flow — Replit Agent Prompt
+
+Build a **premium, animated onboarding wizard** for an RSS reader app called "Cronkite". This is the first-time user experience that personalizes their feed.
+
+---
+
+## Overview
+
+A **5-step wizard** that:
+1. Welcomes the user
+2. Lets them pick interests (categories)
+3. Optionally adds local news (region)
+4. Shows recommended feeds based on selections
+5. Confirms and launches the reader
+
+**This must feel premium** — smooth animations, beautiful typography, not a generic form wizard.
+
+---
+
+## Visual Design System
+
+### Colors
+```
+Light Mode:
+  Background:     #FAFAF9 (warm off-white)
+  Card:           #FFFFFF
+  Card hover:     #F5F5F4
+  Primary:        #4F46E5 (indigo)
+  Primary hover:  #4338CA
+  Accent:         #F97316 (coral) — for CTAs
+  Text:           #18181B
+  Text muted:     #71717A
+  Border:         #E4E4E7
+  Success:        #10B981 (green checkmarks)
+
+Dark Mode:
+  Background:     #09090B
+  Card:           #18181B
+  Card hover:     #27272A
+  Primary:        #818CF8
+  Accent:         #FB923C
+  Text:           #FAFAFA
+  Text muted:     #71717A
+```
+
+### Typography
+```
+Headings:    Inter, 600-700 weight
+Body:        Inter, 400-500 weight
+Step titles: 28-32px
+Body text:   16px
+Captions:    14px, muted color
+```
+
+### Spacing & Radius
+```
+Card padding:    24px (p-6)
+Card radius:     16px (rounded-2xl)
+Button radius:   12px (rounded-xl)
+Gap between:     16-24px
+Max width:       640px (centered)
+```
+
+---
+
+## Component: OnboardingWizard
+
+A centered modal/page that fills the screen with a subtle gradient background.
+
+### Layout Structure
+```
+┌────────────────────────────────────────────────────────────────┐
+│                                                                │
+│                      ○ ─ ● ─ ○ ─ ○ ─ ○                        │  Step indicator
+│                      1   2   3   4   5                         │
+│                                                                │
+│    ┌────────────────────────────────────────────────────┐     │
+│    │                                                    │     │
+│    │              [Step Content Here]                   │     │  Content card
+│    │                                                    │     │  max-w-2xl
+│    │                                                    │     │
+│    └────────────────────────────────────────────────────┘     │
+│                                                                │
+│                        [Continue →]                            │  Primary CTA
+│                          Skip                                  │  Secondary (when applicable)
+│                                                                │
+└────────────────────────────────────────────────────────────────┘
+```
+
+### Step Indicator
+```
+○───●───○───○───○
+1   2   3   4   5
+
+● = Current step (filled, primary color)
+✓ = Completed step (checkmark, success color)
+○ = Future step (empty, border only)
+─ = Connector line (muted color, completed = primary)
+```
+
+Animate the indicator when moving between steps.
+
+---
+
+## Step 1: Welcome
+
+### Visual
+```
+┌─────────────────────────────────────────────────────────┐
+│                                                         │
+│                    [Animated Logo]                      │
+│                                                         │
+│                  Welcome to Cronkite                    │  32px, bold
+│                                                         │
+│        Your intelligent, personalized news reader       │  18px, muted
+│                                                         │
+│      "And that's the way it is." — Walter Cronkite     │  16px, italic, muted
+│                                                         │
+│                                                         │
+│              Let's set up your feed in                  │  16px
+│                  under 2 minutes                        │
+│                                                         │
+│                   [Get Started]                         │  Primary button, coral accent
+│                                                         │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Animation
+- Logo fades in and subtly pulses or floats
+- Text staggers in (title → subtitle → quote → CTA)
+- Button has subtle glow/pulse to draw attention
+
+### Logo Concept
+A stylized "C" that suggests both a broadcast/signal wave and a news microphone. Use indigo (#4F46E5) with optional coral accent.
+
+---
+
+## Step 2: Interest Selection
+
+### Visual
+```
+┌─────────────────────────────────────────────────────────┐
+│                                                         │
+│                What interests you?                      │  28px, bold
+│                                                         │
+│         Select at least 3 topics to continue           │  16px, muted
+│                                                         │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐   │
+│  │  📱     │  │  💼     │  │  🎮     │  │  ⚽     │   │
+│  │  Tech   │  │Business │  │ Gaming  │  │ Sports  │   │
+│  └─────────┘  └─────────┘  └─────────┘  └─────────┘   │
+│                                                         │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐   │
+│  │  🔬     │  │  🚀     │  │  📰     │  │  🎬     │   │
+│  │ Science │  │  Space  │  │  News   │  │ Movies  │   │
+│  └─────────┘  └─────────┘  └─────────┘  └─────────┘   │
+│                                                         │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐   │
+│  │  🎵     │  │  📚     │  │  🍳     │  │  ✈️     │   │
+│  │  Music  │  │  Books  │  │  Food   │  │ Travel  │   │
+│  └─────────┘  └─────────┘  └─────────┘  └─────────┘   │
+│                                                         │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐   │
+│  │  💻     │  │  📐     │  │  🚗     │  │  🏠     │   │
+│  │  Code   │  │ Design  │  │  Cars   │  │   DIY   │   │
+│  └─────────┘  └─────────┘  └─────────┘  └─────────┘   │
+│                                                         │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐   │
+│  │  🤖     │  │  🍎     │  │  🏛️     │  │  😂     │   │
+│  │ Android │  │  Apple  │  │ History │  │  Funny  │   │
+│  └─────────┘  └─────────┘  └─────────┘  └─────────┘   │
+│                                                         │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐   │
+│  │  💄     │  │  👗     │  │  📈     │  │  🏏     │   │
+│  │ Beauty  │  │ Fashion │  │Startups │  │ Cricket │   │
+│  └─────────┘  └─────────┘  └─────────┘  └─────────┘   │
+│                                                         │
+│               3 of 3 minimum selected                   │  Counter
+│                                                         │
+│                    [Continue →]                         │  Disabled if < 3
+│                                                         │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Interest Categories (28 total)
+```typescript
+const CATEGORIES = [
+  { id: 'tech', label: 'Tech', emoji: '📱' },
+  { id: 'business', label: 'Business', emoji: '💼' },
+  { id: 'gaming', label: 'Gaming', emoji: '🎮' },
+  { id: 'sports', label: 'Sports', emoji: '⚽' },
+  { id: 'science', label: 'Science', emoji: '🔬' },
+  { id: 'space', label: 'Space', emoji: '🚀' },
+  { id: 'news', label: 'News', emoji: '📰' },
+  { id: 'movies', label: 'Movies', emoji: '🎬' },
+  { id: 'music', label: 'Music', emoji: '🎵' },
+  { id: 'books', label: 'Books', emoji: '📚' },
+  { id: 'food', label: 'Food', emoji: '🍳' },
+  { id: 'travel', label: 'Travel', emoji: '✈️' },
+  { id: 'programming', label: 'Code', emoji: '💻' },
+  { id: 'design', label: 'Design', emoji: '📐' },
+  { id: 'cars', label: 'Cars', emoji: '🚗' },
+  { id: 'diy', label: 'DIY', emoji: '🏠' },
+  { id: 'android', label: 'Android', emoji: '🤖' },
+  { id: 'apple', label: 'Apple', emoji: '🍎' },
+  { id: 'history', label: 'History', emoji: '🏛️' },
+  { id: 'funny', label: 'Funny', emoji: '😂' },
+  { id: 'beauty', label: 'Beauty', emoji: '💄' },
+  { id: 'fashion', label: 'Fashion', emoji: '👗' },
+  { id: 'startups', label: 'Startups', emoji: '📈' },
+  { id: 'cricket', label: 'Cricket', emoji: '🏏' },
+  { id: 'football', label: 'Football', emoji: '⚽' },
+  { id: 'tennis', label: 'Tennis', emoji: '🎾' },
+  { id: 'photography', label: 'Photo', emoji: '📷' },
+  { id: 'interior', label: 'Interior', emoji: '🛋️' },
+];
+```
+
+### Interest Card States
+
+**Default:**
+```css
+background: white (dark: #18181B)
+border: 1px solid #E4E4E7 (dark: #27272A)
+border-radius: 12px
+padding: 16px
+text-align: center
+cursor: pointer
+transition: all 200ms ease
+```
+
+**Hover:**
+```css
+border-color: #4F46E5 (primary)
+background: #F5F5F4 (dark: #27272A)
+transform: translateY(-2px)
+```
+
+**Selected:**
+```css
+background: #EEF2FF (light indigo tint) (dark: #312E81)
+border-color: #4F46E5
+box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.2)
+
+/* Checkmark badge in corner */
+&::after {
+  content: '✓'
+  position: absolute
+  top: -8px
+  right: -8px
+  background: #10B981
+  color: white
+  width: 20px
+  height: 20px
+  border-radius: 50%
+  display: flex
+  align-items: center
+  justify-content: center
+  font-size: 12px
+}
+```
+
+### Animation
+- Cards stagger in on mount (50ms delay between each)
+- Selection: scale(0.95) → scale(1) spring animation
+- Checkmark pops in with overshoot
+
+---
+
+## Step 3: Region Selection (Optional)
+
+### Visual
+```
+┌─────────────────────────────────────────────────────────┐
+│                                                         │
+│              Add local news? (Optional)                 │  28px, bold
+│                                                         │
+│     Get news from your region alongside global feeds    │  16px, muted
+│                                                         │
+│      ┌───────────────────────────────────────────┐     │
+│      │  🌍  Select your country            ▼     │     │  Dropdown
+│      └───────────────────────────────────────────┘     │
+│                                                         │
+│      Popular regions:                                   │
+│                                                         │
+│      ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐  │
+│      │ 🇺🇸 USA  │ │ 🇬🇧 UK   │ │ 🇨🇦 CAN  │ │ 🇦🇺 AUS  │  │  Quick picks
+│      └─────────┘ └─────────┘ └─────────┘ └─────────┘  │
+│                                                         │
+│      ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐  │
+│      │ 🇮🇳 IND  │ │ 🇩🇪 GER  │ │ 🇫🇷 FRA  │ │ 🇯🇵 JPN  │  │
+│      └─────────┘ └─────────┘ └─────────┘ └─────────┘  │
+│                                                         │
+│                                                         │
+│                    [Continue →]                         │
+│                       Skip                              │  Text link
+│                                                         │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Available Regions
+```typescript
+const REGIONS = [
+  { code: 'US', name: 'United States', flag: '🇺🇸' },
+  { code: 'GB', name: 'United Kingdom', flag: '🇬🇧' },
+  { code: 'CA', name: 'Canada', flag: '🇨🇦' },
+  { code: 'AU', name: 'Australia', flag: '🇦🇺' },
+  { code: 'IN', name: 'India', flag: '🇮🇳' },
+  { code: 'DE', name: 'Germany', flag: '🇩🇪' },
+  { code: 'FR', name: 'France', flag: '🇫🇷' },
+  { code: 'JP', name: 'Japan', flag: '🇯🇵' },
+  { code: 'BR', name: 'Brazil', flag: '🇧🇷' },
+  { code: 'MX', name: 'Mexico', flag: '🇲🇽' },
+  { code: 'ES', name: 'Spain', flag: '🇪🇸' },
+  { code: 'IT', name: 'Italy', flag: '🇮🇹' },
+  { code: 'NL', name: 'Netherlands', flag: '🇳🇱' },
+  { code: 'PL', name: 'Poland', flag: '🇵🇱' },
+  { code: 'RU', name: 'Russia', flag: '🇷🇺' },
+  { code: 'ZA', name: 'South Africa', flag: '🇿🇦' },
+  { code: 'NG', name: 'Nigeria', flag: '🇳🇬' },
+  { code: 'PK', name: 'Pakistan', flag: '🇵🇰' },
+  { code: 'BD', name: 'Bangladesh', flag: '🇧🇩' },
+  { code: 'PH', name: 'Philippines', flag: '🇵🇭' },
+  { code: 'ID', name: 'Indonesia', flag: '🇮🇩' },
+  { code: 'IE', name: 'Ireland', flag: '🇮🇪' },
+  { code: 'HK', name: 'Hong Kong', flag: '🇭🇰' },
+  { code: 'UA', name: 'Ukraine', flag: '🇺🇦' },
+  { code: 'IR', name: 'Iran', flag: '🇮🇷' },
+];
+```
+
+### Behavior
+- Quick pick buttons select immediately
+- Dropdown has search/filter
+- Skip moves to next step without region
+- Selected region shows checkmark
+
+---
+
+## Step 4: Feed Preview
+
+### Visual
+```
+┌─────────────────────────────────────────────────────────┐
+│                                                         │
+│              Here's what we found for you               │  28px, bold
+│                                                         │
+│         24 feeds based on your interests                │  16px, muted
+│                                                         │
+│  ┌───────────────────────────────────────────────────┐ │
+│  │ Tech                                    Select All │ │  Category header
+│  ├───────────────────────────────────────────────────┤ │
+│  │ ☑️  TechCrunch                        ~15/day     │ │
+│  │     Latest technology news and startups           │ │
+│  │                                                   │ │
+│  │ ☑️  Ars Technica                      ~12/day     │ │
+│  │     Technology, science, and culture              │ │
+│  │                                                   │ │
+│  │ ☑️  The Verge                         ~20/day     │ │
+│  │     Technology, science, art, and culture         │ │
+│  │                                                   │ │
+│  │ ☐  Wired                              ~10/day     │ │
+│  │     In-depth technology coverage                  │ │
+│  └───────────────────────────────────────────────────┘ │
+│                                                         │
+│  ┌───────────────────────────────────────────────────┐ │
+│  │ Gaming                                  Select All │ │
+│  ├───────────────────────────────────────────────────┤ │
+│  │ ☑️  Kotaku                            ~18/day     │ │
+│  │     Gaming news, reviews, and culture             │ │
+│  │                                                   │ │
+│  │ ☑️  IGN                               ~25/day     │ │
+│  │     Video game news and reviews                   │ │
+│  └───────────────────────────────────────────────────┘ │
+│                                                         │
+│              12 feeds selected (~180 articles/day)      │  Summary
+│                                                         │
+│                    [Continue →]                         │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Feed Item Component
+```
+┌─────────────────────────────────────────────────────────┐
+│  ☑️  [Favicon]  Feed Name                    ~X/day    │
+│                 Brief description of the feed          │
+└─────────────────────────────────────────────────────────┘
+```
+
+- Checkbox on left (custom styled, not native)
+- Favicon or colored dot for feed
+- Feed name (16px, medium weight)
+- Description (14px, muted)
+- Article frequency estimate on right (14px, muted)
+
+### Behavior
+- Popular feeds pre-selected (checked)
+- User can toggle individual feeds
+- "Select All" toggles entire category
+- Running total at bottom updates live
+- Scrollable if many feeds (max-height with overflow)
+
+### Animation
+- Categories stagger in
+- Feeds within category stagger in (faster)
+- Checkbox has spring animation on toggle
+- Counter animates when changing
+
+---
+
+## Step 5: Confirmation
+
+### Visual
+```
+┌─────────────────────────────────────────────────────────┐
+│                                                         │
+│                      🎉                                 │  Animated confetti or celebration
+│                                                         │
+│                   You're all set!                       │  32px, bold
+│                                                         │
+│                                                         │
+│    ┌─────────────────────────────────────────────┐     │
+│    │                                             │     │
+│    │   📱 Tech  •  🎮 Gaming  •  📰 News        │     │  Selected interests (pills)
+│    │                                             │     │
+│    │   🇺🇸 United States                         │     │  Selected region (if any)
+│    │                                             │     │
+│    │   12 feeds  •  ~180 articles/day           │     │  Summary stats
+│    │                                             │     │
+│    └─────────────────────────────────────────────┘     │
+│                                                         │
+│                                                         │
+│                  [Start Reading →]                      │  Primary button, coral
+│                                                         │
+│              You can always add more feeds later        │  14px, muted
+│                                                         │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Animation
+- 🎉 emoji or confetti animation on mount
+- Summary card fades/slides in
+- Button pulses subtly to draw attention
+
+### On Complete
+- Save selections to state/localStorage
+- Navigate to `/reader` (main masonry view)
+- Mark onboarding as completed
+
+---
+
+## State Management
+
+```typescript
+interface OnboardingState {
+  currentStep: 1 | 2 | 3 | 4 | 5;
+  selectedInterests: string[];      // ['tech', 'gaming', 'news']
+  selectedRegion: string | null;    // 'US' or null
+  selectedFeeds: string[];          // ['techcrunch', 'kotaku', ...]
+  isComplete: boolean;
+}
+
+// Persist to localStorage
+const STORAGE_KEY = 'cronkite_onboarding';
+```
+
+---
+
+## Transitions Between Steps
+
+Use Framer Motion for smooth step transitions:
+
+```typescript
+const variants = {
+  enter: (direction: number) => ({
+    x: direction > 0 ? 300 : -300,
+    opacity: 0,
+  }),
+  center: {
+    x: 0,
+    opacity: 1,
+  },
+  exit: (direction: number) => ({
+    x: direction < 0 ? 300 : -300,
+    opacity: 0,
+  }),
+};
+
+// Transition config
+const transition = {
+  type: 'spring',
+  stiffness: 300,
+  damping: 30,
+};
+```
+
+Steps slide left/right based on navigation direction.
+
+---
+
+## Keyboard Navigation
+
+- `Enter` = Continue / Select
+- `Escape` = Go back (if not on step 1)
+- `Tab` = Navigate between interactive elements
+- `Space` = Toggle selection on focused item
+
+---
+
+## Mobile Responsive
+
+- Max width: 640px, centered
+- On mobile: full-width with padding
+- Interest grid: 3 columns on mobile (smaller cards)
+- Reduce card padding on mobile
+- Sticky footer with CTA button
+
+---
+
+## Mock Feed Data
+
+For Step 4, use this structure:
+
+```typescript
+interface RecommendedFeed {
+  id: string;
+  name: string;
+  url: string;
+  description: string;
+  category: string;
+  articlesPerDay: number;
+  isPopular: boolean;  // Pre-select popular ones
+}
+
+const RECOMMENDED_FEEDS: RecommendedFeed[] = [
+  // Tech
+  { id: 'techcrunch', name: 'TechCrunch', category: 'tech', articlesPerDay: 15, isPopular: true, ... },
+  { id: 'arstechnica', name: 'Ars Technica', category: 'tech', articlesPerDay: 12, isPopular: true, ... },
+  { id: 'theverge', name: 'The Verge', category: 'tech', articlesPerDay: 20, isPopular: true, ... },
+  { id: 'wired', name: 'Wired', category: 'tech', articlesPerDay: 10, isPopular: false, ... },
+  
+  // Gaming
+  { id: 'kotaku', name: 'Kotaku', category: 'gaming', articlesPerDay: 18, isPopular: true, ... },
+  { id: 'ign', name: 'IGN', category: 'gaming', articlesPerDay: 25, isPopular: true, ... },
+  { id: 'polygon', name: 'Polygon', category: 'gaming', articlesPerDay: 15, isPopular: false, ... },
+  
+  // News
+  { id: 'bbc', name: 'BBC News', category: 'news', articlesPerDay: 50, isPopular: true, ... },
+  { id: 'nytimes', name: 'New York Times', category: 'news', articlesPerDay: 40, isPopular: true, ... },
+  { id: 'guardian', name: 'The Guardian', category: 'news', articlesPerDay: 45, isPopular: false, ... },
+  
+  // ... more for each category
+];
+```
+
+---
+
+## Files to Create
+
+```
+src/
+├── app/
+│   └── onboarding/
+│       └── page.tsx              # Onboarding page
+│
+├── components/
+│   └── onboarding/
+│       ├── OnboardingWizard.tsx  # Main container
+│       ├── StepIndicator.tsx     # Progress dots
+│       ├── WelcomeStep.tsx       # Step 1
+│       ├── InterestSelector.tsx  # Step 2
+│       ├── InterestCard.tsx      # Single interest
+│       ├── RegionSelector.tsx    # Step 3
+│       ├── FeedPreview.tsx       # Step 4
+│       ├── FeedItem.tsx          # Single feed row
+│       └── ConfirmationStep.tsx  # Step 5
+│
+├── data/
+│   ├── categories.ts             # Interest categories
+│   ├── regions.ts                # Available regions
+│   └── recommended-feeds.ts      # Feed recommendations
+│
+└── hooks/
+    └── use-onboarding.ts         # State management
+```
+
+---
+
+## Summary
+
+Build this as a **delightful, premium onboarding experience**:
+
+1. **Welcome** — Animated intro, sets the tone
+2. **Interests** — Fun category selection grid (min 3)
+3. **Region** — Optional local news (quick picks + dropdown)
+4. **Feeds** — Review & customize recommendations
+5. **Done** — Celebrate and launch into reader
+
+Every transition should be smooth. Every interaction should feel responsive. This is the user's first impression — make it count.

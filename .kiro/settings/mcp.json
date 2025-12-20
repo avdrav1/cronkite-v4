@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "supabase-local": {
+      "command": "npx",
+      "args": ["supabase", "mcp"],
+      "disabled": false,
+      "autoApprove": []
+    }
+  }
+}

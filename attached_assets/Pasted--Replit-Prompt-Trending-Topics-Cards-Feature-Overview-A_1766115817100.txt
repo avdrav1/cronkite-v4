@@ -1,0 +1,225 @@
+# Replit Prompt: Trending Topics Cards
+
+## Feature Overview
+
+Add **Trending Topics** cards that get interspersed throughout the masonry feed. These cards cluster multiple related articles together by analyzing title similarity using AI, showing users "there are 5 stories about this topic" instead of 5 separate cards.
+
+---
+
+## Prompt for Replit Agent
+
+```
+Add a "Trending Topics" feature to the masonry feed. Here's what I need:
+
+## What It Does
+
+1. CLUSTER articles with similar titles/topics using AI (OpenAI or Claude)
+2. DISPLAY a special "Trending Topic" card in the masonry grid
+3. DRILL DOWN when clicked to show all articles in that cluster
+
+## Clustering Logic
+
+Use AI to analyze article titles and group related stories. Example clusters:
+- "OpenAI announces GPT-5" + "GPT-5 release date revealed" + "What GPT-5 means for developers" → Cluster: "GPT-5 Announcement"
+- "Apple WWDC 2025 keynote" + "iOS 19 features leaked" + "New MacBook Pro revealed at WWDC" → Cluster: "Apple WWDC 2025"
+
+Rules:
+- Minimum 3 articles to form a cluster
+- Maximum 10 articles per cluster
+- Articles can only belong to ONE cluster
+- Unclustered articles display as normal cards
+- Re-cluster when new articles arrive (or on refresh)
+
+## AI Prompt for Clustering
+
+Send article titles to the AI with this prompt:
+"""
+Analyze these article titles and group them into topic clusters.
+Only create a cluster if 3+ articles are clearly about the same story/event.
+Return JSON: { clusters: [{ topic: string, articleIds: string[] }] }
+
+Titles:
+${titles.map(t => `- [${t.id}] ${t.title}`).join('\n')}
+"""
+
+## Trending Topic Card Design
+
+The card should stand out but fit the masonry aesthetic:
+
+┌─────────────────────────────────────────┐
+│  🔥 TRENDING                            │
+│                                         │
+│  ┌─────┐ ┌─────┐ ┌─────┐               │
+│  │ img │ │ img │ │ img │  +2 more      │  ← Stacked thumbnails
+│  └─────┘ └─────┘ └─────┘               │
+│                                         │
+│  GPT-5 Announcement                     │  ← AI-generated topic name
+│                                         │
+│  5 stories from TechCrunch, Verge,      │  ← Source summary
+│  Ars Technica                           │
+│                                         │
+│  Updated 2 hours ago                    │
+└─────────────────────────────────────────┘
+
+Visual specs:
+- Background: Subtle gradient (indigo to purple) or accent border
+- "TRENDING" badge: Small, uppercase, with flame icon
+- Thumbnail stack: 3 small images (48x48) overlapping slightly, "+N more" if >3
+- Topic title: 20px semibold, max 2 lines
+- Sources: Comma-separated feed names, muted text
+- Timestamp: Most recent article's time
+
+## Card Placement in Feed
+
+Insert trending topic cards into the masonry grid:
+- Place after every ~8-10 regular article cards
+- Trending cards should be MEDIUM width (not large, not small)
+- Sort trending cards by: number of articles (most first), then recency
+
+## Drill-Down View
+
+When user clicks a trending topic card, show a modal or slide-over:
+
+┌──────────────────────────────────────────┐
+│ ← Back                              ✕    │
+├──────────────────────────────────────────┤
+│                                          │
+│  🔥 GPT-5 Announcement                   │
+│  5 stories • Last updated 2h ago         │
+│                                          │
+├──────────────────────────────────────────┤
+│                                          │
+│  ┌────────────────────────────────────┐  │
+│  │ OpenAI announces GPT-5 with...    │  │  ← Article card (compact)
+│  │ TechCrunch • 2h ago          ★    │  │
+│  └────────────────────────────────────┘  │
+│                                          │
+│  ┌────────────────────────────────────┐  │
+│  │ GPT-5 release date revealed:...   │  │
+│  │ The Verge • 3h ago           ★    │  │
+│  └────────────────────────────────────┘  │
+│                                          │
+│  ┌────────────────────────────────────┐  │
+│  │ What GPT-5 means for developers   │  │
+│  │ Ars Technica • 5h ago        ★    │  │
+│  └────────────────────────────────────┘  │
+│                                          │
+└──────────────────────────────────────────┘
+
+- Show all clustered articles in a vertical list
+- Compact card style (no large images)
+- Click article → opens full article detail
+
+## Data Types
+
+interface TopicCluster {
+  id: string;
+  topic: string;           // AI-generated topic name
+  articleIds: string[];    // IDs of clustered articles
+  sources: string[];       // Unique feed names
+  thumbnails: string[];    // First 3 article images
+  articleCount: number;
+  latestTimestamp: Date;
+}
+
+interface MasonryItem {
+  type: 'article' | 'trending';
+  data: Article | TopicCluster;
+}
+
+## Component Structure
+
+components/
+├── trending/
+│   ├── TrendingTopicCard.tsx    # The card in masonry grid
+│   ├── TrendingDrillDown.tsx    # Modal/sheet with article list
+│   └── TrendingBadge.tsx        # "🔥 TRENDING" badge
+└── article/
+    └── MasonryGrid.tsx          # Updated to handle mixed items
+
+## Implementation Steps
+
+1. Create clustering utility function (calls AI API)
+2. Create TrendingTopicCard component
+3. Update MasonryGrid to accept mixed items (articles + trends)
+4. Create TrendingDrillDown modal
+5. Add refresh/re-cluster on new articles
+6. Style the trending card to stand out but fit the design
+
+## Mock Data for Testing
+
+Create 2-3 mock clusters to test the UI before wiring up AI:
+
+const mockClusters: TopicCluster[] = [
+  {
+    id: 'cluster-1',
+    topic: 'GPT-5 Announcement',
+    articleIds: ['a1', 'a2', 'a3', 'a4', 'a5'],
+    sources: ['TechCrunch', 'The Verge', 'Ars Technica'],
+    thumbnails: ['/img1.jpg', '/img2.jpg', '/img3.jpg'],
+    articleCount: 5,
+    latestTimestamp: new Date(),
+  },
+  {
+    id: 'cluster-2', 
+    topic: 'Fed Interest Rate Decision',
+    articleIds: ['a10', 'a11', 'a12'],
+    sources: ['Reuters', 'Bloomberg', 'WSJ'],
+    thumbnails: ['/img4.jpg', '/img5.jpg'],
+    articleCount: 3,
+    latestTimestamp: new Date(Date.now() - 3600000),
+  },
+];
+```
+
+---
+
+## Simpler Version (No AI - Client-Side Grouping)
+
+If you want to skip AI and do simple keyword matching:
+
+```
+Implement client-side article clustering without AI:
+
+1. Extract keywords from titles (remove stop words)
+2. Group articles that share 2+ significant keywords
+3. Use the most common keyword phrase as the topic name
+
+Example:
+- "Apple announces iOS 19 at WWDC"
+- "WWDC 2025: iOS 19 features revealed"  
+- "iOS 19 brings major changes"
+→ Cluster: "iOS 19" (shared keywords)
+
+This is less accurate than AI but works offline and is free.
+```
+
+---
+
+## Follow-Up Prompts
+
+After the basic feature works:
+
+**Add animations:**
+```
+Add Framer Motion animations to the trending topic card:
+- Staggered thumbnail entrance (each thumbnail fades in 100ms apart)
+- Pulse effect on the flame icon
+- Smooth expand animation when drilling down
+```
+
+**Add "Dismiss" functionality:**
+```
+Add ability to dismiss a trending topic:
+- Small X button in corner of trending card
+- "Not interested in this topic" 
+- Hides the cluster and shows individual articles instead
+- Store dismissed topics in localStorage
+```
+
+**Add topic summary:**
+```
+Use AI to generate a 1-sentence summary of the trending topic:
+"Multiple outlets are reporting on OpenAI's GPT-5 release, highlighting new capabilities and pricing changes."
+Display this below the topic title in the card.
+```
