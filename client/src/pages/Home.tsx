@@ -1,62 +1,145 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { AppShell } from "@/components/layout/AppShell";
 import { MasonryGrid } from "@/components/feed/MasonryGrid";
 import { ArticleCard } from "@/components/feed/ArticleCard";
 import { ArticleSheet } from "@/components/article/ArticleSheet";
 import { TrendingTopicCard } from "@/components/trending/TrendingTopicCard";
 import { TrendingDrillDown } from "@/components/trending/TrendingDrillDown";
-import { MOCK_ARTICLES, Article } from "@/lib/mock-data";
 import { MOCK_CLUSTERS, TopicCluster } from "@/lib/mock-clusters";
 import { motion } from "framer-motion";
-import { SlidersHorizontal } from "lucide-react";
+import { SlidersHorizontal, RefreshCw, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
+import { apiRequest } from "@/lib/queryClient";
+import { type Article } from "@shared/schema";
 
-// Interleave clusters into the feed
-const MIXED_FEED = [...MOCK_ARTICLES];
-// Insert clusters at specific indices for demo
-MIXED_FEED.splice(2, 0, { type: 'cluster', data: MOCK_CLUSTERS[0] } as any);
-MIXED_FEED.splice(6, 0, { type: 'cluster', data: MOCK_CLUSTERS[1] } as any);
-MIXED_FEED.splice(9, 0, { type: 'cluster', data: MOCK_CLUSTERS[2] } as any);
+// Extended article type with feed information
+interface ArticleWithFeed extends Article {
+  feed_name?: string;
+  feed_url?: string;
+  feed_icon?: string;
+  isRead?: boolean;
+  isStarred?: boolean;
+}
+
+// Mixed feed item type (article or cluster)
+interface FeedItem {
+  type: 'article' | 'cluster';
+  data: ArticleWithFeed | TopicCluster;
+  id: string;
+}
 
 import { subDays, isAfter, isBefore, parseISO, formatDistanceToNow, differenceInDays } from "date-fns";
 import { ArrowDown } from "lucide-react";
 
-// Mock "current date" for demo purposes since mock data is future dated
-const CURRENT_DATE = new Date("2025-12-20T12:00:00Z");
+const CURRENT_DATE = new Date();
 const CHUNK_SIZE_DAYS = 7;
 
 export default function Home() {
-  const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
+  const [selectedArticle, setSelectedArticle] = useState<ArticleWithFeed | null>(null);
   const [selectedCluster, setSelectedCluster] = useState<TopicCluster | null>(null);
   const [activeFilter, setActiveFilter] = useState("all");
   const [historyDepth, setHistoryDepth] = useState(CHUNK_SIZE_DAYS);
+  
+  // Real data state
+  const [articles, setArticles] = useState<ArticleWithFeed[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [feedsCount, setFeedsCount] = useState(0);
   
   // Get source filter from URL manually since wouter's useLocation doesn't parse query params
   const searchParams = new URLSearchParams(window.location.search);
   const sourceFilter = searchParams.get("source");
 
-  // State to hold mutable articles (initialized from MIXED_FEED)
-  const [articles, setArticles] = useState(MIXED_FEED);
+  // Fetch articles from API
+  const fetchArticles = async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      
+      const response = await apiRequest('GET', '/api/articles?limit=100');
+      const data = await response.json();
+      
+      if (!data.articles) {
+        throw new Error('No articles data received');
+      }
+      
+      // Convert API articles to our format with UI state
+      const articlesWithState: ArticleWithFeed[] = data.articles.map((article: any) => ({
+        ...article,
+        isRead: false,
+        isStarred: false,
+        // Convert API fields to match expected format
+        id: article.id,
+        title: article.title,
+        url: article.url,
+        excerpt: article.excerpt || article.content?.substring(0, 200) + '...',
+        content: article.content,
+        author: article.author,
+        date: article.published_at || article.created_at,
+        source: article.feed_name || 'Unknown Source',
+        image: article.image_url,
+        readTime: Math.max(1, Math.floor((article.content?.length || 0) / 200)) + ' min read'
+      }));
+      
+      setArticles(articlesWithState);
+      setFeedsCount(data.feeds_count || 0);
+    } catch (error) {
+      console.error('Failed to fetch articles:', error);
+      setError(error instanceof Error ? error.message : 'Failed to load articles');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Load articles on component mount
+  useEffect(() => {
+    fetchArticles();
+  }, []);
+
+  // Create mixed feed with articles and clusters
+  const createMixedFeed = (articles: ArticleWithFeed[]): FeedItem[] => {
+    const mixedFeed: FeedItem[] = articles.map(article => ({
+      type: 'article',
+      data: article,
+      id: article.id
+    }));
+    
+    // Insert clusters at specific intervals (every 5 articles)
+    const clustersToInsert = MOCK_CLUSTERS.slice(0, Math.min(3, Math.floor(articles.length / 5)));
+    clustersToInsert.forEach((cluster, index) => {
+      const insertIndex = (index + 1) * 5 + index; // 5, 11, 17, etc.
+      if (insertIndex < mixedFeed.length) {
+        mixedFeed.splice(insertIndex, 0, {
+          type: 'cluster',
+          data: cluster,
+          id: `cluster-${cluster.id}`
+        });
+      }
+    });
+    
+    return mixedFeed;
+  };
 
   // Actions
   const handleRemoveArticle = (id: string) => {
-    setArticles(prev => prev.filter((item: any) => item.id !== id && item.data?.id !== id));
+    setArticles(prev => prev.filter(article => article.id !== id));
   };
 
   const handleToggleStar = (id: string) => {
-    setArticles(prev => prev.map((item: any) => {
-      if (item.id === id) {
-        return { ...item, isStarred: !item.isStarred };
+    setArticles(prev => prev.map(article => {
+      if (article.id === id) {
+        return { ...article, isStarred: !article.isStarred };
       }
-      return item;
+      return article;
     }));
   };
 
-  const handleArticleClick = (article: Article) => {
+  const handleArticleClick = (article: ArticleWithFeed) => {
     setSelectedArticle(article);
     // Mark as read
-    setArticles(prev => prev.map((item: any) => {
+    setArticles(prev => prev.map(item => {
       if (item.id === article.id) {
         return { ...item, isRead: true };
       }
@@ -64,28 +147,37 @@ export default function Home() {
     }));
   };
 
+  // Create mixed feed
+  const mixedFeed = createMixedFeed(articles);
+
   // Base filtering (Source + Status)
-  const baseFilteredFeed = articles.filter((item: any) => {
+  const baseFilteredFeed = mixedFeed.filter((item) => {
     // 1. Source Filter
-    if (sourceFilter) {
-      if (item.type === 'cluster') return false; 
-      const matchesSource = item.source.toLowerCase().includes(sourceFilter.toLowerCase()) || 
-             sourceFilter.toLowerCase().includes(item.source.toLowerCase());
+    if (sourceFilter && item.type === 'article') {
+      const article = item.data as ArticleWithFeed;
+      const matchesSource = article.source?.toLowerCase().includes(sourceFilter.toLowerCase()) || 
+             sourceFilter.toLowerCase().includes(article.source?.toLowerCase() || '');
       if (!matchesSource) return false;
     }
 
     // 2. Status Filter
-    if (activeFilter === "unread" && item.isRead) return false;
-    if (activeFilter === "saved" && !item.isStarred) return false;
+    if (item.type === 'article') {
+      const article = item.data as ArticleWithFeed;
+      if (activeFilter === "unread" && article.isRead) return false;
+      if (activeFilter === "saved" && !article.isStarred) return false;
+    }
     
     return true;
   });
 
   // Calculate visible feed based on history depth
-  const visibleFeed = baseFilteredFeed.filter((item: any) => {
+  const visibleFeed = baseFilteredFeed.filter((item) => {
     if (item.type === 'cluster') return true; // Always show relevant clusters for now
     
-    const articleDate = parseISO(item.date);
+    const article = item.data as ArticleWithFeed;
+    if (!article.date) return true; // Show articles without dates
+    
+    const articleDate = parseISO(article.date);
     const cutoffDate = subDays(CURRENT_DATE, historyDepth);
     return isAfter(articleDate, cutoffDate);
   });
@@ -94,15 +186,70 @@ export default function Home() {
   const nextChunkStartDate = subDays(CURRENT_DATE, historyDepth + CHUNK_SIZE_DAYS);
   const nextChunkEndDate = subDays(CURRENT_DATE, historyDepth);
   
-  const nextChunkCount = baseFilteredFeed.filter((item: any) => {
+  const nextChunkCount = baseFilteredFeed.filter((item) => {
     if (item.type === 'cluster') return false;
-    const articleDate = parseISO(item.date);
+    const article = item.data as ArticleWithFeed;
+    if (!article.date) return false;
+    const articleDate = parseISO(article.date);
     return isAfter(articleDate, nextChunkStartDate) && isBefore(articleDate, nextChunkEndDate);
   }).length;
 
   const handleLoadMore = () => {
     setHistoryDepth(prev => prev + CHUNK_SIZE_DAYS);
   };
+
+  // Loading state
+  if (isLoading) {
+    return (
+      <AppShell>
+        <div className="flex flex-col items-center justify-center py-20">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-4"></div>
+          <p className="text-muted-foreground">Loading your personalized feed...</p>
+        </div>
+      </AppShell>
+    );
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <AppShell>
+        <div className="flex flex-col items-center justify-center py-20 max-w-md mx-auto">
+          <Alert className="mb-6">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              {error}
+            </AlertDescription>
+          </Alert>
+          <Button onClick={fetchArticles} className="flex items-center gap-2">
+            <RefreshCw className="h-4 w-4" />
+            Try Again
+          </Button>
+        </div>
+      </AppShell>
+    );
+  }
+
+  // Empty state
+  if (articles.length === 0) {
+    return (
+      <AppShell>
+        <div className="flex flex-col items-center justify-center py-20 max-w-md mx-auto text-center">
+          <h2 className="text-2xl font-bold mb-4">No articles yet</h2>
+          <p className="text-muted-foreground mb-6">
+            {feedsCount === 0 
+              ? "You haven't subscribed to any feeds yet. Complete your onboarding to get started!"
+              : `Your ${feedsCount} subscribed feeds don't have any articles yet. Try syncing your feeds or check back later.`
+            }
+          </p>
+          <Button onClick={fetchArticles} className="flex items-center gap-2">
+            <RefreshCw className="h-4 w-4" />
+            Refresh
+          </Button>
+        </div>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell>
@@ -144,22 +291,24 @@ export default function Home() {
 
         {/* Masonry Feed */}
         <MasonryGrid>
-          {visibleFeed.map((item: any, index) => {
+          {visibleFeed.map((item, index) => {
             if (item.type === 'cluster') {
+              const cluster = item.data as TopicCluster;
               return (
                 <TrendingTopicCard
-                  key={`cluster-${item.data.id}`}
-                  cluster={item.data}
+                  key={item.id}
+                  cluster={cluster}
                   onClick={(c) => setSelectedCluster(c)}
                 />
               );
             }
             // Regular article
+            const article = item.data as ArticleWithFeed;
             return (
               <ArticleCard
-                key={item.id || `article-${index}`}
-                article={item}
-                onClick={(a) => handleArticleClick(a)}
+                key={item.id}
+                article={article as any} // Type assertion for compatibility
+                onClick={(a) => handleArticleClick(a as ArticleWithFeed)}
                 onRemove={handleRemoveArticle}
                 onStar={handleToggleStar}
               />
@@ -196,7 +345,7 @@ export default function Home() {
 
       {/* Slide-over Sheets */}
       <ArticleSheet
-        article={selectedArticle}
+        article={selectedArticle as any} // Type assertion for compatibility
         isOpen={!!selectedArticle}
         onClose={() => setSelectedArticle(null)}
       />
@@ -207,7 +356,7 @@ export default function Home() {
         onClose={() => setSelectedCluster(null)}
         onArticleClick={(article) => {
           setSelectedCluster(null); // Close cluster view
-          setTimeout(() => setSelectedArticle(article), 300); // Open article view with slight delay
+          setTimeout(() => setSelectedArticle(article as ArticleWithFeed), 300); // Open article view with slight delay
         }}
       />
     </AppShell>

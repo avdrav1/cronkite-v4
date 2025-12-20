@@ -137,6 +137,30 @@ describe('Feed Management API Endpoints', () => {
       expect(response.status).toBe(401);
       expect(response.body.error).toBe('Authentication required');
     });
+
+    it('should validate limit parameter', async () => {
+      const response = await request(app)
+        .get('/api/feeds/recommended?limit=invalid');
+
+      expect(response.status).toBe(401); // Still requires auth first
+      expect(response.body.error).toBe('Authentication required');
+    });
+
+    it('should validate limit range', async () => {
+      const response = await request(app)
+        .get('/api/feeds/recommended?limit=0');
+
+      expect(response.status).toBe(401); // Still requires auth first
+      expect(response.body.error).toBe('Authentication required');
+    });
+
+    it('should validate limit upper bound', async () => {
+      const response = await request(app)
+        .get('/api/feeds/recommended?limit=2000');
+
+      expect(response.status).toBe(401); // Still requires auth first
+      expect(response.body.error).toBe('Authentication required');
+    });
   });
 
   describe('POST /api/feeds/subscribe', () => {

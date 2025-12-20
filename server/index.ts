@@ -1,109 +1,148 @@
-import express, { type Request, Response, NextFunction } from "express";
-import passport from "passport";
-import cors from "cors";
-import { registerRoutes } from "./routes";
+// Load environment variables FIRST
+import './env';
+
+import express from "express";
 import { serveStatic } from "./static";
 import { createServer } from "http";
-import { sessionConfig, authMiddleware } from "./auth-middleware";
+import { createServer as createNetServer } from "net";
+import { setupApp, log, logError, logSuccess } from "./app-setup";
 
 const app = express();
 const httpServer = createServer(app);
 
-declare module "http" {
-  interface IncomingMessage {
-    rawBody: unknown;
-  }
-}
-
-app.use(
-  express.json({
-    verify: (req, _res, buf) => {
-      req.rawBody = buf;
-    },
-  }),
-);
-
-app.use(express.urlencoded({ extended: false }));
-
-// CORS configuration for development
-if (process.env.NODE_ENV !== "production") {
-  app.use(cors({
-    origin: true, // Allow all origins in development
-    credentials: true, // Allow cookies to be sent
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie']
-  }));
-}
-
-// Session and authentication middleware
-app.use(sessionConfig);
-app.use(passport.initialize());
-app.use(passport.session());
-app.use(authMiddleware);
-
-export function log(message: string, source = "express") {
-  const formattedTime = new Date().toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
-
-  console.log(`${formattedTime} [${source}] ${message}`);
-}
-
-app.use((req, res, next) => {
-  const start = Date.now();
-  const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
-
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+async function checkPortAvailability(port: number): Promise<{ available: boolean; error?: string }> {
+  return new Promise((resolve) => {
+    const server = createNetServer();
+    
+    server.listen(port, () => {
+      server.once('close', () => {
+        resolve({ available: true });
+      });
+      server.close();
+    });
+    
+    server.on('error', (error: NodeJS.ErrnoException) => {
+      let errorMessage = `Port ${port} is not available`;
+      
+      if (error.code === 'EADDRINUSE') {
+        errorMessage = `Port ${port} is already in use by another process`;
+      } else if (error.code === 'EACCES') {
+        errorMessage = `Permission denied to bind to port ${port}. Try using a port above 1024`;
+      } else if (error.code === 'EADDRNOTAVAIL') {
+        errorMessage = `Address not available for port ${port}. Check your network configuration`;
       }
-
-      log(logLine);
-    }
+      
+      resolve({ available: false, error: errorMessage });
+    });
   });
+}
 
-  next();
-});
+async function findAvailablePort(startPort: number, maxAttempts: number = 10): Promise<number | null> {
+  for (let i = 0; i < maxAttempts; i++) {
+    const port = startPort + i;
+    const result = await checkPortAvailability(port);
+    if (result.available) {
+      return port;
+    }
+  }
+  return null;
+}
 
 (async () => {
-  await registerRoutes(httpServer, app);
+  let viteInstance: any = null;
+  
+  try {
+    // Setup the Express application
+    await setupApp(app);
 
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
+    // Setup Vite middleware BEFORE API routes in development
+    if (process.env.NODE_ENV !== "production") {
+      log("Setting up Vite middleware for development...");
+      const { setupVite } = await import("./vite");
+      viteInstance = await setupVite(httpServer, app);
+      logSuccess("Vite middleware setup complete");
 
-    res.status(status).json({ message });
-    throw err;
-  });
+      // Setup HTML fallback route AFTER API routes in development
+      log("Setting up HTML fallback route...");
+      
+      app.use("*", async (req, res, next) => {
+        const url = req.originalUrl;
 
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
-  if (process.env.NODE_ENV === "production") {
-    serveStatic(app);
-  } else {
-    const { setupVite } = await import("./vite");
-    await setupVite(httpServer, app);
+        // Skip HTML fallback for API routes
+        if (url.startsWith("/api")) {
+          return next();
+        }
+
+        // Skip HTML fallback for module requests
+        if (
+          url.includes("/@") || // Vite special paths
+          url.includes("/node_modules/") || // Node modules
+          url.match(/\.(js|ts|tsx|jsx|css|json|wasm|mjs)(\?.*)?$/) // Module file extensions
+        ) {
+          return next();
+        }
+
+        try {
+          const path = await import("path");
+          const fs = await import("fs");
+          const { nanoid } = await import("nanoid");
+          
+          const clientTemplate = path.resolve(
+            import.meta.dirname,
+            "..",
+            "client",
+            "index.html",
+          );
+
+          let template = await fs.promises.readFile(clientTemplate, "utf-8");
+          template = template.replace(
+            `src="/src/main.tsx"`,
+            `src="/src/main.tsx?v=${nanoid()}"`,
+          );
+          const page = await viteInstance.transformIndexHtml(url, template);
+          res.status(200).set({ "Content-Type": "text/html" }).end(page);
+        } catch (e) {
+          logError(`Failed to transform HTML for ${url}`, e as Error);
+          viteInstance.ssrFixStacktrace(e as Error);
+          next(e);
+        }
+      });
+      
+      logSuccess("HTML fallback route setup complete");
+    }
+  } catch (error) {
+    logError("Failed to setup development server", error as Error);
+    process.exit(1);
   }
 
-  // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
+  // Setup static file serving for production
+  if (process.env.NODE_ENV === "production") {
+    serveStatic(app);
+  }
+
+  // Start the server
   const port = parseInt(process.env.PORT || "5000", 10);
+  
+  log(`🔍 Checking port availability for ${port}...`);
+  const portCheck = await checkPortAvailability(port);
+  
+  if (!portCheck.available) {
+    logError(`❌ ${portCheck.error}`);
+    
+    // Try to find an alternative port
+    log("🔍 Searching for alternative port...");
+    const alternativePort = await findAvailablePort(port + 1, 10);
+    
+    if (alternativePort) {
+      logError(`💡 Alternative port ${alternativePort} is available`);
+      logError(`   Run: PORT=${alternativePort} npm run dev`);
+    }
+    
+    process.exit(1);
+  }
+  
+  logSuccess(`✅ Port ${port} is available`);
+
   httpServer.listen(
     {
       port,
@@ -111,7 +150,47 @@ app.use((req, res, next) => {
       reusePort: true,
     },
     () => {
-      log(`serving on port ${port}`);
+      logSuccess(`🚀 Development server started successfully!`);
+      logSuccess(`📍 Server Details:`);
+      logSuccess(`   • Local:    http://localhost:${port}`);
+      logSuccess(`   • Network:  http://0.0.0.0:${port}`);
+      
+      if (process.env.NODE_ENV !== "production") {
+        logSuccess(`🔥 Development Features:`);
+        logSuccess(`   • HMR WebSocket: ws://localhost:${port}/vite-hmr`);
+        logSuccess(`   • API routes:    http://localhost:${port}/api`);
+        logSuccess(`   • Hot reload:    ✅ Enabled`);
+      }
     },
   );
+
+  // Enhanced error handling for server startup
+  httpServer.on('error', (error: NodeJS.ErrnoException) => {
+    logError(`❌ Failed to start server on port ${port}`);
+    
+    if (error.code === 'EADDRINUSE') {
+      logError(`💥 Port ${port} is already in use by another process`);
+    } else if (error.code === 'EACCES') {
+      logError(`🔒 Permission denied to bind to port ${port}`);
+    }
+    
+    process.exit(1);
+  });
+
+  // Handle graceful shutdown
+  process.on('SIGTERM', () => {
+    log('Received SIGTERM, shutting down gracefully...');
+    httpServer.close(() => {
+      log('Server closed successfully');
+      process.exit(0);
+    });
+  });
+
+  process.on('SIGINT', () => {
+    log('Received SIGINT, shutting down gracefully...');
+    httpServer.close(() => {
+      log('Server closed successfully');
+      process.exit(0);
+    });
+  });
 })();

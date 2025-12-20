@@ -1,12 +1,16 @@
 import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
-import { rm, readFile } from "fs/promises";
+import { rm, readFile, mkdir, copyFile, writeFile } from "fs/promises";
+import { existsSync } from "fs";
+import path from "path";
 
 // server deps to bundle to reduce openat(2) syscalls
-// which helps cold start times
+// which helps cold start times for Netlify Functions
 const allowlist = [
   "@google/generative-ai",
+  "@supabase/supabase-js",
   "axios",
+  "cheerio",
   "connect-pg-simple",
   "cors",
   "date-fns",
@@ -19,11 +23,13 @@ const allowlist = [
   "memorystore",
   "multer",
   "nanoid",
+  "node-fetch",
   "nodemailer",
   "openai",
   "passport",
   "passport-local",
   "pg",
+  "rss-parser",
   "stripe",
   "uuid",
   "ws",
@@ -35,10 +41,16 @@ const allowlist = [
 async function buildAll() {
   await rm("dist", { recursive: true, force: true });
 
-  console.log("building client...");
+  console.log("🏗️  Building for Netlify production deployment...");
+
+  // Create necessary directories
+  await mkdir("dist/functions", { recursive: true });
+  await mkdir("dist/public", { recursive: true });
+
+  console.log("📦 Building client (React SPA)...");
   await viteBuild();
 
-  console.log("building server...");
+  console.log("⚡ Building server (Netlify Function)...");
   const pkg = JSON.parse(await readFile("package.json", "utf-8"));
   const allDeps = [
     ...Object.keys(pkg.dependencies || {}),
@@ -46,6 +58,47 @@ async function buildAll() {
   ];
   const externals = allDeps.filter((dep) => !allowlist.includes(dep));
 
+  // Add postgres as external for Netlify Functions
+  externals.push("postgres");
+
+  // Build the Netlify function handler
+  await esbuild({
+    entryPoints: ["server/netlify-handler.ts"],
+    platform: "node",
+    bundle: true,
+    format: "cjs",
+    outfile: "dist/functions/api.js",
+    define: {
+      "process.env.NODE_ENV": '"production"',
+    },
+    minify: true,
+    external: externals,
+    logLevel: "info",
+  });
+
+  // Copy necessary files for production
+  console.log("📋 Copying production files...");
+  
+  // Copy package.json for dependency information
+  if (existsSync("package.json")) {
+    await copyFile("package.json", "dist/package.json");
+  }
+
+  // Copy migration files if they exist
+  if (existsSync("supabase/migrations")) {
+    await mkdir("dist/migrations", { recursive: true });
+    const { readdir } = await import("fs/promises");
+    const migrations = await readdir("supabase/migrations");
+    for (const migration of migrations) {
+      await copyFile(
+        path.join("supabase/migrations", migration),
+        path.join("dist/migrations", migration)
+      );
+    }
+  }
+
+  // Create a simple production server for non-Netlify deployments
+  console.log("🖥️  Creating production server...");
   await esbuild({
     entryPoints: ["server/index.ts"],
     platform: "node",
@@ -59,6 +112,13 @@ async function buildAll() {
     external: externals,
     logLevel: "info",
   });
+
+  console.log("✅ Netlify build completed successfully!");
+  console.log("📁 Build artifacts:");
+  console.log("   • Frontend: dist/public/ (served by Netlify CDN)");
+  console.log("   • Backend:  dist/functions/api.js (Netlify Function)");
+  console.log("   • Server:   dist/index.cjs (standalone production server)");
+  console.log("   • Assets:   dist/migrations/ (database migrations)");
 }
 
 buildAll().catch((err) => {

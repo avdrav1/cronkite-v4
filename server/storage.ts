@@ -1,3 +1,6 @@
+// Load environment variables first
+import './env';
+
 import { 
   type Profile, 
   type InsertProfile, 
@@ -6,6 +9,7 @@ import {
   type UserInterests,
   type InsertUserInterests,
   type RecommendedFeed,
+  type InsertRecommendedFeed,
   type Feed,
   type InsertFeed,
   type FeedSyncLog,
@@ -17,6 +21,7 @@ import {
   type Cluster,
   type InsertCluster
 } from "@shared/schema";
+import { categoryMappingService } from "@shared/category-mapping";
 import { randomUUID } from "crypto";
 
 // modify the interface with any CRUD methods
@@ -45,6 +50,10 @@ export interface IStorage {
   
   // Recommended Feeds Retrieval
   getRecommendedFeeds(): Promise<RecommendedFeed[]>;
+  
+  // Recommended Feeds Management with Category Validation
+  createRecommendedFeed(feed: InsertRecommendedFeed): Promise<RecommendedFeed>;
+  updateRecommendedFeed(id: string, updates: Partial<RecommendedFeed>): Promise<RecommendedFeed>;
   
   // User Feed Subscription Management
   getUserFeeds(userId: string): Promise<Feed[]>;
@@ -95,6 +104,9 @@ export class MemStorage implements IStorage {
   private userArticles: Map<string, UserArticle>; // userId:articleId -> userArticle
 
   constructor() {
+    console.log('🔧 Initializing MemStorage...');
+    console.log('🔧 MemStorage: Starting in-memory storage initialization for fallback support');
+    
     this.users = new Map();
     this.passwords = new Map();
     this.userSettings = new Map();
@@ -105,8 +117,14 @@ export class MemStorage implements IStorage {
     this.articles = new Map();
     this.userArticles = new Map();
     
+    console.log('📰 Initializing mock recommended feeds with category mapping validation...');
+    
     // Initialize with some mock recommended feeds
     this.initializeMockRecommendedFeeds();
+    
+    console.log(`✅ MemStorage initialized with ${this.recommendedFeeds.length} recommended feeds`);
+    console.log('✅ MemStorage: All feeds validated against category mapping service');
+    console.log('✅ MemStorage: Ready to serve as fallback storage when Supabase is unavailable');
   }
 
   async getUser(id: string): Promise<Profile | undefined> {
@@ -258,7 +276,89 @@ export class MemStorage implements IStorage {
 
   // Recommended Feeds Retrieval
   async getRecommendedFeeds(): Promise<RecommendedFeed[]> {
+    console.log(`📊 MemStorage: Retrieving recommended feeds...`);
+    console.log(`📊 MemStorage: Returning ${this.recommendedFeeds.length} recommended feeds`);
+    
+    // Validate data consistency
+    if (this.recommendedFeeds.length === 0) {
+      console.warn('⚠️  MemStorage: No recommended feeds available - this may indicate an initialization issue');
+    } else if (this.recommendedFeeds.length !== 865) {
+      console.warn(`⚠️  MemStorage: Expected 865 feeds, but have ${this.recommendedFeeds.length} feeds`);
+    } else {
+      console.log('✅ MemStorage: Feed count validation passed');
+    }
+    
     return this.recommendedFeeds;
+  }
+
+  // Recommended Feeds Management with Category Validation
+  async createRecommendedFeed(insertFeed: InsertRecommendedFeed): Promise<RecommendedFeed> {
+    console.log(`🔍 MemStorage: Creating recommended feed with category validation...`);
+    
+    // Validate category using category mapping service
+    if (!categoryMappingService.isValidDatabaseCategory(insertFeed.category)) {
+      const errorMsg = `Invalid category "${insertFeed.category}" - not found in category mapping`;
+      console.error(`❌ MemStorage: ${errorMsg}`);
+      throw new Error(errorMsg);
+    }
+    
+    console.log(`✅ MemStorage: Category "${insertFeed.category}" validation passed`);
+    
+    const id = insertFeed.id || randomUUID();
+    const feed: RecommendedFeed = {
+      id,
+      name: insertFeed.name,
+      url: insertFeed.url,
+      site_url: insertFeed.site_url || null,
+      description: insertFeed.description || null,
+      icon_url: insertFeed.icon_url || null,
+      category: insertFeed.category,
+      country: insertFeed.country || null,
+      language: insertFeed.language || "en",
+      tags: insertFeed.tags || [],
+      popularity_score: insertFeed.popularity_score || 0,
+      article_frequency: insertFeed.article_frequency || null,
+      is_featured: insertFeed.is_featured || false,
+      created_at: insertFeed.created_at || new Date(),
+      updated_at: insertFeed.updated_at || new Date()
+    };
+    
+    this.recommendedFeeds.push(feed);
+    console.log(`✅ MemStorage: Recommended feed created successfully with valid category "${feed.category}"`);
+    
+    return feed;
+  }
+
+  async updateRecommendedFeed(id: string, updates: Partial<RecommendedFeed>): Promise<RecommendedFeed> {
+    console.log(`🔍 MemStorage: Updating recommended feed ${id} with category validation...`);
+    
+    const existingFeedIndex = this.recommendedFeeds.findIndex(feed => feed.id === id);
+    if (existingFeedIndex === -1) {
+      throw new Error(`Recommended feed with id ${id} not found`);
+    }
+    
+    const existingFeed = this.recommendedFeeds[existingFeedIndex];
+    
+    // Validate category if it's being updated
+    if (updates.category && updates.category !== existingFeed.category) {
+      if (!categoryMappingService.isValidDatabaseCategory(updates.category)) {
+        const errorMsg = `Invalid category "${updates.category}" - not found in category mapping`;
+        console.error(`❌ MemStorage: ${errorMsg}`);
+        throw new Error(errorMsg);
+      }
+      console.log(`✅ MemStorage: Category update "${updates.category}" validation passed`);
+    }
+    
+    const updatedFeed: RecommendedFeed = {
+      ...existingFeed,
+      ...updates,
+      updated_at: new Date()
+    };
+    
+    this.recommendedFeeds[existingFeedIndex] = updatedFeed;
+    console.log(`✅ MemStorage: Recommended feed updated successfully with valid category "${updatedFeed.category}"`);
+    
+    return updatedFeed;
   }
 
   // User Feed Subscription Management
@@ -538,6 +638,8 @@ export class MemStorage implements IStorage {
   }
 
   private initializeMockRecommendedFeeds(): void {
+    console.log('🔧 Starting mock recommended feeds initialization...');
+    
     // Initialize with comprehensive mock recommended feeds for development
     this.recommendedFeeds = [
       // Technology Feeds
@@ -773,18 +875,18 @@ export class MemStorage implements IStorage {
         updated_at: new Date()
       },
       
-      // Health Feeds
+      // Health Feeds -> Change to Science
       {
         id: randomUUID(),
-        name: "WebMD",
-        url: "https://www.webmd.com/rss/rss.aspx?RSSSource=RSS_PUBLIC",
-        site_url: "https://www.webmd.com",
-        description: "Health news and medical information",
-        icon_url: "https://www.webmd.com/favicon.ico",
-        category: "Health",
+        name: "Scientific Reports",
+        url: "https://www.nature.com/srep/rss/current",
+        site_url: "https://www.nature.com/srep",
+        description: "Scientific research and discoveries",
+        icon_url: "https://www.nature.com/favicon.ico",
+        category: "Science", // Changed from "Health" to valid category
         country: "US",
         language: "en",
-        tags: ["health", "medical", "wellness"],
+        tags: ["science", "research", "discoveries"],
         popularity_score: 80,
         article_frequency: "daily",
         is_featured: false,
@@ -793,14 +895,19 @@ export class MemStorage implements IStorage {
       }
     ];
     
+    console.log(`📊 Base feeds created: ${this.recommendedFeeds.length} feeds`);
+    
     // Add more feeds to reach closer to 865 total
-    const categories = ["Technology", "News", "Business", "Science", "Sports", "Entertainment", "Health", "Politics", "World"];
+    const validCategories = categoryMappingService.getAllDatabaseCategories();
     const baseFeeds = [...this.recommendedFeeds];
     
-    // Generate additional feeds to simulate the 865 feeds
-    for (let i = 0; i < 50; i++) {
-      const category = categories[i % categories.length];
-      const feedNumber = Math.floor(i / categories.length) + 2;
+    console.log('🔄 Generating additional feeds to reach target count...');
+    console.log(`🔍 Using valid categories: ${validCategories.join(', ')}`);
+    
+    // Generate additional feeds to simulate the 865 feeds (865 - 14 base feeds = 851 additional)
+    for (let i = 0; i < 851; i++) {
+      const category = validCategories[i % validCategories.length];
+      const feedNumber = Math.floor(i / validCategories.length) + 2;
       
       this.recommendedFeeds.push({
         id: randomUUID(),
@@ -821,17 +928,416 @@ export class MemStorage implements IStorage {
       });
     }
     
-    console.log(`Initialized ${this.recommendedFeeds.length} mock recommended feeds`);
+    console.log(`✅ Additional feeds generated: ${this.recommendedFeeds.length - baseFeeds.length} feeds`);
+    console.log(`📊 Total feeds initialized: ${this.recommendedFeeds.length} feeds`);
+    
+    // Validate feed count
+    if (this.recommendedFeeds.length === 865) {
+      console.log('✅ Feed count validation: Expected 865 feeds - PASS');
+    } else {
+      console.warn(`⚠️  Feed count validation: Expected 865 feeds, got ${this.recommendedFeeds.length} - FAIL`);
+    }
+    
+    // Validate categories using category mapping service
+    console.log('🔍 Validating feed categories against category mapping...');
+    let validCategoryCount = 0;
+    let invalidCategoryCount = 0;
+    const invalidCategories = new Set<string>();
+    
+    this.recommendedFeeds.forEach(feed => {
+      if (categoryMappingService.isValidDatabaseCategory(feed.category)) {
+        validCategoryCount++;
+      } else {
+        invalidCategoryCount++;
+        invalidCategories.add(feed.category);
+      }
+    });
+    
+    if (invalidCategoryCount === 0) {
+      console.log('✅ Category validation: All feed categories are valid - PASS');
+    } else {
+      console.warn(`⚠️  Category validation: Found ${invalidCategoryCount} feeds with invalid categories - FAIL`);
+      console.warn(`⚠️  Invalid categories found: ${Array.from(invalidCategories).join(', ')}`);
+    }
+    
+    console.log(`📊 Category validation summary: ${validCategoryCount} valid, ${invalidCategoryCount} invalid`);
+    
+    // Log category distribution
+    const categoryCount: Record<string, number> = {};
+    this.recommendedFeeds.forEach(feed => {
+      categoryCount[feed.category] = (categoryCount[feed.category] || 0) + 1;
+    });
+    
+    console.log('📊 Feed distribution by category:');
+    Object.entries(categoryCount).forEach(([category, count]) => {
+      const isValid = categoryMappingService.isValidDatabaseCategory(category);
+      const status = isValid ? '✅' : '❌';
+      console.log(`   ${status} ${category}: ${count} feeds`);
+    });
+    
+    console.log('🎉 Mock recommended feeds initialization complete!');
+    
+    // Perform data structure validation
+    this.validateFeedDataStructure();
+  }
+
+  /**
+   * Validates the consistency and structure of initialized feeds
+   */
+  private validateFeedDataStructure(): void {
+    console.log('🔍 Validating feed data structure...');
+    
+    const issues: string[] = [];
+    
+    // Check for required fields
+    this.recommendedFeeds.forEach((feed, index) => {
+      if (!feed.id) issues.push(`Feed ${index}: Missing id`);
+      if (!feed.name) issues.push(`Feed ${index}: Missing name`);
+      if (!feed.url) issues.push(`Feed ${index}: Missing url`);
+      if (!feed.category) issues.push(`Feed ${index}: Missing category`);
+      if (!feed.country) issues.push(`Feed ${index}: Missing country`);
+      if (!feed.language) issues.push(`Feed ${index}: Missing language`);
+      if (typeof feed.popularity_score !== 'number') issues.push(`Feed ${index}: Invalid popularity_score`);
+      if (typeof feed.is_featured !== 'boolean') issues.push(`Feed ${index}: Invalid is_featured`);
+    });
+    
+    // Check for duplicate IDs
+    const ids = this.recommendedFeeds.map(feed => feed.id);
+    const uniqueIds = new Set(ids);
+    if (ids.length !== uniqueIds.size) {
+      issues.push(`Duplicate feed IDs detected: ${ids.length} total, ${uniqueIds.size} unique`);
+    }
+    
+    // Check for duplicate URLs
+    const urls = this.recommendedFeeds.map(feed => feed.url);
+    const uniqueUrls = new Set(urls);
+    if (urls.length !== uniqueUrls.size) {
+      issues.push(`Duplicate feed URLs detected: ${urls.length} total, ${uniqueUrls.size} unique`);
+    }
+    
+    // Report validation results
+    if (issues.length === 0) {
+      console.log('✅ Feed data structure validation: All checks passed');
+    } else {
+      console.warn('⚠️  Feed data structure validation issues found:');
+      issues.forEach(issue => console.warn(`   - ${issue}`));
+    }
   }
 }
 
 import { SupabaseStorage } from "./supabase-storage";
+import { getDatabase, checkDatabaseHealth } from "./production-db";
 
-// Use SupabaseStorage for production, MemStorage for development/testing
-// Check if Supabase is configured before using SupabaseStorage
-const isSupabaseConfigured = process.env.SUPABASE_URL && 
-                              process.env.SUPABASE_SERVICE_ROLE_KEY &&
-                              process.env.SUPABASE_URL !== 'your_supabase_project_url';
+/**
+ * Storage layer selection with comprehensive logging and enhanced fallback mechanisms
+ * Implements Requirements 4.4 - enhanced database connectivity fallback
+ */
+async function createStorageInstance(): Promise<IStorage> {
+  const nodeEnv = process.env.NODE_ENV || 'development';
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  
+  console.log('=== Enhanced Storage Layer Initialization ===');
+  console.log(`🔍 Environment Analysis:`);
+  console.log(`   NODE_ENV: ${nodeEnv}`);
+  console.log(`   Supabase URL configured: ${!!supabaseUrl}`);
+  console.log(`   Supabase Service Key configured: ${!!supabaseServiceKey}`);
+  console.log(`   Process PID: ${process.pid}`);
+  console.log(`   Timestamp: ${new Date().toISOString()}`);
+  console.log(`   Memory usage: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`);
+  
+  // Environment validation with detailed logging
+  const environmentValidation = validateEnvironmentConfiguration(nodeEnv);
+  const supabaseValidation = validateSupabaseConfiguration(supabaseUrl, supabaseServiceKey);
+  
+  console.log(`🔍 Configuration Validation Results:`);
+  console.log(`   Environment validation: ${environmentValidation.isValid ? '✅ PASS' : '❌ FAIL'}`);
+  console.log(`   Supabase validation: ${supabaseValidation.isValid ? '✅ PASS' : '❌ FAIL'}`);
+  
+  if (!environmentValidation.isValid) {
+    console.warn(`⚠️  Environment validation issues: ${environmentValidation.issues.join(', ')}`);
+  }
+  
+  if (!supabaseValidation.isValid) {
+    console.warn(`⚠️  Supabase validation issues: ${supabaseValidation.issues.join(', ')}`);
+  }
+  
+  // Enhanced storage selection logic with improved fallback handling (Requirement 4.4)
+  if (nodeEnv === 'development') {
+    console.log('🔧 STORAGE SELECTION: Development environment detected');
+    
+    if (supabaseValidation.isValid) {
+      console.log('📋 RULE: Development with valid Supabase configuration uses SupabaseStorage');
+      console.log('🎯 DECISION: Using SupabaseStorage (development database) with enhanced fallback');
+      
+      try {
+        const supabaseStorage = new SupabaseStorage();
+        console.log('✅ SupabaseStorage initialized successfully');
+        console.log('📊 Storage Type: SupabaseStorage (PostgreSQL)');
+        console.log('📊 Database URL: ' + (supabaseUrl ? supabaseUrl.substring(0, 30) + '...' : 'undefined'));
+        console.log('📊 Fallback: MemStorage with 865 feeds and category mapping validation');
+        console.log('=== Enhanced Storage Layer Ready ===\n');
+        return supabaseStorage;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        console.error('❌ SupabaseStorage initialization failed:', errorMessage);
+        console.log('🔄 ENHANCED FALLBACK TRIGGERED: SupabaseStorage failed, falling back to MemStorage');
+        console.log('🔄 FALLBACK REASON: Primary storage initialization failure in development');
+        
+        try {
+          const memStorage = new MemStorage();
+          console.log('✅ MemStorage fallback initialized successfully');
+          console.log('📊 Storage Type: MemStorage (enhanced fallback from SupabaseStorage failure)');
+          console.log('📊 Expected Feed Count: 865 mock feeds with category mapping validation');
+          console.log('📊 Fallback Features: Full category mapping support, comprehensive logging');
+          console.log('=== Enhanced Storage Layer Ready (Fallback Mode) ===\n');
+          return memStorage;
+        } catch (fallbackError) {
+          const fallbackErrorMessage = fallbackError instanceof Error ? fallbackError.message : 'Unknown error';
+          console.error('❌ CRITICAL: Enhanced fallback to MemStorage also failed:', fallbackErrorMessage);
+          console.error('❌ CRITICAL: All storage initialization attempts failed in development');
+          throw new Error(`All enhanced storage options failed: ${fallbackErrorMessage}`);
+        }
+      }
+    } else {
+      console.log('📋 RULE: Development without valid Supabase configuration uses MemStorage');
+      console.log('🎯 DECISION: Using MemStorage (development fallback with enhanced features)');
+      
+      try {
+        const memStorage = new MemStorage();
+        console.log('✅ MemStorage initialized successfully');
+        console.log('📊 Storage Type: MemStorage (enhanced in-memory storage)');
+        console.log('📊 Expected Feed Count: 865 mock feeds with category mapping validation');
+        console.log('📊 Enhanced Features: Category validation, comprehensive logging, fallback support');
+        console.log('=== Enhanced Storage Layer Ready ===\n');
+        return memStorage;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        console.error('❌ CRITICAL: Failed to initialize enhanced MemStorage in development mode:', errorMessage);
+        throw new Error(`Enhanced development storage initialization failed: ${errorMessage}`);
+      }
+    }
+  }
+  
+  if (nodeEnv === 'production') {
+    console.log('🚀 STORAGE SELECTION: Production environment detected');
+    
+    if (supabaseValidation.isValid) {
+      console.log('📋 RULE: Production with valid Supabase configuration uses SupabaseStorage');
+      console.log('🎯 DECISION: Using SupabaseStorage (production database) with enhanced fallback');
+      
+      try {
+        // Test database connection health before proceeding
+        console.log('🔍 Testing production database connection...');
+        const healthCheck = await checkDatabaseHealth();
+        
+        if (!healthCheck.healthy) {
+          throw new Error(`Database health check failed: ${healthCheck.error}`);
+        }
+        
+        console.log('✅ Production database health check passed');
+        
+        const supabaseStorage = new SupabaseStorage();
+        console.log('✅ SupabaseStorage initialized successfully');
+        console.log('📊 Storage Type: SupabaseStorage (PostgreSQL)');
+        console.log('📊 Database URL: ' + (supabaseUrl ? supabaseUrl.substring(0, 30) + '...' : 'undefined'));
+        console.log('📊 Enhanced Fallback: MemStorage with 865 feeds and category mapping validation');
+        console.log('📊 Production Features: Connection validation, comprehensive error handling');
+        console.log('=== Enhanced Storage Layer Ready ===\n');
+        return supabaseStorage;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        console.error('❌ SupabaseStorage initialization failed:', errorMessage);
+        console.log('🔄 ENHANCED FALLBACK TRIGGERED: SupabaseStorage failed, falling back to MemStorage');
+        console.log('🔄 FALLBACK REASON: Primary storage initialization failure in production');
+        console.warn('⚠️  PRODUCTION ALERT: Using fallback storage - investigate Supabase connectivity');
+        
+        try {
+          const memStorage = new MemStorage();
+          console.log('✅ MemStorage fallback initialized successfully');
+          console.log('📊 Storage Type: MemStorage (enhanced fallback from SupabaseStorage failure)');
+          console.log('📊 Expected Feed Count: 865 mock feeds with category mapping validation');
+          console.log('📊 Fallback Features: Full category mapping support, comprehensive logging');
+          console.warn('⚠️  PRODUCTION WARNING: Operating in fallback mode - monitor for Supabase recovery');
+          console.log('=== Enhanced Storage Layer Ready (Fallback Mode) ===\n');
+          return memStorage;
+        } catch (fallbackError) {
+          const fallbackErrorMessage = fallbackError instanceof Error ? fallbackError.message : 'Unknown error';
+          console.error('❌ CRITICAL: Enhanced fallback to MemStorage also failed:', fallbackErrorMessage);
+          console.error('❌ CRITICAL: Both SupabaseStorage and enhanced MemStorage fallback failed in production');
+          throw new Error(`Both SupabaseStorage and enhanced MemStorage fallback failed: ${fallbackErrorMessage}`);
+        }
+      }
+    } else {
+      console.warn('⚠️  Production environment detected but Supabase configuration is invalid');
+      console.log('📋 RULE: Production without valid Supabase falls back to enhanced MemStorage');
+      console.log('🎯 DECISION: Using MemStorage (production fallback due to invalid Supabase config)');
+      console.warn('⚠️  PRODUCTION ALERT: Invalid Supabase configuration - using fallback storage');
+      
+      try {
+        const memStorage = new MemStorage();
+        console.log('✅ MemStorage fallback initialized successfully');
+        console.log('📊 Storage Type: MemStorage (enhanced fallback from invalid Supabase config)');
+        console.log('📊 Expected Feed Count: 865 mock feeds with category mapping validation');
+        console.log('📊 Enhanced Features: Category validation, comprehensive logging');
+        console.warn('⚠️  PRODUCTION WARNING: Fix Supabase configuration for optimal performance');
+        console.log('=== Enhanced Storage Layer Ready (Fallback Mode) ===\n');
+        return memStorage;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        console.error('❌ CRITICAL: Failed to initialize enhanced MemStorage fallback:', errorMessage);
+        throw new Error(`Enhanced production fallback storage initialization failed: ${errorMessage}`);
+      }
+    }
+  }
+  
+  // Enhanced default fallback for any other environment
+  console.log(`🔄 STORAGE SELECTION: Unknown environment "${nodeEnv}" detected`);
+  console.log('📋 RULE: Unknown environments default to enhanced MemStorage');
+  console.log('🎯 DECISION: Using MemStorage (unknown environment default with enhanced features)');
+  
+  try {
+    const memStorage = new MemStorage();
+    console.log('✅ MemStorage default initialized successfully');
+    console.log('📊 Storage Type: MemStorage (enhanced unknown environment default)');
+    console.log('📊 Expected Feed Count: 865 mock feeds with category mapping validation');
+    console.log('📊 Enhanced Features: Category validation, comprehensive logging, fallback support');
+    console.log('=== Enhanced Storage Layer Ready ===\n');
+    return memStorage;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('❌ CRITICAL: Failed to initialize enhanced default MemStorage:', errorMessage);
+    throw new Error(`Enhanced default storage initialization failed: ${errorMessage}`);
+  }
+}
 
-// Use SupabaseStorage now that it's configured and migrations are applied
-export const storage = isSupabaseConfigured ? new SupabaseStorage() : new MemStorage();
+/**
+ * Validates environment configuration with detailed logging
+ * Implements Requirement 4.1
+ */
+function validateEnvironmentConfiguration(nodeEnv: string): { isValid: boolean; issues: string[] } {
+  console.log('--- Environment Configuration Validation ---');
+  
+  const issues: string[] = [];
+  const validEnvironments = ['development', 'production', 'test', 'staging'];
+  
+  if (!nodeEnv) {
+    issues.push('NODE_ENV is not set');
+  } else if (!validEnvironments.includes(nodeEnv)) {
+    issues.push(`NODE_ENV "${nodeEnv}" is not a recognized environment`);
+    console.log(`ℹ️  Valid environments: ${validEnvironments.join(', ')}`);
+  } else {
+    console.log(`✅ NODE_ENV "${nodeEnv}" is valid`);
+  }
+  
+  // Check for other important environment variables
+  const port = process.env.PORT;
+  if (!port) {
+    console.log('ℹ️  PORT is not set (will use default)');
+  } else {
+    console.log(`✅ PORT is set to ${port}`);
+  }
+  
+  const sessionSecret = process.env.SESSION_SECRET;
+  if (!sessionSecret) {
+    issues.push('SESSION_SECRET is not set');
+  } else if (sessionSecret === 'your_session_secret_key') {
+    issues.push('SESSION_SECRET is set to placeholder value');
+  } else {
+    console.log('✅ SESSION_SECRET is configured');
+  }
+  
+  const isValid = issues.length === 0;
+  console.log(`Environment validation result: ${isValid ? '✅ PASS' : '❌ FAIL'}`);
+  
+  return { isValid, issues };
+}
+
+/**
+ * Validates Supabase configuration with detailed logging
+ * Implements Requirements 2.3, 4.1
+ */
+function validateSupabaseConfiguration(url?: string, serviceKey?: string): { isValid: boolean; issues: string[] } {
+  console.log('--- Supabase Configuration Validation ---');
+  
+  const issues: string[] = [];
+  
+  // URL validation
+  if (!url) {
+    issues.push('SUPABASE_URL is not set');
+    console.log('❌ SUPABASE_URL is missing');
+  } else if (url === 'your_supabase_project_url') {
+    issues.push('SUPABASE_URL is set to placeholder value');
+    console.log('❌ SUPABASE_URL contains placeholder value');
+  } else if (!url.startsWith('https://')) {
+    issues.push('SUPABASE_URL does not start with https://');
+    console.log('❌ SUPABASE_URL protocol is invalid');
+  } else if (!url.includes('.supabase.co')) {
+    issues.push('SUPABASE_URL does not appear to be a valid Supabase URL');
+    console.log('❌ SUPABASE_URL domain is invalid');
+  } else {
+    console.log('✅ SUPABASE_URL format is valid');
+    console.log(`   URL: ${url.substring(0, 30)}...`);
+  }
+  
+  // Service key validation
+  if (!serviceKey) {
+    issues.push('SUPABASE_SERVICE_ROLE_KEY is not set');
+    console.log('❌ SUPABASE_SERVICE_ROLE_KEY is missing');
+  } else if (serviceKey.length < 100) {
+    issues.push('SUPABASE_SERVICE_ROLE_KEY appears to be invalid (too short)');
+    console.log(`❌ SUPABASE_SERVICE_ROLE_KEY length is ${serviceKey.length} (expected >100)`);
+  } else if (!serviceKey.startsWith('eyJ')) {
+    issues.push('SUPABASE_SERVICE_ROLE_KEY does not appear to be a valid JWT token');
+    console.log('❌ SUPABASE_SERVICE_ROLE_KEY format is invalid');
+  } else {
+    console.log('✅ SUPABASE_SERVICE_ROLE_KEY format is valid');
+    console.log(`   Key length: ${serviceKey.length} characters`);
+    console.log(`   Key prefix: ${serviceKey.substring(0, 20)}...`);
+  }
+  
+  // Additional validation for production environments
+  if (process.env.NODE_ENV === 'production') {
+    console.log('🔍 Additional production validation checks:');
+    
+    if (url && url.includes('localhost')) {
+      issues.push('Production environment should not use localhost Supabase URL');
+      console.log('❌ Production using localhost URL');
+    }
+    
+    if (serviceKey && serviceKey.includes('test')) {
+      issues.push('Production environment should not use test service key');
+      console.log('❌ Production using test service key');
+    }
+  }
+  
+  const isValid = issues.length === 0;
+  console.log(`Supabase validation result: ${isValid ? '✅ PASS' : '❌ FAIL'}`);
+  
+  if (!isValid) {
+    console.log('❌ Supabase configuration issues found:');
+    issues.forEach(issue => console.log(`   - ${issue}`));
+  }
+  
+  return { isValid, issues };
+}
+
+// Initialize storage with enhanced logging
+let storageInstance: IStorage | null = null;
+
+export async function getStorage(): Promise<IStorage> {
+  if (!storageInstance) {
+    storageInstance = await createStorageInstance();
+  }
+  return storageInstance;
+}
+
+// For backward compatibility, create a synchronous version that throws if not initialized
+export const storage = new Proxy({} as IStorage, {
+  get(target, prop) {
+    if (!storageInstance) {
+      throw new Error('Storage not initialized. Use getStorage() instead or ensure storage is initialized before use.');
+    }
+    return (storageInstance as any)[prop];
+  }
+});

@@ -35,9 +35,9 @@ describe('Property 5: Onboarding completion workflow', () => {
         const data = await response.json();
         
         // Property: Setting interests should succeed and return the interests
-        expect(response.ok).toBe(true);
-        expect(data.message).toBe('User interests updated successfully');
-        expect(data.interests).toEqual(interests);
+        return response.ok === true &&
+               data.message === 'User interests updated successfully' &&
+               JSON.stringify(data.interests) === JSON.stringify(interests);
       }
     ), { numRuns: 100 });
   });
@@ -69,9 +69,9 @@ describe('Property 5: Onboarding completion workflow', () => {
         const data = await response.json();
         
         // Property: Feed subscription should succeed and return count
-        expect(response.ok).toBe(true);
-        expect(data.message).toBe('Successfully subscribed to feeds');
-        expect(data.subscribed_count).toBe(feedIds.length);
+        return response.ok === true &&
+               data.message === 'Successfully subscribed to feeds' &&
+               data.subscribed_count === feedIds.length;
       }
     ), { numRuns: 100 });
   });
@@ -108,16 +108,17 @@ describe('Property 5: Onboarding completion workflow', () => {
         const data = await response.json();
         
         // Property: Sync should start for all provided feeds
-        expect(response.ok).toBe(true);
-        expect(data.message).toBe('Feed synchronization started');
-        expect(data.total_feeds).toBe(feedIds.length);
-        expect(data.sync_results).toHaveLength(feedIds.length);
+        const basicChecks = response.ok === true &&
+                           data.message === 'Feed synchronization started' &&
+                           data.total_feeds === feedIds.length &&
+                           data.sync_results.length === feedIds.length;
         
-        // All sync results should have 'started' status
-        data.sync_results.forEach((result: any) => {
-          expect(result.status).toBe('started');
-          expect(feedIds).toContain(result.feedId);
-        });
+        if (!basicChecks) return false;
+        
+        // All sync results should have 'started' status and correct feedId
+        return data.sync_results.every((result: any) => 
+          result.status === 'started' && feedIds.includes(result.feedId)
+        );
       }
     ), { numRuns: 100 });
   });
@@ -185,18 +186,20 @@ describe('Property 3: Feed search functionality', () => {
         const data = await response.json();
         
         // Property: Search results should match the query
-        expect(response.ok).toBe(true);
-        expect(data.feeds).toBeDefined();
-        expect(Array.isArray(data.feeds)).toBe(true);
+        const basicChecks = response.ok === true &&
+                           data.feeds !== undefined &&
+                           Array.isArray(data.feeds);
+        
+        if (!basicChecks) return false;
         
         // All returned feeds should match the search criteria
-        data.feeds.forEach((feed: any) => {
+        return data.feeds.every((feed: any) => {
           const matchesSearch = 
             feed.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
             feed.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
             feed.tags?.some((tag: string) => tag.toLowerCase().includes(searchQuery.toLowerCase()));
           
-          expect(matchesSearch).toBe(true);
+          return matchesSearch;
         });
       }
     ), { numRuns: 100 });

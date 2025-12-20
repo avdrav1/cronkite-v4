@@ -7,6 +7,7 @@ import {
   type UserInterests,
   type InsertUserInterests,
   type RecommendedFeed,
+  type InsertRecommendedFeed,
   type Feed,
   type InsertFeed,
   type FeedSyncLog,
@@ -18,54 +19,336 @@ import {
   type Cluster,
   type InsertCluster
 } from "@shared/schema";
+import { categoryMappingService } from "@shared/category-mapping";
 import { type IStorage } from "./storage";
 
 export class SupabaseStorage implements IStorage {
   private supabase;
+  private connectionValidated: boolean = false;
+  private fallbackStorage?: IStorage;
 
   constructor() {
+    console.log('🚀 Initializing SupabaseStorage...');
+    
     const supabaseUrl = process.env.SUPABASE_URL;
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     
     if (!supabaseUrl || !supabaseServiceKey) {
-      throw new Error('Missing Supabase configuration. Please check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables.');
+      const errorMsg = 'Missing Supabase configuration. Please check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables.';
+      console.error('❌ SupabaseStorage initialization failed:', errorMsg);
+      throw new Error(errorMsg);
     }
     
+    console.log('🔗 Creating Supabase client connection...');
     this.supabase = createClient(supabaseUrl, supabaseServiceKey, {
       auth: {
         autoRefreshToken: false,
         persistSession: false
       }
     });
+    
+    console.log('✅ SupabaseStorage client initialized successfully');
+    
+    // Initialize fallback storage immediately to ensure it's always available
+    // Don't await this to avoid blocking constructor
+    this.initializeFallback().catch(error => {
+      console.error('❌ SupabaseStorage: Failed to initialize fallback during construction:', error);
+    });
+    
+    // Initialize connection validation
+    this.validateConnection();
+  }
+
+  /**
+   * Validates Supabase connection and sets up fallback if needed
+   * Implements Requirements 4.4 - enhanced connection validation and comprehensive logging
+   */
+  private async validateConnection(): Promise<void> {
+    const startTime = Date.now();
+    
+    try {
+      console.log('🔍 SupabaseStorage: Validating database connection...');
+      console.log(`🔍 SupabaseStorage: Connection attempt started at ${new Date().toISOString()}`);
+      
+      // Test connection with a simple query with timeout
+      const connectionPromise = this.supabase
+        .from('profiles')
+        .select('count')
+        .limit(1);
+      
+      // Add timeout to prevent hanging connections
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Connection timeout after 10 seconds')), 10000);
+      });
+      
+      const { data, error } = await Promise.race([connectionPromise, timeoutPromise]) as any;
+      
+      const duration = Date.now() - startTime;
+      
+      if (error) {
+        console.warn('⚠️  SupabaseStorage: Connection validation failed:', error.message);
+        console.warn(`⚠️  SupabaseStorage: Connection attempt duration: ${duration}ms`);
+        console.warn('⚠️  SupabaseStorage: Database may be unavailable or misconfigured');
+        console.warn('⚠️  SupabaseStorage: Possible causes:');
+        console.warn('     - Network connectivity issues');
+        console.warn('     - Invalid database credentials');
+        console.warn('     - Database server downtime');
+        console.warn('     - Firewall or security group restrictions');
+        console.warn('⚠️  SupabaseStorage: Initializing fallback storage...');
+        
+        this.connectionValidated = false;
+        await this.initializeFallback();
+      } else {
+        console.log('✅ SupabaseStorage: Database connection validated successfully');
+        console.log(`✅ SupabaseStorage: Connection established in ${duration}ms`);
+        console.log('✅ SupabaseStorage: Database is accessible and responding');
+        this.connectionValidated = true;
+      }
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      
+      console.warn('⚠️  SupabaseStorage: Connection validation error:', errorMessage);
+      console.warn(`⚠️  SupabaseStorage: Connection attempt duration: ${duration}ms`);
+      console.warn('⚠️  SupabaseStorage: Connection validation failed due to exception');
+      
+      // Enhanced error categorization and logging
+      if (errorMessage.includes('timeout')) {
+        console.warn('⚠️  SupabaseStorage: Error type: CONNECTION TIMEOUT');
+        console.warn('⚠️  SupabaseStorage: The database server is not responding within the expected time');
+        console.warn('⚠️  SupabaseStorage: This may indicate network issues or server overload');
+      } else if (errorMessage.includes('ENOTFOUND') || errorMessage.includes('ECONNREFUSED')) {
+        console.warn('⚠️  SupabaseStorage: Error type: NETWORK ERROR');
+        console.warn('⚠️  SupabaseStorage: Cannot reach the database server');
+        console.warn('⚠️  SupabaseStorage: Check network connectivity and database URL');
+      } else if (errorMessage.includes('authentication') || errorMessage.includes('unauthorized')) {
+        console.warn('⚠️  SupabaseStorage: Error type: AUTHENTICATION ERROR');
+        console.warn('⚠️  SupabaseStorage: Invalid credentials or insufficient permissions');
+        console.warn('⚠️  SupabaseStorage: Check SUPABASE_SERVICE_ROLE_KEY configuration');
+      } else {
+        console.warn('⚠️  SupabaseStorage: Error type: UNKNOWN ERROR');
+        console.warn('⚠️  SupabaseStorage: Unexpected error during connection validation');
+      }
+      
+      console.warn('⚠️  SupabaseStorage: Will attempt to use fallback storage for operations');
+      this.connectionValidated = false;
+      await this.initializeFallback();
+    }
+  }
+
+  /**
+   * Initializes MemStorage as fallback when Supabase is unavailable
+   * Implements Requirements 4.4 - enhanced fallback with proper category mapping and comprehensive logging
+   */
+  private async initializeFallback(): Promise<void> {
+    const startTime = Date.now();
+    
+    try {
+      console.log('🔄 SupabaseStorage: Initializing MemStorage fallback...');
+      console.log('🔄 SupabaseStorage: Fallback initialization started due to Supabase unavailability');
+      
+      // Import MemStorage dynamically to avoid circular dependency
+      const storageModule = await import('./storage');
+      this.fallbackStorage = new storageModule.MemStorage();
+      
+      const duration = Date.now() - startTime;
+      
+      console.log('✅ SupabaseStorage: MemStorage fallback initialized successfully');
+      console.log(`✅ SupabaseStorage: Fallback initialization completed in ${duration}ms`);
+      console.log('📊 SupabaseStorage: Fallback will provide 865 mock feeds when Supabase is unavailable');
+      console.log('📊 SupabaseStorage: Fallback includes proper category mapping validation');
+      console.log('📊 SupabaseStorage: All fallback feeds use valid database category names');
+      
+      // Validate that fallback storage has proper category mapping
+      try {
+        const fallbackFeeds = await this.fallbackStorage.getRecommendedFeeds();
+        console.log(`📊 SupabaseStorage: Fallback validation - ${fallbackFeeds.length} feeds available`);
+        
+        // Check category mapping in fallback feeds
+        const { categoryMappingService } = await import('@shared/category-mapping');
+        let validCategoryCount = 0;
+        let invalidCategoryCount = 0;
+        const invalidCategories = new Set<string>();
+        
+        fallbackFeeds.forEach(feed => {
+          if (categoryMappingService.isValidDatabaseCategory(feed.category)) {
+            validCategoryCount++;
+          } else {
+            invalidCategoryCount++;
+            invalidCategories.add(feed.category);
+          }
+        });
+        
+        if (invalidCategoryCount === 0) {
+          console.log('✅ SupabaseStorage: Fallback category validation - All categories are properly mapped');
+        } else {
+          console.warn(`⚠️  SupabaseStorage: Fallback category validation - ${invalidCategoryCount} feeds have invalid categories`);
+          console.warn(`⚠️  SupabaseStorage: Invalid categories in fallback: ${Array.from(invalidCategories).join(', ')}`);
+        }
+        
+        console.log(`📊 SupabaseStorage: Fallback category summary - ${validCategoryCount} valid, ${invalidCategoryCount} invalid`);
+        
+      } catch (validationError) {
+        console.warn('⚠️  SupabaseStorage: Failed to validate fallback storage categories:', 
+          validationError instanceof Error ? validationError.message : 'Unknown error');
+      }
+      
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      
+      console.error('❌ SupabaseStorage: Failed to initialize fallback storage:', errorMessage);
+      console.error(`❌ SupabaseStorage: Fallback initialization failed after ${duration}ms`);
+      console.error('❌ SupabaseStorage: System will attempt direct Supabase operations despite connection issues');
+      console.error('❌ SupabaseStorage: This may result in operation failures when Supabase is unavailable');
+      console.error('❌ SupabaseStorage: Consider investigating MemStorage initialization issues');
+      
+      // Enhanced error categorization for fallback failures
+      if (errorMessage.includes('Cannot resolve module')) {
+        console.error('❌ SupabaseStorage: Fallback error type: MODULE RESOLUTION');
+        console.error('❌ SupabaseStorage: Cannot import MemStorage module - check file paths');
+      } else if (errorMessage.includes('out of memory') || errorMessage.includes('ENOMEM')) {
+        console.error('❌ SupabaseStorage: Fallback error type: MEMORY ERROR');
+        console.error('❌ SupabaseStorage: Insufficient memory to initialize fallback storage');
+      } else {
+        console.error('❌ SupabaseStorage: Fallback error type: UNKNOWN ERROR');
+        console.error('❌ SupabaseStorage: Unexpected error during fallback initialization');
+      }
+    }
+  }
+
+  /**
+   * Executes operation with automatic fallback to MemStorage if Supabase fails
+   * Implements Requirements 4.4 - enhanced fallback mechanisms with comprehensive logging
+   */
+  private async executeWithFallback<T>(
+    operation: () => Promise<T>,
+    fallbackOperation?: () => Promise<T>,
+    operationName: string = 'operation'
+  ): Promise<T> {
+    const startTime = Date.now();
+    
+    try {
+      // If connection was never validated, try to validate it now
+      if (!this.connectionValidated) {
+        console.log(`🔍 SupabaseStorage: Connection not validated for ${operationName}, attempting validation...`);
+        await this.validateConnection();
+      }
+      
+      console.log(`🔄 SupabaseStorage: Executing ${operationName} via Supabase...`);
+      
+      // Attempt the primary operation
+      const result = await operation();
+      const duration = Date.now() - startTime;
+      
+      console.log(`✅ SupabaseStorage: ${operationName} completed successfully in ${duration}ms`);
+      return result;
+      
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      
+      console.warn(`⚠️  SupabaseStorage: ${operationName} failed after ${duration}ms:`, errorMessage);
+      
+      // Enhanced error categorization and logging
+      if (errorMessage.includes('timeout')) {
+        console.warn(`⚠️  SupabaseStorage: ${operationName} error type: TIMEOUT`);
+        console.warn(`⚠️  SupabaseStorage: Operation exceeded time limit - database may be overloaded`);
+      } else if (errorMessage.includes('ENOTFOUND') || errorMessage.includes('ECONNREFUSED')) {
+        console.warn(`⚠️  SupabaseStorage: ${operationName} error type: NETWORK ERROR`);
+        console.warn(`⚠️  SupabaseStorage: Cannot reach database server during operation`);
+      } else if (errorMessage.includes('authentication') || errorMessage.includes('unauthorized')) {
+        console.warn(`⚠️  SupabaseStorage: ${operationName} error type: AUTHENTICATION ERROR`);
+        console.warn(`⚠️  SupabaseStorage: Invalid credentials during operation`);
+      } else if (errorMessage.includes('relation') && errorMessage.includes('does not exist')) {
+        console.warn(`⚠️  SupabaseStorage: ${operationName} error type: SCHEMA ERROR`);
+        console.warn(`⚠️  SupabaseStorage: Database table or relation missing - check migrations`);
+      } else {
+        console.warn(`⚠️  SupabaseStorage: ${operationName} error type: UNKNOWN ERROR`);
+      }
+      
+      // If we have a fallback storage and a fallback operation, use it
+      if (this.fallbackStorage && fallbackOperation) {
+        console.log(`🔄 SupabaseStorage: Using MemStorage fallback for ${operationName}`);
+        console.log(`🔄 SupabaseStorage: Fallback ensures operation continuity despite Supabase issues`);
+        
+        try {
+          const fallbackStartTime = Date.now();
+          const fallbackResult = await fallbackOperation();
+          const fallbackDuration = Date.now() - fallbackStartTime;
+          
+          console.log(`✅ SupabaseStorage: ${operationName} completed via fallback in ${fallbackDuration}ms`);
+          console.log(`✅ SupabaseStorage: Fallback operation successful - user experience preserved`);
+          
+          return fallbackResult;
+        } catch (fallbackError) {
+          const fallbackErrorMessage = fallbackError instanceof Error ? fallbackError.message : 'Unknown error';
+          console.error(`❌ SupabaseStorage: Fallback for ${operationName} also failed:`, fallbackErrorMessage);
+          console.error(`❌ SupabaseStorage: Both primary and fallback operations failed`);
+          console.error(`❌ SupabaseStorage: This indicates a critical system issue`);
+          
+          // Re-throw the original error since fallback also failed
+          throw error;
+        }
+      }
+      
+      // If no fallback available, re-throw the error
+      console.error(`❌ SupabaseStorage: ${operationName} failed and no fallback available`);
+      console.error(`❌ SupabaseStorage: No fallback operation provided for ${operationName}`);
+      console.error(`❌ SupabaseStorage: Operation will fail completely`);
+      throw error;
+    }
   }
 
   // User Management
   async getUser(id: string): Promise<Profile | undefined> {
-    const { data, error } = await this.supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', id)
-      .single();
-    
-    if (error || !data) {
-      return undefined;
-    }
-    
-    return data as Profile;
+    return this.executeWithFallback(
+      async () => {
+        const { data, error } = await this.supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', id)
+          .single();
+        
+        if (error || !data) {
+          return undefined;
+        }
+        
+        return data as Profile;
+      },
+      async () => {
+        if (this.fallbackStorage) {
+          return await this.fallbackStorage.getUser(id);
+        }
+        return undefined;
+      },
+      'getUser'
+    );
   }
 
   async getUserByEmail(email: string): Promise<Profile | undefined> {
-    const { data, error } = await this.supabase
-      .from('profiles')
-      .select('*')
-      .eq('email', email)
-      .single();
-    
-    if (error || !data) {
-      return undefined;
-    }
-    
-    return data as Profile;
+    return this.executeWithFallback(
+      async () => {
+        const { data, error } = await this.supabase
+          .from('profiles')
+          .select('*')
+          .eq('email', email)
+          .single();
+        
+        if (error || !data) {
+          return undefined;
+        }
+        
+        return data as Profile;
+      },
+      async () => {
+        if (this.fallbackStorage) {
+          return await this.fallbackStorage.getUserByEmail(email);
+        }
+        return undefined;
+      },
+      'getUserByEmail'
+    );
   }
 
   async createUser(user: InsertProfile): Promise<Profile> {
@@ -129,16 +412,24 @@ export class SupabaseStorage implements IStorage {
       throw new Error(`Failed to create auth user: ${authError?.message}`);
     }
     
-    // Create profile with the auth user ID
-    const profileData: InsertProfile = {
-      ...user,
-      id: authData.user.id
-    };
+    // Check if profile already exists
+    let profile = await this.getUser(authData.user.id);
     
-    const profile = await this.createUser(profileData);
+    if (!profile) {
+      // Create profile with the auth user ID
+      const profileData: InsertProfile = {
+        ...user,
+        id: authData.user.id
+      };
+      
+      profile = await this.createUser(profileData);
+    }
     
-    // Create default user settings
-    await this.createUserSettings(profile.id);
+    // Create default user settings if they don't exist
+    const existingSettings = await this.getUserSettings(profile.id);
+    if (!existingSettings) {
+      await this.createUserSettings(profile.id);
+    }
     
     return profile;
   }
@@ -244,31 +535,148 @@ export class SupabaseStorage implements IStorage {
 
   // Recommended Feeds Retrieval
   async getRecommendedFeeds(): Promise<RecommendedFeed[]> {
-    const { data, error } = await this.supabase
-      .from('recommended_feeds')
-      .select('*')
-      .order('popularity_score', { ascending: false });
+    return this.executeWithFallback(
+      async () => {
+        console.log('🔍 SupabaseStorage: Querying recommended_feeds table...');
+        
+        const { data, error } = await this.supabase
+          .from('recommended_feeds')
+          .select('*')
+          .order('popularity_score', { ascending: false });
+        
+        if (error) {
+          console.error('❌ SupabaseStorage: Failed to get recommended feeds:', error.message);
+          throw new Error(`Failed to get recommended feeds: ${error.message}`);
+        }
+        
+        const feeds = (data || []) as RecommendedFeed[];
+        
+        // Enhanced error handling for empty recommended_feeds table
+        // Implements Requirements 2.5 - proper error handling for empty recommended_feeds table
+        if (feeds.length === 0) {
+          console.warn('⚠️  SupabaseStorage: recommended_feeds table is empty - no feeds available');
+          console.warn('⚠️  SupabaseStorage: This may indicate:');
+          console.warn('     - Database migration not run');
+          console.warn('     - Seed data not loaded');
+          console.warn('     - Data deletion occurred');
+          console.warn('⚠️  SupabaseStorage: Consider running database migrations and seed data');
+          
+          // If we have fallback storage, trigger fallback by throwing an error
+          if (this.fallbackStorage) {
+            console.log('🔄 SupabaseStorage: Empty table detected, triggering fallback mechanism');
+            throw new Error('Empty recommended_feeds table - triggering fallback');
+          }
+          
+          // Return empty array if no fallback available
+          return feeds;
+        } else {
+          console.log(`📊 SupabaseStorage: Successfully retrieved ${feeds.length} recommended feeds`);
+          
+          // Log feed distribution for debugging
+          const categoryCount: Record<string, number> = {};
+          feeds.forEach(feed => {
+            categoryCount[feed.category] = (categoryCount[feed.category] || 0) + 1;
+          });
+          
+          console.log('📊 SupabaseStorage: Feed distribution by category:');
+          Object.entries(categoryCount).forEach(([category, count]) => {
+            console.log(`     ${category}: ${count} feeds`);
+          });
+        }
+        
+        return feeds;
+      },
+      // Fallback operation using MemStorage
+      async () => {
+        if (this.fallbackStorage) {
+          console.log('🔄 SupabaseStorage: Using MemStorage fallback for getRecommendedFeeds');
+          return await this.fallbackStorage.getRecommendedFeeds();
+        }
+        return [];
+      },
+      'getRecommendedFeeds'
+    );
+  }
+
+  // Recommended Feeds Management with Category Validation
+  async createRecommendedFeed(insertFeed: InsertRecommendedFeed): Promise<RecommendedFeed> {
+    console.log(`🔍 SupabaseStorage: Creating recommended feed with category validation...`);
     
-    if (error) {
-      throw new Error(`Failed to get recommended feeds: ${error.message}`);
+    // Validate category using category mapping service
+    if (!categoryMappingService.isValidDatabaseCategory(insertFeed.category)) {
+      const errorMsg = `Invalid category "${insertFeed.category}" - not found in category mapping`;
+      console.error(`❌ SupabaseStorage: ${errorMsg}`);
+      throw new Error(errorMsg);
     }
     
-    return (data || []) as RecommendedFeed[];
+    console.log(`✅ SupabaseStorage: Category "${insertFeed.category}" validation passed`);
+    
+    const { data, error } = await this.supabase
+      .from('recommended_feeds')
+      .insert(insertFeed)
+      .select()
+      .single();
+    
+    if (error || !data) {
+      throw new Error(`Failed to create recommended feed: ${error?.message}`);
+    }
+    
+    console.log(`✅ SupabaseStorage: Recommended feed created successfully with valid category "${data.category}"`);
+    return data as RecommendedFeed;
+  }
+
+  async updateRecommendedFeed(id: string, updates: Partial<RecommendedFeed>): Promise<RecommendedFeed> {
+    console.log(`🔍 SupabaseStorage: Updating recommended feed ${id} with category validation...`);
+    
+    // Validate category if it's being updated
+    if (updates.category) {
+      if (!categoryMappingService.isValidDatabaseCategory(updates.category)) {
+        const errorMsg = `Invalid category "${updates.category}" - not found in category mapping`;
+        console.error(`❌ SupabaseStorage: ${errorMsg}`);
+        throw new Error(errorMsg);
+      }
+      console.log(`✅ SupabaseStorage: Category update "${updates.category}" validation passed`);
+    }
+    
+    const { data, error } = await this.supabase
+      .from('recommended_feeds')
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select()
+      .single();
+    
+    if (error || !data) {
+      throw new Error(`Failed to update recommended feed: ${error?.message}`);
+    }
+    
+    console.log(`✅ SupabaseStorage: Recommended feed updated successfully with valid category "${data.category}"`);
+    return data as RecommendedFeed;
   }
 
   // User Feed Subscription Management
   async getUserFeeds(userId: string): Promise<Feed[]> {
-    const { data, error } = await this.supabase
-      .from('feeds')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: true });
-    
-    if (error) {
-      throw new Error(`Failed to get user feeds: ${error.message}`);
-    }
-    
-    return (data || []) as Feed[];
+    return this.executeWithFallback(
+      async () => {
+        const { data, error } = await this.supabase
+          .from('feeds')
+          .select('*')
+          .eq('user_id', userId)
+          .order('created_at', { ascending: true });
+        
+        if (error) {
+          throw new Error(`Failed to get user feeds: ${error.message}`);
+        }
+        
+        return (data || []) as Feed[];
+      },
+      async () => {
+        if (this.fallbackStorage) {
+          return await this.fallbackStorage.getUserFeeds(userId);
+        }
+        return [];
+      },
+      'getUserFeeds'
+    );
   }
 
   async subscribeToFeeds(userId: string, feedIds: string[]): Promise<void> {
