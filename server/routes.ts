@@ -245,6 +245,99 @@ export async function registerRoutes(
       });
     }
   });
+
+  // POST /api/auth/oauth/callback - OAuth callback handler for Supabase sessions
+  app.post('/api/auth/oauth/callback', async (req: Request, res: Response) => {
+    try {
+      const { session } = req.body;
+      
+      if (!session || !session.user) {
+        return res.status(400).json({
+          error: 'Invalid session',
+          message: 'No valid session data provided'
+        });
+      }
+      
+      const supabaseUser = session.user;
+      
+      // Get or create user profile from Supabase user data
+      let user = await storage.getUser(supabaseUser.id);
+      
+      if (!user) {
+        // Create new user from OAuth data
+        const displayName = supabaseUser.user_metadata?.full_name || 
+                           supabaseUser.user_metadata?.name || 
+                           supabaseUser.email?.split('@')[0] || 
+                           'User';
+        
+        user = await storage.createUser({
+          id: supabaseUser.id,
+          email: supabaseUser.email!,
+          display_name: displayName,
+          avatar_url: supabaseUser.user_metadata?.avatar_url || 
+                     supabaseUser.user_metadata?.picture || null,
+          timezone: "America/New_York",
+          region_code: null,
+          onboarding_completed: false
+        });
+        
+        console.log('Created new user from OAuth:', {
+          id: user.id,
+          email: user.email,
+          display_name: user.display_name,
+          provider: supabaseUser.app_metadata?.provider
+        });
+      } else {
+        // Update existing user with latest OAuth data if needed
+        const updates: any = {};
+        
+        if (supabaseUser.user_metadata?.avatar_url && 
+            supabaseUser.user_metadata.avatar_url !== user.avatar_url) {
+          updates.avatar_url = supabaseUser.user_metadata.avatar_url;
+        }
+        
+        if (supabaseUser.user_metadata?.full_name && 
+            supabaseUser.user_metadata.full_name !== user.display_name) {
+          updates.display_name = supabaseUser.user_metadata.full_name;
+        }
+        
+        if (Object.keys(updates).length > 0) {
+          user = await storage.updateUser(user.id, updates);
+          console.log('Updated user from OAuth:', { id: user.id, updates });
+        }
+      }
+      
+      // Log the user in to create a session
+      req.login(user, (err) => {
+        if (err) {
+          console.error('OAuth session creation error:', err);
+          return res.status(500).json({
+            error: 'Session creation failed',
+            message: 'User authenticated but session creation failed'
+          });
+        }
+        
+        console.log('OAuth session created successfully for user:', user.id);
+        
+        res.json({
+          user: {
+            id: user.id,
+            email: user.email,
+            display_name: user.display_name,
+            avatar_url: user.avatar_url,
+            onboarding_completed: user.onboarding_completed
+          }
+        });
+      });
+      
+    } catch (error) {
+      console.error('OAuth callback error:', error);
+      res.status(500).json({
+        error: 'OAuth callback failed',
+        message: 'An error occurred during OAuth callback processing'
+      });
+    }
+  });
   
   // GET /api/auth/me - Get current user profile
   app.get('/api/auth/me', requireAuth, (req: Request, res: Response) => {

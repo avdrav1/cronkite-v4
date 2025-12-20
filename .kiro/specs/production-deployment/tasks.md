@@ -16,13 +16,13 @@ This implementation plan transforms Cronkite from a development application usin
   - **Property 2: Environment Configuration Completeness**
   - **Validates: Requirements 4.3, 4.4**
 
-- [ ] 2. Implement OAuth authentication integration
-  - [ ] 2.1 Set up Supabase OAuth configuration
+- [x] 2. Implement OAuth authentication integration
+  - [x] 2.1 Set up Supabase OAuth configuration
     - Configure Google OAuth provider in Supabase
     - Update client-side authentication to use OAuth flow
     - _Requirements: 2.1, 2.2_
 
-  - [ ] 2.2 Implement OAuth callback handling
+  - [x] 2.2 Implement OAuth callback handling
     - Create OAuth callback route and session management
     - Handle profile creation/update from OAuth data
     - _Requirements: 2.2, 2.3_

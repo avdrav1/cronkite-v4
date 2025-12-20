@@ -10,6 +10,7 @@ import Home from "@/pages/Home";
 import SettingsPage from "@/pages/Settings";
 import Onboarding from "@/pages/Onboarding";
 import Auth from "@/pages/Auth";
+import AuthCallback from "@/pages/AuthCallback";
 import NotFound from "@/pages/not-found";
 import { useEffect } from "react";
 
@@ -97,9 +98,13 @@ function AppRouter() {
 
   return (
     <Switch>
-      {/* Public route - Auth page */}
+      {/* Public routes */}
       <Route path="/auth">
         {isAuthenticated ? null : <Auth />}
+      </Route>
+      
+      <Route path="/auth/callback">
+        <AuthCallback />
       </Route>
       
       {/* Protected routes */}

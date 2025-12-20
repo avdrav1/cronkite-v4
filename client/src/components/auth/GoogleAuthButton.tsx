@@ -1,14 +1,13 @@
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
-import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@shared/supabase';
 
 interface GoogleAuthButtonProps {
   disabled?: boolean;
 }
 
 export const GoogleAuthButton: React.FC<GoogleAuthButtonProps> = ({ disabled = false }) => {
-  const { loginWithGoogle } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -17,24 +16,24 @@ export const GoogleAuthButton: React.FC<GoogleAuthButtonProps> = ({ disabled = f
     setError(null);
 
     try {
-      // In a real implementation, this would integrate with Google OAuth
-      // For now, we'll simulate the OAuth flow
-      
-      // This would typically be handled by Google's OAuth library
-      // which would redirect to Google, get user consent, and return with tokens
-      
-      // For development/testing purposes, we'll show an alert
-      // In production, this would use the Google OAuth2 library
-      alert('Google OAuth integration would be implemented here. This would redirect to Google for authentication and return with access tokens.');
-      
-      // Example of how it would work with actual Google OAuth:
-      // const response = await googleOAuth.signIn();
-      // await loginWithGoogle(response.access_token, response.refresh_token);
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+          scopes: 'email profile'
+        }
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      // The redirect will happen automatically
+      // No need to handle the response here as the user will be redirected
       
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Google authentication failed');
       console.error('Google auth error:', err);
-    } finally {
       setIsLoading(false);
     }
   };

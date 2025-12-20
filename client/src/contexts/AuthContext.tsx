@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { type Profile } from '@shared/schema';
+import { supabase } from '@shared/supabase';
 
 interface AuthContextType {
   user: Profile | null;
@@ -37,6 +38,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   // Check authentication status on mount
   const checkAuth = async () => {
     try {
+      // First check if there's a Supabase session (for OAuth)
+      const { data: { session }, error } = await supabase.auth.getSession();
+      
+      if (session && !error) {
+        // We have a Supabase session, send it to our backend for profile creation/retrieval
+        await handleOAuthSession(session);
+        return;
+      }
+
+      // No Supabase session, check for regular session
       const response = await fetch('/api/auth/me', {
         credentials: 'include',
       });
@@ -57,6 +68,31 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setUser(null);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // Handle OAuth session from Supabase
+  const handleOAuthSession = async (session: any) => {
+    try {
+      const response = await fetch('/api/auth/oauth/callback', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({ session }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || 'OAuth session handling failed');
+      }
+
+      setUser(data.user);
+    } catch (error) {
+      console.error('OAuth session handling error:', error);
+      setUser(null);
     }
   };
 
@@ -155,6 +191,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const logout = async () => {
     setIsLoading(true);
     try {
+      // Sign out from Supabase
+      await supabase.auth.signOut();
+
+      // Also logout from our backend
       const response = await fetch('/api/auth/logout', {
         method: 'POST',
         credentials: 'include',
@@ -206,6 +246,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   useEffect(() => {
     checkAuth();
+
+    // Listen for auth state changes from Supabase
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_IN' && session) {
+        await handleOAuthSession(session);
+      } else if (event === 'SIGNED_OUT') {
+        setUser(null);
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   // Handle authentication errors (like session expiry)
