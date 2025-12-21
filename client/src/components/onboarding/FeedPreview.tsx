@@ -2,14 +2,15 @@ import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { CATEGORIES } from "@/data/categories";
 import { cn } from "@/lib/utils";
-import { Check, Plus, Minus, RefreshCw, AlertCircle, Wifi, WifiOff } from "lucide-react";
+import { Check, Plus, Minus, RefreshCw, AlertCircle, Wifi, WifiOff, ChevronDown, ChevronUp, Search, X, Star, TrendingUp } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Input } from "@/components/ui/input";
 import { useState, useEffect, useCallback } from "react";
 import { apiRequest } from "@/lib/queryClient";
 import { type RecommendedFeed } from "@shared/schema";
-import { filterFeedsByInterests, groupFeedsByCategory, validateFilteringConsistency } from "@/lib/feed-filtering";
+import { filterFeedsByInterests, groupFeedsByCategory, validateFilteringConsistency, sortFeedsByFeaturedAndPopularity } from "@/lib/feed-filtering";
 import { useAuth } from "@/contexts/AuthContext";
 import { useInvalidateFeedsQuery } from "@/hooks/useFeedsQuery";
 
@@ -49,8 +50,36 @@ export function FeedPreview({ selectedInterests, selectedFeeds, toggleFeed, togg
   const [retryCount, setRetryCount] = useState(0);
   const [isRetrying, setIsRetrying] = useState(false);
   const [debugInfo, setDebugInfo] = useState<any>(null);
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
+  const [searchQuery, setSearchQuery] = useState('');
   const { checkAuth } = useAuth();
   const invalidateFeedsQuery = useInvalidateFeedsQuery();
+
+  // Initial feed display limit per category (Requirement 3.2)
+  const INITIAL_FEED_LIMIT = 6;
+
+  // Toggle expanded state for a category
+  const toggleCategoryExpanded = (category: string) => {
+    setExpandedCategories(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(category)) {
+        newSet.delete(category);
+      } else {
+        newSet.add(category);
+      }
+      return newSet;
+    });
+  };
+
+  // Filter feeds by search query (Requirement 3.4)
+  const filterFeedsBySearch = (feeds: RecommendedFeed[]): RecommendedFeed[] => {
+    if (!searchQuery.trim()) return feeds;
+    const query = searchQuery.toLowerCase().trim();
+    return feeds.filter(feed => 
+      feed.name.toLowerCase().includes(query) ||
+      (feed.description?.toLowerCase().includes(query) ?? false)
+    );
+  };
 
   // Enhanced error classification
   const classifyError = (error: any): ErrorState => {
@@ -425,11 +454,40 @@ export function FeedPreview({ selectedInterests, selectedFeeds, toggleFeed, togg
         </p>
       </div>
 
+      {/* Search Input (Requirement 3.4) */}
+      <div className="relative mb-4">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input
+          type="text"
+          placeholder="Search feeds by name or description..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="pl-10 pr-10 h-10"
+        />
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery('')}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+
       <ScrollArea className="flex-1 pr-4 -mr-4 mb-6 h-[400px]">
         <div className="space-y-8">
           {Object.entries(feedsByCategory).map(([category, feeds], index) => {
             const categoryInfo = CATEGORIES.find(c => c.id === category);
-            const allSelected = feeds.every(f => selectedFeeds.includes(f.id));
+            // Apply search filter to feeds within category
+            const filteredFeeds = filterFeedsBySearch(feeds);
+            // Skip category if no feeds match search
+            if (filteredFeeds.length === 0) return null;
+            
+            const allSelected = filteredFeeds.every(f => selectedFeeds.includes(f.id));
+            const isExpanded = expandedCategories.has(category);
+            const hasMoreFeeds = filteredFeeds.length > INITIAL_FEED_LIMIT;
+            const displayedFeeds = isExpanded ? filteredFeeds : filteredFeeds.slice(0, INITIAL_FEED_LIMIT);
+            const hiddenCount = filteredFeeds.length - INITIAL_FEED_LIMIT;
             
             return (
               <motion.div 
@@ -444,11 +502,14 @@ export function FeedPreview({ selectedInterests, selectedFeeds, toggleFeed, togg
                   <div className="flex items-center gap-2 font-medium">
                     <span className="text-xl">{categoryInfo?.emoji}</span>
                     <span className="capitalize">{categoryInfo?.label || category}</span>
+                    <span className="text-xs text-muted-foreground">
+                      ({searchQuery ? `${filteredFeeds.length}/${feeds.length}` : feeds.length})
+                    </span>
                   </div>
                   <Button 
                     variant="ghost" 
                     size="sm" 
-                    onClick={() => toggleCategory(category, feeds.map(f => f.id))}
+                    onClick={() => toggleCategory(category, filteredFeeds.map(f => f.id))}
                     className="text-xs h-8"
                   >
                     {allSelected ? "Deselect All" : "Select All"}
@@ -457,8 +518,11 @@ export function FeedPreview({ selectedInterests, selectedFeeds, toggleFeed, togg
                 
                 {/* Feeds List */}
                 <div className="divide-y divide-border/50">
-                  {feeds.map(feed => {
+                  {displayedFeeds.map(feed => {
                     const isSelected = selectedFeeds.includes(feed.id);
+                    // Calculate popularity level for visual indicator (Requirement 3.5)
+                    const popularityLevel = feed.popularity_score >= 80 ? 'high' : feed.popularity_score >= 50 ? 'medium' : 'low';
+                    
                     return (
                       <div 
                         key={feed.id} 
@@ -480,21 +544,74 @@ export function FeedPreview({ selectedInterests, selectedFeeds, toggleFeed, togg
                         </div>
                         
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between gap-2 mb-1">
+                          <div className="flex items-center gap-2 mb-1">
                             <h4 className="font-medium truncate">{feed.name}</h4>
-                            <span className="text-xs text-muted-foreground shrink-0">
-                              ~{Math.max(1, Math.floor(feed.popularity_score / 10))}/day
-                            </span>
+                            {/* Featured Badge (Requirement 3.5) */}
+                            {feed.is_featured && (
+                              <Badge variant="secondary" className="shrink-0 h-5 px-1.5 text-[10px] bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border-amber-200 dark:border-amber-800">
+                                <Star className="h-3 w-3 mr-0.5 fill-current" />
+                                Featured
+                              </Badge>
+                            )}
+                            {/* Popularity Indicator (Requirement 3.5) */}
+                            <div className="flex items-center gap-1 ml-auto shrink-0">
+                              <TrendingUp className={cn(
+                                "h-3 w-3",
+                                popularityLevel === 'high' ? "text-green-500" :
+                                popularityLevel === 'medium' ? "text-yellow-500" : "text-muted-foreground"
+                              )} />
+                              <span className="text-xs text-muted-foreground">
+                                ~{Math.max(1, Math.floor(feed.popularity_score / 10))}/day
+                              </span>
+                            </div>
                           </div>
-                          <p className="text-sm text-muted-foreground line-clamp-1">{feed.description}</p>
+                          <p className="text-sm text-muted-foreground line-clamp-2">{feed.description}</p>
                         </div>
                       </div>
                     );
                   })}
                 </div>
+                
+                {/* Show More / Show Less Button (Requirement 3.3) */}
+                {hasMoreFeeds && (
+                  <div className="border-t border-border/50">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => toggleCategoryExpanded(category)}
+                      className="w-full h-10 text-xs text-muted-foreground hover:text-foreground flex items-center justify-center gap-1"
+                    >
+                      {isExpanded ? (
+                        <>
+                          <ChevronUp className="h-4 w-4" />
+                          Show less
+                        </>
+                      ) : (
+                        <>
+                          <ChevronDown className="h-4 w-4" />
+                          Show {hiddenCount} more feed{hiddenCount !== 1 ? 's' : ''}
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                )}
               </motion.div>
             );
           })}
+          
+          {/* No search results message */}
+          {searchQuery && Object.entries(feedsByCategory).every(([_, feeds]) => filterFeedsBySearch(feeds).length === 0) && (
+            <div className="text-center py-8 text-muted-foreground">
+              <Search className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <p>No feeds found matching "{searchQuery}"</p>
+              <button 
+                onClick={() => setSearchQuery('')}
+                className="text-primary text-sm mt-2 hover:underline"
+              >
+                Clear search
+              </button>
+            </div>
+          )}
         </div>
       </ScrollArea>
 

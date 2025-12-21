@@ -5,9 +5,10 @@ import { MasonryGrid } from "@/components/feed/MasonryGrid";
 import { ArticleCard } from "@/components/feed/ArticleCard";
 import { ArticleSheet } from "@/components/article/ArticleSheet";
 import { motion } from "framer-motion";
-import { SlidersHorizontal, RefreshCw, AlertCircle } from "lucide-react";
+import { SlidersHorizontal, RefreshCw, AlertCircle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { type Article } from "@shared/schema";
@@ -211,54 +212,88 @@ export default function Home() {
     setHistoryDepth(prev => prev + CHUNK_SIZE_DAYS);
   };
 
-  // Loading state
+  // Loading state - Requirement 2.6
   if (isLoading) {
     return (
       <AppShell>
-        <div className="flex flex-col items-center justify-center py-20">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-4"></div>
-          <p className="text-muted-foreground">Loading your personalized feed...</p>
+        <div className="flex flex-col gap-8 mb-20">
+          {/* Page Header */}
+          <div className="flex flex-col gap-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h1 className="text-3xl font-display font-bold tracking-tight mb-2">For You</h1>
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Spinner className="h-4 w-4" />
+                  <span>Fetching your articles...</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Skeleton Cards */}
+          <MasonryGrid isLoading={true} skeletonCount={8} />
         </div>
       </AppShell>
     );
   }
 
-  // Error state
+  // Error state - Requirement 2.9
   if (error) {
     return (
       <AppShell>
-        <div className="flex flex-col items-center justify-center py-20 max-w-md mx-auto">
-          <Alert className="mb-6">
+        <div className="flex flex-col items-center justify-center py-20 max-w-md mx-auto text-center">
+          <div className="text-6xl mb-6">😕</div>
+          <h2 className="text-2xl font-bold mb-4">Something went wrong</h2>
+          <Alert variant="destructive" className="mb-6 text-left">
             <AlertCircle className="h-4 w-4" />
             <AlertDescription>
               {error}
             </AlertDescription>
           </Alert>
+          <p className="text-muted-foreground mb-6">
+            We couldn't load your articles. This might be a temporary issue with our servers or your connection.
+          </p>
           <Button onClick={fetchArticles} className="flex items-center gap-2">
             <RefreshCw className="h-4 w-4" />
             Try Again
           </Button>
+          <p className="text-xs text-muted-foreground mt-6">
+            If the problem persists, try refreshing the page or check your internet connection.
+          </p>
         </div>
       </AppShell>
     );
   }
 
-  // Empty state
+  // Empty state - Requirement 2.8
   if (articles.length === 0) {
     return (
       <AppShell>
         <div className="flex flex-col items-center justify-center py-20 max-w-md mx-auto text-center">
+          <div className="text-6xl mb-6">📰</div>
           <h2 className="text-2xl font-bold mb-4">No articles yet</h2>
           <p className="text-muted-foreground mb-6">
             {feedsCount === 0 
-              ? "You haven't subscribed to any feeds yet. Complete your onboarding to get started!"
-              : `Your ${feedsCount} subscribed feeds don't have any articles yet. Try syncing your feeds or check back later.`
+              ? "You haven't subscribed to any feeds yet. Complete your onboarding to get started with personalized news!"
+              : `Your ${feedsCount} subscribed feed${feedsCount > 1 ? 's are' : ' is'} being synchronized. Articles will appear here as they're fetched from your sources.`
             }
           </p>
-          <Button onClick={fetchArticles} className="flex items-center gap-2">
-            <RefreshCw className="h-4 w-4" />
-            Refresh
-          </Button>
+          <div className="flex flex-col sm:flex-row gap-3">
+            <Button onClick={fetchArticles} variant="outline" className="flex items-center gap-2">
+              <RefreshCw className="h-4 w-4" />
+              Refresh
+            </Button>
+            {feedsCount === 0 && (
+              <Button asChild>
+                <a href="/onboarding">Complete Setup</a>
+              </Button>
+            )}
+          </div>
+          {feedsCount > 0 && (
+            <p className="text-xs text-muted-foreground mt-6">
+              Tip: New articles are fetched periodically. Check back in a few minutes or click refresh.
+            </p>
+          )}
         </div>
       </AppShell>
     );

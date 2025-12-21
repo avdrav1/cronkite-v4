@@ -39,42 +39,40 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   // Check authentication status on mount
   const checkAuth = async () => {
     try {
-      // First check if there's a Supabase session (for OAuth)
-      // Only check Supabase if it's properly configured
-      if (isSupabaseConfigured()) {
+      // First, try to check if we have an existing backend session
+      // This is faster than going through Supabase OAuth flow
+      const response = await apiFetch('GET', '/api/auth/me');
+
+      if (response.ok) {
+        const data = await response.json();
+        setUser(data.user);
+        return; // Already authenticated via backend session
+      }
+      
+      // No backend session - check if there's a Supabase session (for OAuth)
+      // This handles the case where user logged in via OAuth but backend session expired
+      if (response.status === 401 && isSupabaseConfigured()) {
         try {
           const client = getSupabaseClient();
           if (client) {
             const { data: { session }, error } = await client.auth.getSession();
             
             if (session && !error) {
-              // We have a Supabase session, send it to our backend for profile creation/retrieval
+              // We have a Supabase session but no backend session
+              // Re-authenticate with the backend
+              console.log('🔐 Re-authenticating with backend using Supabase session');
               await handleOAuthSession(session);
               return;
             }
           }
         } catch (supabaseError) {
-          // Supabase not configured or unavailable - continue with regular session check
+          // Supabase not configured or unavailable
           console.log('Supabase session check skipped:', supabaseError instanceof Error ? supabaseError.message : 'Unknown error');
         }
-      } else {
-        console.log('Supabase not configured - skipping OAuth session check');
       }
-
-      // No Supabase session, check for regular session
-      const response = await apiFetch('GET', '/api/auth/me');
-
-      if (response.ok) {
-        const data = await response.json();
-        setUser(data.user);
-      } else if (response.status === 401) {
-        // Session expired or invalid
-        setUser(null);
-      } else {
-        // Other server errors
-        console.error('Auth check failed with status:', response.status);
-        setUser(null);
-      }
+      
+      // No valid session found
+      setUser(null);
     } catch (error) {
       console.error('Auth check failed:', error);
       setUser(null);

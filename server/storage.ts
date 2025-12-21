@@ -78,6 +78,10 @@ export interface IStorage {
     completed: number;
     failed: number;
     lastSyncAt?: Date;
+    isActive: boolean;
+    currentFeed?: string;
+    errors: Array<{ feedId: string; feedName: string; error: string }>;
+    newArticlesCount: number;
   }>;
   
   // Article Management
@@ -122,7 +126,7 @@ export class MemStorage implements IStorage {
     // Initialize with some mock recommended feeds
     this.initializeMockRecommendedFeeds();
     
-    console.log(`✅ MemStorage initialized with ${this.recommendedFeeds.length} recommended feeds`);
+    console.log(`✅ MemStorage initialized with ${this.recommendedFeeds.length} real recommended feeds`);
     console.log('✅ MemStorage: All feeds validated against category mapping service');
     console.log('✅ MemStorage: Ready to serve as fallback storage when Supabase is unavailable');
   }
@@ -279,13 +283,11 @@ export class MemStorage implements IStorage {
     console.log(`📊 MemStorage: Retrieving recommended feeds...`);
     console.log(`📊 MemStorage: Returning ${this.recommendedFeeds.length} recommended feeds`);
     
-    // Validate data consistency
+    // Validate data consistency - we now use real feeds only
     if (this.recommendedFeeds.length === 0) {
       console.warn('⚠️  MemStorage: No recommended feeds available - this may indicate an initialization issue');
-    } else if (this.recommendedFeeds.length !== 865) {
-      console.warn(`⚠️  MemStorage: Expected 865 feeds, but have ${this.recommendedFeeds.length} feeds`);
     } else {
-      console.log('✅ MemStorage: Feed count validation passed');
+      console.log(`✅ MemStorage: ${this.recommendedFeeds.length} real feeds available`);
     }
     
     return this.recommendedFeeds;
@@ -383,6 +385,7 @@ export class MemStorage implements IStorage {
           id: randomUUID(),
           user_id: userId,
           folder_id: null,
+          folder_name: recommendedFeed.category, // Copy category to folder_name for sidebar grouping
           name: recommendedFeed.name,
           url: recommendedFeed.url,
           site_url: recommendedFeed.site_url,
@@ -498,6 +501,10 @@ export class MemStorage implements IStorage {
     completed: number;
     failed: number;
     lastSyncAt?: Date;
+    isActive: boolean;
+    currentFeed?: string;
+    errors: Array<{ feedId: string; feedName: string; error: string }>;
+    newArticlesCount: number;
   }> {
     const userFeeds = this.userFeeds.get(userId) || [];
     const feedIds = userFeeds.map(feed => feed.id);
@@ -523,12 +530,38 @@ export class MemStorage implements IStorage {
       ? new Date(Math.max(...latestSyncs.map(log => log.sync_started_at.getTime())))
       : undefined;
     
+    // Get errors from failed syncs
+    const errors: Array<{ feedId: string; feedName: string; error: string }> = [];
+    latestSyncs.filter(log => log.status === "error").forEach(log => {
+      const feed = userFeeds.find(f => f.id === log.feed_id);
+      errors.push({
+        feedId: log.feed_id,
+        feedName: feed?.name || 'Unknown Feed',
+        error: log.error_message || 'Unknown error'
+      });
+    });
+    
+    // Get current syncing feed name
+    const currentSyncingLog = latestSyncs.find(log => log.status === "in_progress");
+    const currentFeed = currentSyncingLog 
+      ? userFeeds.find(f => f.id === currentSyncingLog.feed_id)?.name 
+      : undefined;
+    
+    // Calculate total new articles from successful syncs
+    const newArticlesCount = latestSyncs
+      .filter(log => log.status === "success")
+      .reduce((sum, log) => sum + (log.articles_new || 0), 0);
+    
     return {
       totalFeeds: userFeeds.length,
       syncing,
       completed,
       failed,
-      lastSyncAt
+      lastSyncAt,
+      isActive: syncing > 0,
+      currentFeed,
+      errors,
+      newArticlesCount
     };
   }
 
@@ -892,51 +925,487 @@ export class MemStorage implements IStorage {
         is_featured: false,
         created_at: new Date(),
         updated_at: new Date()
+      },
+      
+      // Gaming Feeds
+      {
+        id: randomUUID(),
+        name: "IGN",
+        url: "https://feeds.ign.com/ign/games-all",
+        site_url: "https://www.ign.com",
+        description: "Video game news and reviews",
+        icon_url: "https://www.ign.com/favicon.ico",
+        category: "Gaming",
+        country: "US",
+        language: "en",
+        tags: ["gaming", "reviews", "news"],
+        popularity_score: 85,
+        article_frequency: "daily",
+        is_featured: true,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      {
+        id: randomUUID(),
+        name: "GameSpot",
+        url: "https://www.gamespot.com/feeds/mashup/",
+        site_url: "https://www.gamespot.com",
+        description: "Video game news, reviews, and guides",
+        icon_url: "https://www.gamespot.com/favicon.ico",
+        category: "Gaming",
+        country: "US",
+        language: "en",
+        tags: ["gaming", "reviews", "guides"],
+        popularity_score: 82,
+        article_frequency: "daily",
+        is_featured: false,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      
+      // Programming Feeds
+      {
+        id: randomUUID(),
+        name: "Hacker News",
+        url: "https://hnrss.org/frontpage",
+        site_url: "https://news.ycombinator.com",
+        description: "Social news website focusing on computer science and entrepreneurship",
+        icon_url: "https://news.ycombinator.com/favicon.ico",
+        category: "Programming",
+        country: "US",
+        language: "en",
+        tags: ["programming", "startups", "tech"],
+        popularity_score: 95,
+        article_frequency: "hourly",
+        is_featured: true,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      {
+        id: randomUUID(),
+        name: "Stack Overflow Blog",
+        url: "https://stackoverflow.blog/feed/",
+        site_url: "https://stackoverflow.blog",
+        description: "Programming and developer community news",
+        icon_url: "https://stackoverflow.blog/favicon.ico",
+        category: "Programming",
+        country: "US",
+        language: "en",
+        tags: ["programming", "development", "community"],
+        popularity_score: 88,
+        article_frequency: "daily",
+        is_featured: true,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      
+      // Design Feeds
+      {
+        id: randomUUID(),
+        name: "Smashing Magazine",
+        url: "https://www.smashingmagazine.com/feed/",
+        site_url: "https://www.smashingmagazine.com",
+        description: "Web design and development",
+        icon_url: "https://www.smashingmagazine.com/favicon.ico",
+        category: "Design",
+        country: "DE",
+        language: "en",
+        tags: ["design", "web", "development"],
+        popularity_score: 85,
+        article_frequency: "daily",
+        is_featured: true,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      
+      // Space Feeds
+      {
+        id: randomUUID(),
+        name: "NASA News",
+        url: "https://www.nasa.gov/rss/dyn/breaking_news.rss",
+        site_url: "https://www.nasa.gov",
+        description: "NASA news and updates",
+        icon_url: "https://www.nasa.gov/favicon.ico",
+        category: "Space",
+        country: "US",
+        language: "en",
+        tags: ["space", "nasa", "science"],
+        popularity_score: 90,
+        article_frequency: "daily",
+        is_featured: true,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      
+      // Music Feeds
+      {
+        id: randomUUID(),
+        name: "Rolling Stone",
+        url: "https://www.rollingstone.com/feed/",
+        site_url: "https://www.rollingstone.com",
+        description: "Music news and culture",
+        icon_url: "https://www.rollingstone.com/favicon.ico",
+        category: "Music",
+        country: "US",
+        language: "en",
+        tags: ["music", "culture", "news"],
+        popularity_score: 85,
+        article_frequency: "daily",
+        is_featured: true,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      
+      // Food Feeds
+      {
+        id: randomUUID(),
+        name: "Bon Appétit",
+        url: "https://www.bonappetit.com/feed/rss",
+        site_url: "https://www.bonappetit.com",
+        description: "Food and cooking magazine",
+        icon_url: "https://www.bonappetit.com/favicon.ico",
+        category: "Food",
+        country: "US",
+        language: "en",
+        tags: ["food", "cooking", "recipes"],
+        popularity_score: 78,
+        article_frequency: "daily",
+        is_featured: true,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      
+      // Travel Feeds
+      {
+        id: randomUUID(),
+        name: "Lonely Planet",
+        url: "https://www.lonelyplanet.com/news/feed/rss/",
+        site_url: "https://www.lonelyplanet.com",
+        description: "Travel guides and news",
+        icon_url: "https://www.lonelyplanet.com/favicon.ico",
+        category: "Travel",
+        country: "AU",
+        language: "en",
+        tags: ["travel", "guides", "destinations"],
+        popularity_score: 85,
+        article_frequency: "daily",
+        is_featured: true,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      
+      // History Feeds
+      {
+        id: randomUUID(),
+        name: "Smithsonian Magazine",
+        url: "https://www.smithsonianmag.com/rss/latest_articles/",
+        site_url: "https://www.smithsonianmag.com",
+        description: "History, science, and culture",
+        icon_url: "https://www.smithsonianmag.com/favicon.ico",
+        category: "History",
+        country: "US",
+        language: "en",
+        tags: ["history", "science", "culture"],
+        popularity_score: 88,
+        article_frequency: "daily",
+        is_featured: true,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      {
+        id: randomUUID(),
+        name: "History Extra",
+        url: "https://www.historyextra.com/feed/",
+        site_url: "https://www.historyextra.com",
+        description: "BBC History Magazine online",
+        icon_url: "https://www.historyextra.com/favicon.ico",
+        category: "History",
+        country: "UK",
+        language: "en",
+        tags: ["history", "bbc", "magazine"],
+        popularity_score: 82,
+        article_frequency: "daily",
+        is_featured: true,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      
+      // Books Feeds
+      {
+        id: randomUUID(),
+        name: "The Guardian Books",
+        url: "https://www.theguardian.com/books/rss",
+        site_url: "https://www.theguardian.com/books",
+        description: "Book reviews and author interviews",
+        icon_url: "https://www.theguardian.com/favicon.ico",
+        category: "Books",
+        country: "UK",
+        language: "en",
+        tags: ["books", "reviews", "literature"],
+        popularity_score: 88,
+        article_frequency: "daily",
+        is_featured: true,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      
+      // Automotive Feeds
+      {
+        id: randomUUID(),
+        name: "Car and Driver",
+        url: "https://www.caranddriver.com/rss/all.xml/",
+        site_url: "https://www.caranddriver.com",
+        description: "Car reviews and automotive news",
+        icon_url: "https://www.caranddriver.com/favicon.ico",
+        category: "Automotive",
+        country: "US",
+        language: "en",
+        tags: ["cars", "automotive", "reviews"],
+        popularity_score: 88,
+        article_frequency: "daily",
+        is_featured: true,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      
+      // DIY Feeds
+      {
+        id: randomUUID(),
+        name: "Instructables",
+        url: "https://www.instructables.com/rss/",
+        site_url: "https://www.instructables.com",
+        description: "DIY projects and how-to guides",
+        icon_url: "https://www.instructables.com/favicon.ico",
+        category: "DIY",
+        country: "US",
+        language: "en",
+        tags: ["diy", "projects", "howto"],
+        popularity_score: 85,
+        article_frequency: "daily",
+        is_featured: true,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      
+      // Android Feeds
+      {
+        id: randomUUID(),
+        name: "Android Police",
+        url: "https://www.androidpolice.com/feed/",
+        site_url: "https://www.androidpolice.com",
+        description: "Android news, reviews, and apps",
+        icon_url: "https://www.androidpolice.com/favicon.ico",
+        category: "Android",
+        country: "US",
+        language: "en",
+        tags: ["android", "mobile", "apps"],
+        popularity_score: 88,
+        article_frequency: "daily",
+        is_featured: true,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      
+      // Apple Feeds
+      {
+        id: randomUUID(),
+        name: "9to5Mac",
+        url: "https://9to5mac.com/feed/",
+        site_url: "https://9to5mac.com",
+        description: "Apple news and rumors",
+        icon_url: "https://9to5mac.com/favicon.ico",
+        category: "Apple",
+        country: "US",
+        language: "en",
+        tags: ["apple", "mac", "iphone"],
+        popularity_score: 90,
+        article_frequency: "daily",
+        is_featured: true,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      
+      // Humor Feeds
+      {
+        id: randomUUID(),
+        name: "The Onion",
+        url: "https://www.theonion.com/rss",
+        site_url: "https://www.theonion.com",
+        description: "America's Finest News Source",
+        icon_url: "https://www.theonion.com/favicon.ico",
+        category: "Humor",
+        country: "US",
+        language: "en",
+        tags: ["humor", "satire", "comedy"],
+        popularity_score: 90,
+        article_frequency: "daily",
+        is_featured: true,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      
+      // Beauty Feeds
+      {
+        id: randomUUID(),
+        name: "Allure",
+        url: "https://www.allure.com/feed/rss",
+        site_url: "https://www.allure.com",
+        description: "Beauty tips, trends, and product reviews",
+        icon_url: "https://www.allure.com/favicon.ico",
+        category: "Beauty",
+        country: "US",
+        language: "en",
+        tags: ["beauty", "skincare", "makeup"],
+        popularity_score: 85,
+        article_frequency: "daily",
+        is_featured: true,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      
+      // Fashion Feeds
+      {
+        id: randomUUID(),
+        name: "Vogue",
+        url: "https://www.vogue.com/feed/rss",
+        site_url: "https://www.vogue.com",
+        description: "Fashion news, trends, and runway coverage",
+        icon_url: "https://www.vogue.com/favicon.ico",
+        category: "Fashion",
+        country: "US",
+        language: "en",
+        tags: ["fashion", "style", "trends"],
+        popularity_score: 95,
+        article_frequency: "daily",
+        is_featured: true,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      
+      // Startups Feeds
+      {
+        id: randomUUID(),
+        name: "TechCrunch Startups",
+        url: "https://techcrunch.com/category/startups/feed/",
+        site_url: "https://techcrunch.com/startups",
+        description: "Startup news and funding announcements",
+        icon_url: "https://techcrunch.com/favicon.ico",
+        category: "Startups",
+        country: "US",
+        language: "en",
+        tags: ["startups", "funding", "entrepreneurship"],
+        popularity_score: 92,
+        article_frequency: "daily",
+        is_featured: true,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      
+      // Cricket Feeds
+      {
+        id: randomUUID(),
+        name: "ESPNcricinfo",
+        url: "https://www.espncricinfo.com/rss/content/story/feeds/0.xml",
+        site_url: "https://www.espncricinfo.com",
+        description: "Cricket news, scores, and analysis",
+        icon_url: "https://www.espncricinfo.com/favicon.ico",
+        category: "Cricket",
+        country: "US",
+        language: "en",
+        tags: ["cricket", "sports", "scores"],
+        popularity_score: 90,
+        article_frequency: "daily",
+        is_featured: true,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      
+      // Football Feeds
+      {
+        id: randomUUID(),
+        name: "The Guardian Football",
+        url: "https://www.theguardian.com/football/rss",
+        site_url: "https://www.theguardian.com/football",
+        description: "Football news from The Guardian",
+        icon_url: "https://www.theguardian.com/favicon.ico",
+        category: "Football",
+        country: "UK",
+        language: "en",
+        tags: ["football", "soccer", "sports"],
+        popularity_score: 88,
+        article_frequency: "daily",
+        is_featured: true,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      
+      // Tennis Feeds
+      {
+        id: randomUUID(),
+        name: "Tennis.com",
+        url: "https://www.tennis.com/rss/news.xml",
+        site_url: "https://www.tennis.com",
+        description: "Tennis news and tournament coverage",
+        icon_url: "https://www.tennis.com/favicon.ico",
+        category: "Tennis",
+        country: "US",
+        language: "en",
+        tags: ["tennis", "sports", "tournaments"],
+        popularity_score: 82,
+        article_frequency: "daily",
+        is_featured: true,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      
+      // Photography Feeds
+      {
+        id: randomUUID(),
+        name: "PetaPixel",
+        url: "https://petapixel.com/feed/",
+        site_url: "https://petapixel.com",
+        description: "Photography news and tutorials",
+        icon_url: "https://petapixel.com/favicon.ico",
+        category: "Photography",
+        country: "US",
+        language: "en",
+        tags: ["photography", "cameras", "tutorials"],
+        popularity_score: 88,
+        article_frequency: "daily",
+        is_featured: true,
+        created_at: new Date(),
+        updated_at: new Date()
+      },
+      
+      // Interior Design Feeds
+      {
+        id: randomUUID(),
+        name: "Dezeen",
+        url: "https://www.dezeen.com/feed/",
+        site_url: "https://www.dezeen.com",
+        description: "Architecture and design magazine",
+        icon_url: "https://www.dezeen.com/favicon.ico",
+        category: "Interior Design",
+        country: "UK",
+        language: "en",
+        tags: ["interior", "design", "architecture"],
+        popularity_score: 90,
+        article_frequency: "daily",
+        is_featured: true,
+        created_at: new Date(),
+        updated_at: new Date()
       }
     ];
     
     console.log(`📊 Base feeds created: ${this.recommendedFeeds.length} feeds`);
     
-    // Add more feeds to reach closer to 865 total
-    const validCategories = categoryMappingService.getAllDatabaseCategories();
-    const baseFeeds = [...this.recommendedFeeds];
+    // Note: We no longer generate fake feeds like "Category Feed N"
+    // The base feeds above are real RSS feeds that work in production
+    // If more feeds are needed, add them to the base feeds array above
+    // or ensure the Supabase database is properly seeded
     
-    console.log('🔄 Generating additional feeds to reach target count...');
-    console.log(`🔍 Using valid categories: ${validCategories.join(', ')}`);
-    
-    // Generate additional feeds to simulate the 865 feeds (865 - 14 base feeds = 851 additional)
-    for (let i = 0; i < 851; i++) {
-      const category = validCategories[i % validCategories.length];
-      const feedNumber = Math.floor(i / validCategories.length) + 2;
-      
-      this.recommendedFeeds.push({
-        id: randomUUID(),
-        name: `${category} Feed ${feedNumber}`,
-        url: `https://example.com/${category.toLowerCase()}/feed${feedNumber}.xml`,
-        site_url: `https://example.com/${category.toLowerCase()}${feedNumber}`,
-        description: `Quality ${category.toLowerCase()} news and updates`,
-        icon_url: `https://example.com/${category.toLowerCase()}${feedNumber}/favicon.ico`,
-        category,
-        country: "US",
-        language: "en",
-        tags: [category.toLowerCase(), "news", "updates"],
-        popularity_score: Math.floor(Math.random() * 40) + 60, // 60-100
-        article_frequency: ["hourly", "daily", "weekly"][Math.floor(Math.random() * 3)] as any,
-        is_featured: Math.random() > 0.7,
-        created_at: new Date(),
-        updated_at: new Date()
-      });
-    }
-    
-    console.log(`✅ Additional feeds generated: ${this.recommendedFeeds.length - baseFeeds.length} feeds`);
     console.log(`📊 Total feeds initialized: ${this.recommendedFeeds.length} feeds`);
-    
-    // Validate feed count
-    if (this.recommendedFeeds.length === 865) {
-      console.log('✅ Feed count validation: Expected 865 feeds - PASS');
-    } else {
-      console.warn(`⚠️  Feed count validation: Expected 865 feeds, got ${this.recommendedFeeds.length} - FAIL`);
-    }
+    console.log('ℹ️  MemStorage: Using real RSS feeds only (no fake feed generation)');
     
     // Validate categories using category mapping service
     console.log('🔍 Validating feed categories against category mapping...');

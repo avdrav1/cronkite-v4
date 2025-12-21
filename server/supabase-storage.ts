@@ -28,34 +28,13 @@ export class SupabaseStorage implements IStorage {
   private fallbackStorage?: IStorage;
 
   constructor() {
-    console.log('🚀 Initializing SupabaseStorage...');
-    
     const supabaseUrl = process.env.SUPABASE_URL;
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     
-    // Debug logging (safe - only logs lengths, not actual keys)
-    console.log('🔍 SupabaseStorage: Environment check:');
-    console.log(`   SUPABASE_URL: ${supabaseUrl ? `set (${supabaseUrl.substring(0, 30)}...)` : 'NOT SET'}`);
-    console.log(`   SUPABASE_SERVICE_ROLE_KEY: ${supabaseServiceKey ? `set (length: ${supabaseServiceKey.length})` : 'NOT SET'}`);
-    
     if (!supabaseUrl || !supabaseServiceKey) {
-      const errorMsg = 'Missing Supabase configuration. Please check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables.';
-      console.error('❌ SupabaseStorage initialization failed:', errorMsg);
-      throw new Error(errorMsg);
+      throw new Error('Missing Supabase configuration. Please check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables.');
     }
     
-    // Validate service role key format (should be a JWT starting with 'eyJ')
-    if (!supabaseServiceKey.startsWith('eyJ')) {
-      console.warn('⚠️  SupabaseStorage: SUPABASE_SERVICE_ROLE_KEY does not appear to be a valid JWT token');
-      console.warn('⚠️  SupabaseStorage: Service role keys should start with "eyJ"');
-    }
-    
-    // Service role keys are typically longer than anon keys
-    if (supabaseServiceKey.length < 200) {
-      console.warn('⚠️  SupabaseStorage: SUPABASE_SERVICE_ROLE_KEY seems short - make sure you are using the service_role key, not the anon key');
-    }
-    
-    console.log('🔗 Creating Supabase client connection...');
     this.supabase = createClient(supabaseUrl, supabaseServiceKey, {
       auth: {
         autoRefreshToken: false,
@@ -63,30 +42,18 @@ export class SupabaseStorage implements IStorage {
       }
     });
     
-    console.log('✅ SupabaseStorage client initialized successfully');
+    // Initialize fallback storage in background (don't block constructor)
+    this.initializeFallback().catch(() => {});
     
-    // Initialize fallback storage immediately to ensure it's always available
-    // Don't await this to avoid blocking constructor
-    this.initializeFallback().catch(error => {
-      console.error('❌ SupabaseStorage: Failed to initialize fallback during construction:', error);
-    });
-    
-    // Initialize connection validation
+    // Validate connection in background
     this.validateConnection();
   }
 
   /**
    * Validates Supabase connection and sets up fallback if needed
-   * Implements Requirements 4.4 - enhanced connection validation and comprehensive logging
    */
   private async validateConnection(): Promise<void> {
-    const startTime = Date.now();
-    
     try {
-      console.log('🔍 SupabaseStorage: Validating database connection...');
-      console.log(`🔍 SupabaseStorage: Connection attempt started at ${new Date().toISOString()}`);
-      
-      // Test connection with a simple query with timeout
       const connectionPromise = this.supabase
         .from('profiles')
         .select('count')
@@ -94,59 +61,20 @@ export class SupabaseStorage implements IStorage {
       
       // Add timeout to prevent hanging connections
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Connection timeout after 10 seconds')), 10000);
+        setTimeout(() => reject(new Error('Connection timeout')), 10000);
       });
       
-      const { data, error } = await Promise.race([connectionPromise, timeoutPromise]) as any;
-      
-      const duration = Date.now() - startTime;
+      const { error } = await Promise.race([connectionPromise, timeoutPromise]) as any;
       
       if (error) {
-        console.warn('⚠️  SupabaseStorage: Connection validation failed:', error.message);
-        console.warn(`⚠️  SupabaseStorage: Connection attempt duration: ${duration}ms`);
-        console.warn('⚠️  SupabaseStorage: Database may be unavailable or misconfigured');
-        console.warn('⚠️  SupabaseStorage: Possible causes:');
-        console.warn('     - Network connectivity issues');
-        console.warn('     - Invalid database credentials');
-        console.warn('     - Database server downtime');
-        console.warn('     - Firewall or security group restrictions');
-        console.warn('⚠️  SupabaseStorage: Initializing fallback storage...');
-        
+        console.warn('⚠️ Supabase connection failed, using fallback');
         this.connectionValidated = false;
         await this.initializeFallback();
       } else {
-        console.log('✅ SupabaseStorage: Database connection validated successfully');
-        console.log(`✅ SupabaseStorage: Connection established in ${duration}ms`);
-        console.log('✅ SupabaseStorage: Database is accessible and responding');
         this.connectionValidated = true;
       }
     } catch (error) {
-      const duration = Date.now() - startTime;
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      
-      console.warn('⚠️  SupabaseStorage: Connection validation error:', errorMessage);
-      console.warn(`⚠️  SupabaseStorage: Connection attempt duration: ${duration}ms`);
-      console.warn('⚠️  SupabaseStorage: Connection validation failed due to exception');
-      
-      // Enhanced error categorization and logging
-      if (errorMessage.includes('timeout')) {
-        console.warn('⚠️  SupabaseStorage: Error type: CONNECTION TIMEOUT');
-        console.warn('⚠️  SupabaseStorage: The database server is not responding within the expected time');
-        console.warn('⚠️  SupabaseStorage: This may indicate network issues or server overload');
-      } else if (errorMessage.includes('ENOTFOUND') || errorMessage.includes('ECONNREFUSED')) {
-        console.warn('⚠️  SupabaseStorage: Error type: NETWORK ERROR');
-        console.warn('⚠️  SupabaseStorage: Cannot reach the database server');
-        console.warn('⚠️  SupabaseStorage: Check network connectivity and database URL');
-      } else if (errorMessage.includes('authentication') || errorMessage.includes('unauthorized')) {
-        console.warn('⚠️  SupabaseStorage: Error type: AUTHENTICATION ERROR');
-        console.warn('⚠️  SupabaseStorage: Invalid credentials or insufficient permissions');
-        console.warn('⚠️  SupabaseStorage: Check SUPABASE_SERVICE_ROLE_KEY configuration');
-      } else {
-        console.warn('⚠️  SupabaseStorage: Error type: UNKNOWN ERROR');
-        console.warn('⚠️  SupabaseStorage: Unexpected error during connection validation');
-      }
-      
-      console.warn('⚠️  SupabaseStorage: Will attempt to use fallback storage for operations');
+      console.warn('⚠️ Supabase connection error, using fallback');
       this.connectionValidated = false;
       await this.initializeFallback();
     }
@@ -154,100 +82,29 @@ export class SupabaseStorage implements IStorage {
 
   /**
    * Initializes MemStorage as fallback when Supabase is unavailable
-   * Implements Requirements 4.4 - enhanced fallback with proper category mapping and comprehensive logging
    */
   private async initializeFallback(): Promise<void> {
-    const startTime = Date.now();
-    
     try {
-      console.log('🔄 SupabaseStorage: Initializing MemStorage fallback...');
-      console.log('🔄 SupabaseStorage: Fallback initialization started due to Supabase unavailability');
-      
-      // Import MemStorage dynamically to avoid circular dependency
-      const storageModule = await import('./storage');
-      this.fallbackStorage = new storageModule.MemStorage();
-      
-      const duration = Date.now() - startTime;
-      
-      console.log('✅ SupabaseStorage: MemStorage fallback initialized successfully');
-      console.log(`✅ SupabaseStorage: Fallback initialization completed in ${duration}ms`);
-      console.log('📊 SupabaseStorage: Fallback will provide 865 mock feeds when Supabase is unavailable');
-      console.log('📊 SupabaseStorage: Fallback includes proper category mapping validation');
-      console.log('📊 SupabaseStorage: All fallback feeds use valid database category names');
-      
-      // Validate that fallback storage has proper category mapping
-      try {
-        const fallbackFeeds = await this.fallbackStorage.getRecommendedFeeds();
-        console.log(`📊 SupabaseStorage: Fallback validation - ${fallbackFeeds.length} feeds available`);
-        
-        // Check category mapping in fallback feeds
-        const { categoryMappingService } = await import('@shared/category-mapping');
-        let validCategoryCount = 0;
-        let invalidCategoryCount = 0;
-        const invalidCategories = new Set<string>();
-        
-        fallbackFeeds.forEach(feed => {
-          if (categoryMappingService.isValidDatabaseCategory(feed.category)) {
-            validCategoryCount++;
-          } else {
-            invalidCategoryCount++;
-            invalidCategories.add(feed.category);
-          }
-        });
-        
-        if (invalidCategoryCount === 0) {
-          console.log('✅ SupabaseStorage: Fallback category validation - All categories are properly mapped');
-        } else {
-          console.warn(`⚠️  SupabaseStorage: Fallback category validation - ${invalidCategoryCount} feeds have invalid categories`);
-          console.warn(`⚠️  SupabaseStorage: Invalid categories in fallback: ${Array.from(invalidCategories).join(', ')}`);
-        }
-        
-        console.log(`📊 SupabaseStorage: Fallback category summary - ${validCategoryCount} valid, ${invalidCategoryCount} invalid`);
-        
-      } catch (validationError) {
-        console.warn('⚠️  SupabaseStorage: Failed to validate fallback storage categories:', 
-          validationError instanceof Error ? validationError.message : 'Unknown error');
+      if (!this.fallbackStorage) {
+        const storageModule = await import('./storage');
+        this.fallbackStorage = new storageModule.MemStorage();
       }
-      
     } catch (error) {
-      const duration = Date.now() - startTime;
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      
-      console.error('❌ SupabaseStorage: Failed to initialize fallback storage:', errorMessage);
-      console.error(`❌ SupabaseStorage: Fallback initialization failed after ${duration}ms`);
-      console.error('❌ SupabaseStorage: System will attempt direct Supabase operations despite connection issues');
-      console.error('❌ SupabaseStorage: This may result in operation failures when Supabase is unavailable');
-      console.error('❌ SupabaseStorage: Consider investigating MemStorage initialization issues');
-      
-      // Enhanced error categorization for fallback failures
-      if (errorMessage.includes('Cannot resolve module')) {
-        console.error('❌ SupabaseStorage: Fallback error type: MODULE RESOLUTION');
-        console.error('❌ SupabaseStorage: Cannot import MemStorage module - check file paths');
-      } else if (errorMessage.includes('out of memory') || errorMessage.includes('ENOMEM')) {
-        console.error('❌ SupabaseStorage: Fallback error type: MEMORY ERROR');
-        console.error('❌ SupabaseStorage: Insufficient memory to initialize fallback storage');
-      } else {
-        console.error('❌ SupabaseStorage: Fallback error type: UNKNOWN ERROR');
-        console.error('❌ SupabaseStorage: Unexpected error during fallback initialization');
-      }
+      console.error('❌ Failed to initialize fallback storage');
     }
   }
 
   /**
    * Executes operation with automatic fallback to MemStorage if Supabase fails
-   * Implements Requirements 4.4 - enhanced fallback mechanisms with comprehensive logging
    */
   private async executeWithFallback<T>(
     operation: () => Promise<T>,
     fallbackOperation?: () => Promise<T>,
     operationName: string = 'operation'
   ): Promise<T> {
-    const startTime = Date.now();
-    
     try {
       // If connection was never validated, try to validate it now
       if (!this.connectionValidated) {
-        console.log(`🔍 SupabaseStorage: Connection not validated for ${operationName}, attempting validation...`);
         await this.validateConnection();
       }
       
@@ -768,7 +625,8 @@ export class SupabaseStorage implements IStorage {
       return; // No feeds to subscribe to
     }
     
-    // Create user feeds from recommended feeds
+    // Create user feeds from recommended feeds - PRESERVE CATEGORY AS folder_name
+    // Requirements: 1.1, 1.4 - Copy category from recommended_feeds to folder_name in user feeds
     const userFeedsData: InsertFeed[] = recommendedFeeds.map(recommendedFeed => ({
       user_id: userId,
       name: recommendedFeed.name,
@@ -776,6 +634,7 @@ export class SupabaseStorage implements IStorage {
       site_url: recommendedFeed.site_url,
       description: recommendedFeed.description,
       icon_url: recommendedFeed.icon_url,
+      folder_name: recommendedFeed.category, // Copy category to folder_name for sidebar grouping
       status: "active" as const,
       priority: "medium" as const,
     }));
@@ -858,11 +717,15 @@ export class SupabaseStorage implements IStorage {
     completed: number;
     failed: number;
     lastSyncAt?: Date;
+    isActive: boolean;
+    currentFeed?: string;
+    errors: Array<{ feedId: string; feedName: string; error: string }>;
+    newArticlesCount: number;
   }> {
-    // Get user's feeds count
+    // Get user's feeds with names
     const { data: feedsData, error: feedsError } = await this.supabase
       .from('feeds')
-      .select('id')
+      .select('id, name')
       .eq('user_id', userId);
     
     if (feedsError) {
@@ -876,16 +739,20 @@ export class SupabaseStorage implements IStorage {
         totalFeeds: 0,
         syncing: 0,
         completed: 0,
-        failed: 0
+        failed: 0,
+        isActive: false,
+        errors: [],
+        newArticlesCount: 0
       };
     }
     
     const feedIds = feedsData!.map(feed => feed.id);
+    const feedNameMap = new Map(feedsData!.map(feed => [feed.id, feed.name]));
     
     // Get latest sync status for each feed
     const { data: syncData, error: syncError } = await this.supabase
       .from('feed_sync_log')
-      .select('feed_id, status, sync_started_at')
+      .select('feed_id, status, sync_started_at, error_message, articles_new')
       .in('feed_id', feedIds)
       .order('sync_started_at', { ascending: false });
     
@@ -910,12 +777,37 @@ export class SupabaseStorage implements IStorage {
       ? new Date(Math.max(...latestSyncs.map(log => new Date(log.sync_started_at).getTime())))
       : undefined;
     
+    // Get errors from failed syncs
+    const errors: Array<{ feedId: string; feedName: string; error: string }> = [];
+    latestSyncs.filter(log => log.status === "error").forEach(log => {
+      errors.push({
+        feedId: log.feed_id,
+        feedName: feedNameMap.get(log.feed_id) || 'Unknown Feed',
+        error: log.error_message || 'Unknown error'
+      });
+    });
+    
+    // Get current syncing feed name
+    const currentSyncingLog = latestSyncs.find(log => log.status === "in_progress");
+    const currentFeed = currentSyncingLog 
+      ? feedNameMap.get(currentSyncingLog.feed_id) 
+      : undefined;
+    
+    // Calculate total new articles from successful syncs
+    const newArticlesCount = latestSyncs
+      .filter(log => log.status === "success")
+      .reduce((sum, log) => sum + (log.articles_new || 0), 0);
+    
     return {
       totalFeeds,
       syncing,
       completed,
       failed,
-      lastSyncAt
+      lastSyncAt,
+      isActive: syncing > 0,
+      currentFeed,
+      errors,
+      newArticlesCount
     };
   }
 

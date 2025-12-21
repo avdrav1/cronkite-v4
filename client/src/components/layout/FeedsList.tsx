@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { Folder, Rss, ChevronDown, ChevronRight, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useFeedsQuery, type UserFeed } from "@/hooks/useFeedsQuery";
+import { useFeedsQuery } from "@/hooks/useFeedsQuery";
 import type { Feed } from "@shared/schema";
 
 const EXPANDED_CATEGORIES_KEY = 'cronkite-expanded-categories';
@@ -25,8 +25,8 @@ interface GroupedFeeds {
  */
 export function groupFeedsByCategory(feeds: Feed[]): GroupedFeeds {
   return feeds.reduce((acc, feed) => {
-    // Use folder_name if available from UserFeed, otherwise 'Uncategorized'
-    const category = (feed as UserFeed).folder_name || 'Uncategorized';
+    // Use folder_name if available, otherwise 'Uncategorized'
+    const category = feed.folder_name || 'Uncategorized';
     if (!acc[category]) {
       acc[category] = [];
     }

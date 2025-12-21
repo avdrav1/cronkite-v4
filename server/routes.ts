@@ -723,540 +723,127 @@ export async function registerRoutes(
   });
 
   // GET /api/feeds/recommended - Get recommended feeds list (~865 feeds from database)
+  // OPTIMIZED: Reduced verbose logging for better performance
   app.get('/api/feeds/recommended', requireAuth, async (req: Request, res: Response) => {
     const startTime = Date.now();
-    const requestId = Math.random().toString(36).substring(7);
-    const userId = req.user!.id;
-    const clientIp = req.ip || req.connection.remoteAddress || 'unknown';
-    const userAgent = req.get('User-Agent') || 'unknown';
-    const referer = req.get('Referer') || 'direct';
-    
-    // Enhanced request logging with security context (Requirement 4.2)
-    console.log(`=== [${requestId}] GET /api/feeds/recommended REQUEST START ===`);
-    console.log(`🔍 Request Context:`, {
-      userId,
-      clientIp,
-      userAgent,
-      referer,
-      timestamp: new Date().toISOString(),
-      method: req.method,
-      url: req.url,
-      protocol: req.protocol,
-      secure: req.secure,
-      headers: {
-        'content-type': req.get('Content-Type'),
-        'accept': req.get('Accept'),
-        'accept-language': req.get('Accept-Language'),
-        'cache-control': req.get('Cache-Control')
-      }
-    });
-    
-    console.log(`📋 Query Parameters:`, req.query);
-    console.log(`🔐 Authentication Status: Authenticated (User ID: ${userId})`);
-    
-    // Request rate limiting check (basic implementation)
-    const requestKey = `feeds_req_${userId}`;
-    const currentTime = Date.now();
     
     try {
-      // Enhanced query parameter validation (Requirement 4.2)
-      console.log(`[${requestId}] 🔍 Validating query parameters...`);
-      const validationStartTime = Date.now();
-      
+      // Validate query parameters
       const validatedQuery = recommendedFeedsQuerySchema.parse(req.query);
       const { category, search, limit, featured, country, language } = validatedQuery;
       
-      const validationTime = Date.now() - validationStartTime;
-      console.log(`[${requestId}] ✅ Query validation completed in ${validationTime}ms`);
-      console.log(`[${requestId}] 📋 Validated parameters:`, {
-        category: category || null,
-        search: search || null,
-        limit: limit || null,
-        featured: featured !== undefined ? featured : null,
-        country: country || null,
-        language: language || null
-      });
-      
-      // Log category translation if category is provided (Requirement 1.3)
-      if (category) {
-        const databaseCategory = categoryMappingService.frontendToDatabase(category);
-        if (databaseCategory) {
-          console.log(`[${requestId}] 🔄 Category translation: ${category} (frontend) → ${databaseCategory} (database)`);
-        } else {
-          console.warn(`[${requestId}] ⚠️  Category '${category}' has no mapping - will use fallback matching`);
-        }
-      }
-      
-      // Input sanitization logging
-      if (search) {
-        console.log(`[${requestId}] 🧹 Search query sanitized: "${search}" (length: ${search.length})`);
-      }
-      
-      // Storage layer interaction with enhanced monitoring (Requirement 4.2)
-      console.log(`[${requestId}] 💾 Initiating storage layer query...`);
-      const storageStartTime = Date.now();
-      
+      // Get feeds from storage
       const storage = await getStorage();
-      let recommendedFeeds;
-      try {
-        recommendedFeeds = await storage.getRecommendedFeeds();
-        
-        const storageEndTime = Date.now();
-        const storageTime = storageEndTime - storageStartTime;
-        
-        console.log(`[${requestId}] ✅ Storage query successful in ${storageTime}ms`);
-        console.log(`[${requestId}] 📊 Storage response: ${recommendedFeeds.length} feeds retrieved`);
-        
-        // Storage performance monitoring
-        if (storageTime > 1000) {
-          console.warn(`[${requestId}] ⚠️  SLOW STORAGE QUERY: ${storageTime}ms (threshold: 1000ms)`);
-        } else if (storageTime > 500) {
-          console.log(`[${requestId}] 🐌 Moderate storage query time: ${storageTime}ms`);
-        } else {
-          console.log(`[${requestId}] ⚡ Fast storage query: ${storageTime}ms`);
-        }
-        
-      } catch (storageError) {
-        const storageTime = Date.now() - storageStartTime;
-        console.error(`[${requestId}] ❌ Storage query failed in ${storageTime}ms:`, {
-          error: storageError instanceof Error ? {
-            name: storageError.name,
-            message: storageError.message,
-            stack: storageError.stack
-          } : storageError,
-          storageType: 'SupabaseStorage'
-        });
-        throw storageError;
-      }
+      const recommendedFeeds = await storage.getRecommendedFeeds();
       
       const originalCount = recommendedFeeds.length;
-      console.log(`[${requestId}] 📊 Original feed count: ${originalCount}`);
       
-      // Data validation and consistency checks
+      // Only log warnings for actual issues
       if (originalCount === 0) {
-        console.warn(`[${requestId}] ⚠️  WARNING: No feeds returned from storage - potential data issue`);
-      } else if (originalCount < 800) {
-        console.warn(`[${requestId}] ⚠️  WARNING: Low feed count (${originalCount}) - expected ~865 feeds`);
-      } else {
-        console.log(`[${requestId}] ✅ Feed count validation passed (${originalCount} feeds)`);
+        console.warn('⚠️ No feeds returned from storage');
       }
       
-      // Enhanced filtering with validation logic (Task 5: Feed filtering validation)
-      console.log(`[${requestId}] 🔍 Applying filters with validation...`);
-      
-      // Prepare filter options for validation
-      const filterOptions: FilterOptions = {
-        category,
-        search,
-        featured,
-        country,
-        language,
-        limit
-      };
-      
-      // Validate filter options first
-      const optionsValidation = validateFilterOptions(filterOptions);
-      if (!optionsValidation.isValid) {
-        console.error(`[${requestId}] ❌ Invalid filter options:`, optionsValidation.errors);
-        return res.status(400).json({
-          error: 'Invalid filter parameters',
-          message: 'One or more filter parameters are invalid',
-          details: optionsValidation.errors,
-          requestId,
-          timestamp: new Date().toISOString()
-        });
-      }
-      
-      // Apply comprehensive filtering with validation
-      const filteringResult = FeedFilteringValidator.validateComprehensiveFiltering(
-        recommendedFeeds,
-        filterOptions
-      );
-      
-      // Check if filtering validation passed
-      if (!filteringResult.isValid) {
-        console.error(`[${requestId}] ❌ Feed filtering validation failed:`, filteringResult.errors);
-        return res.status(500).json({
-          error: 'Feed filtering error',
-          message: 'An error occurred while filtering feeds',
-          details: filteringResult.errors,
-          requestId,
-          timestamp: new Date().toISOString()
-        });
-      }
-      
-      // Log validation warnings if any
-      if (filteringResult.warnings.length > 0) {
-        console.warn(`[${requestId}] ⚠️  Feed filtering warnings:`, filteringResult.warnings);
-      }
-      
-      // Apply the actual filtering using category mapping for interests
+      // Apply filtering
       let filteredFeeds = [...recommendedFeeds];
-      const filteringSteps = filteringResult.appliedFilters;
       
       // Category filter with mapping support
       if (category) {
-        const beforeFilter = filteredFeeds.length;
-        
-        console.log(`[${requestId}] 🏷️  Processing category filter: '${category}'`);
-        
-        // Translate frontend category to database category using mapping service
         const databaseCategory = categoryMappingService.frontendToDatabase(category);
-        
         if (databaseCategory) {
-          console.log(`[${requestId}] ✅ Category mapping: ${category} → ${databaseCategory}`);
-          
-          // Filter feeds using the mapped database category
           filteredFeeds = filteredFeeds.filter(feed => feed.category === databaseCategory);
-          
-          const afterFilter = filteredFeeds.length;
-          console.log(`[${requestId}] 🏷️  Category '${category}' (mapped to '${databaseCategory}'): ${beforeFilter} → ${afterFilter} feeds`);
         } else {
-          // Fallback: attempt case-insensitive matching as per Requirement 1.5
-          console.warn(`[${requestId}] ⚠️  No mapping found for category '${category}', attempting fallback`);
-          
-          const originalCategory = category;
+          // Fallback: case-insensitive matching
           filteredFeeds = filteredFeeds.filter(feed => 
-            feed.category.toLowerCase() === originalCategory.toLowerCase()
+            feed.category.toLowerCase() === category.toLowerCase()
           );
-          
-          const afterFilter = filteredFeeds.length;
-          console.warn(`[${requestId}] 🏷️  Category '${category}' (fallback): ${beforeFilter} → ${afterFilter} feeds`);
-          
-          // Log warning for unmapped category as per Requirement 1.5
-          if (afterFilter === 0 && beforeFilter > 0) {
-            console.warn(`[${requestId}] ❌ Category '${category}' not found in feeds and no mapping available`);
-          }
         }
       }
       
       // Featured filter
       if (featured !== undefined) {
-        const beforeFilter = filteredFeeds.length;
         filteredFeeds = filteredFeeds.filter(feed => feed.is_featured === featured);
-        const afterFilter = filteredFeeds.length;
-        console.log(`[${requestId}] ⭐ Featured '${featured}': ${beforeFilter} → ${afterFilter} feeds`);
       }
       
       // Country filter
       if (country) {
-        const beforeFilter = filteredFeeds.length;
         filteredFeeds = filteredFeeds.filter(feed => 
           feed.country && feed.country.toUpperCase() === country.toUpperCase()
         );
-        const afterFilter = filteredFeeds.length;
-        console.log(`[${requestId}] 🌍 Country '${country}': ${beforeFilter} → ${afterFilter} feeds`);
       }
       
       // Language filter
       if (language) {
-        const beforeFilter = filteredFeeds.length;
         filteredFeeds = filteredFeeds.filter(feed => 
           feed.language.toLowerCase() === language.toLowerCase()
         );
-        const afterFilter = filteredFeeds.length;
-        console.log(`[${requestId}] 🗣️  Language '${language}': ${beforeFilter} → ${afterFilter} feeds`);
       }
       
-      // Search filter with enhanced logging
+      // Search filter
       if (search) {
-        const beforeFilter = filteredFeeds.length;
         const searchLower = search.toLowerCase();
-        const searchStartTime = Date.now();
-        
         filteredFeeds = filteredFeeds.filter(feed => {
           const nameMatch = feed.name.toLowerCase().includes(searchLower);
           const descMatch = feed.description?.toLowerCase().includes(searchLower);
           const tagMatch = feed.tags && feed.tags.some(tag => tag.toLowerCase().includes(searchLower));
           return nameMatch || descMatch || tagMatch;
         });
-        
-        const searchTime = Date.now() - searchStartTime;
-        const afterFilter = filteredFeeds.length;
-        console.log(`[${requestId}] 🔍 Search '${search}': ${beforeFilter} → ${afterFilter} feeds (${searchTime}ms)`);
       }
       
       // Limit application
       if (limit) {
-        const beforeLimit = filteredFeeds.length;
         filteredFeeds = filteredFeeds.slice(0, limit);
-        const afterLimit = filteredFeeds.length;
-        console.log(`[${requestId}] ✂️  Limit ${limit}: ${beforeLimit} → ${afterLimit} feeds`);
       }
       
-      // Validate final filtering consistency
-      if (filteredFeeds.length !== filteringResult.filteredCount) {
-        console.warn(`[${requestId}] ⚠️  Filtering inconsistency detected: expected ${filteringResult.filteredCount}, got ${filteredFeeds.length}`);
-      }
+      const totalTime = Date.now() - startTime;
       
-      const endTime = Date.now();
-      const totalTime = endTime - startTime;
-      
-      // Performance analysis and warnings
-      const performanceMetrics = {
-        totalTime,
-        storageTime: Date.now() - storageStartTime,
-        filteringTime: endTime - (storageStartTime + (Date.now() - storageStartTime)),
-        requestsPerSecond: totalTime > 0 ? Math.round(1000 / totalTime) : 0
-      };
-      
-      // Performance warnings
+      // Only log slow requests
       if (totalTime > 2000) {
-        console.warn(`[${requestId}] ⚠️  SLOW REQUEST: ${totalTime}ms (threshold: 2000ms)`);
-      } else if (totalTime > 1000) {
-        console.log(`[${requestId}] 🐌 Moderate request time: ${totalTime}ms`);
-      } else {
-        console.log(`[${requestId}] ⚡ Fast request: ${totalTime}ms`);
+        console.warn(`⚠️ Slow /api/feeds/recommended: ${totalTime}ms`);
       }
       
-      // Comprehensive success logging (Requirement 4.2)
-      console.log(`[${requestId}] ✅ REQUEST COMPLETED SUCCESSFULLY`);
-      console.log(`[${requestId}] 📊 Final Results:`, {
-        originalCount,
-        filteredCount: filteredFeeds.length,
-        filteringSteps,
-        performance: performanceMetrics,
-        filters: {
-          category: category || null,
-          search: search || null,
-          limit: limit || null,
-          featured: featured !== undefined ? featured : null,
-          country: country || null,
-          language: language || null
-        }
-      });
-      
-      // Response construction with enhanced metadata
-      const responseData = {
+      res.json({
         feeds: filteredFeeds,
         total: filteredFeeds.length,
         metadata: {
           originalCount,
           filteredCount: filteredFeeds.length,
-          filters: {
-            category: category || null,
-            search: search || null,
-            limit: limit || null,
-            featured: featured !== undefined ? featured : null,
-            country: country || null,
-            language: language || null
-          },
-          filteringSteps,
-          requestId,
           processingTime: totalTime,
-          performance: performanceMetrics,
-          timestamp: new Date().toISOString(),
-          storageType: 'SupabaseStorage'
-        }
-      };
-      
-      console.log(`[${requestId}] 📤 Sending response: ${JSON.stringify(responseData).length} bytes`);
-      console.log(`=== [${requestId}] REQUEST END (SUCCESS) ===\n`);
-      
-      res.json(responseData);
-      
-    } catch (error) {
-      const endTime = Date.now();
-      const totalTime = endTime - startTime;
-      
-      // Enhanced error handling and logging (Requirements 4.3, 4.4)
-      console.error(`=== [${requestId}] ERROR OCCURRED ===`);
-      console.error(`[${requestId}] ❌ Request failed in ${totalTime}ms`);
-      console.error(`[${requestId}] 🔍 Error Context:`, {
-        userId,
-        clientIp,
-        userAgent,
-        query: req.query,
-        timestamp: new Date().toISOString(),
-        requestDuration: totalTime
-      });
-      
-      // Detailed error analysis
-      if (error instanceof z.ZodError) {
-        console.error(`[${requestId}] 📋 VALIDATION ERROR:`, {
-          errorType: 'ZodValidationError',
-          errorCount: error.errors.length,
-          errors: error.errors.map(err => ({
-            field: err.path.join('.'),
-            message: err.message,
-            code: err.code,
-            received: 'received' in err ? err.received : undefined
-          })),
-          rawQuery: req.query
-        });
-        
-        // Check for category-specific validation errors (Requirement 1.3, 1.4)
-        const categoryErrors = error.errors.filter(err => 
-          err.path.includes('category')
-        );
-        
-        if (categoryErrors.length > 0) {
-          console.error(`[${requestId}] 🏷️  CATEGORY VALIDATION ERRORS:`, {
-            categoryValue: req.query.category,
-            availableFrontendCategories: categoryMappingService.getAllFrontendCategories(),
-            availableDatabaseCategories: categoryMappingService.getAllDatabaseCategories(),
-            categoryErrors: categoryErrors.map(err => ({
-              message: err.message,
-              code: err.code
-            }))
-          });
-        }
-        
-        const validationResponse = {
-          error: 'Validation error',
-          message: 'Invalid query parameters provided',
-          details: error.errors.map(err => ({
-            field: err.path.join('.'),
-            message: err.message,
-            received: 'received' in err ? err.received : undefined
-          })),
-          // Add category-specific help for category errors (Requirement 1.4)
-          ...(categoryErrors.length > 0 && {
-            categoryHelp: {
-              availableCategories: categoryMappingService.getAllFrontendCategories(),
-              message: 'Use one of the available frontend category IDs'
-            }
-          }),
-          requestId,
-          timestamp: new Date().toISOString(),
-          processingTime: totalTime
-        };
-        
-        console.error(`[${requestId}] 📤 Sending validation error response`);
-        console.error(`=== [${requestId}] REQUEST END (VALIDATION ERROR) ===\n`);
-        
-        return res.status(400).json(validationResponse);
-      }
-      
-      // Storage and system errors with detailed logging
-      console.error(`[${requestId}] 💾 SYSTEM ERROR:`, {
-        errorType: error instanceof Error ? error.constructor.name : typeof error,
-        errorName: error instanceof Error ? error.name : 'Unknown',
-        errorMessage: error instanceof Error ? error.message : String(error),
-        errorStack: error instanceof Error ? error.stack : undefined,
-        storageType: 'SupabaseStorage',
-        systemInfo: {
-          nodeVersion: process.version,
-          platform: process.platform,
-          memoryUsage: process.memoryUsage(),
-          uptime: process.uptime()
-        }
-      });
-      
-      // Specific error type handling with appropriate HTTP status codes
-      if (error instanceof Error) {
-        // Connection and timeout errors
-        if (error.message.includes('connection') || 
-            error.message.includes('timeout') || 
-            error.message.includes('ECONNREFUSED') ||
-            error.message.includes('ETIMEDOUT')) {
-          
-          console.error(`[${requestId}] 🔌 CONNECTION ERROR: Service unavailable`);
-          const serviceUnavailableResponse = {
-            error: 'Service temporarily unavailable',
-            message: 'The feed service is temporarily unavailable. Please try again in a few moments.',
-            requestId,
-            retryAfter: 30,
-            timestamp: new Date().toISOString(),
-            processingTime: totalTime
-          };
-          
-          console.error(`[${requestId}] 📤 Sending service unavailable response (503)`);
-          console.error(`=== [${requestId}] REQUEST END (SERVICE UNAVAILABLE) ===\n`);
-          
-          return res.status(503).json(serviceUnavailableResponse);
-        }
-        
-        // Data not found errors
-        if (error.message.includes('not found') || 
-            error.message.includes('empty') ||
-            error.message.includes('no data')) {
-          
-          console.error(`[${requestId}] 📭 DATA NOT FOUND ERROR: No feeds available`);
-          const notFoundResponse = {
-            error: 'No feeds available',
-            message: 'No recommended feeds are currently available. Please contact support if this persists.',
-            requestId,
-            timestamp: new Date().toISOString(),
-            processingTime: totalTime,
-            supportContact: 'support@cronkite.app'
-          };
-          
-          console.error(`[${requestId}] 📤 Sending not found response (404)`);
-          console.error(`=== [${requestId}] REQUEST END (NOT FOUND) ===\n`);
-          
-          return res.status(404).json(notFoundResponse);
-        }
-        
-        // Authentication/authorization errors
-        if (error.message.includes('unauthorized') || 
-            error.message.includes('forbidden') ||
-            error.message.includes('access denied')) {
-          
-          console.error(`[${requestId}] 🔐 AUTHORIZATION ERROR: Access denied`);
-          const unauthorizedResponse = {
-            error: 'Access denied',
-            message: 'You do not have permission to access this resource.',
-            requestId,
-            timestamp: new Date().toISOString(),
-            processingTime: totalTime
-          };
-          
-          console.error(`[${requestId}] 📤 Sending unauthorized response (403)`);
-          console.error(`=== [${requestId}] REQUEST END (UNAUTHORIZED) ===\n`);
-          
-          return res.status(403).json(unauthorizedResponse);
-        }
-        
-        // Rate limiting errors
-        if (error.message.includes('rate limit') || 
-            error.message.includes('too many requests')) {
-          
-          console.error(`[${requestId}] 🚦 RATE LIMIT ERROR: Too many requests`);
-          const rateLimitResponse = {
-            error: 'Rate limit exceeded',
-            message: 'Too many requests. Please wait before making another request.',
-            requestId,
-            retryAfter: 60,
-            timestamp: new Date().toISOString(),
-            processingTime: totalTime
-          };
-          
-          console.error(`[${requestId}] 📤 Sending rate limit response (429)`);
-          console.error(`=== [${requestId}] REQUEST END (RATE LIMITED) ===\n`);
-          
-          return res.status(429).json(rateLimitResponse);
-        }
-      }
-      
-      // Generic server error with comprehensive logging
-      console.error(`[${requestId}] 💥 UNHANDLED ERROR: Generic server error`);
-      console.error(`[${requestId}] 🔍 Error Details:`, {
-        errorString: String(error),
-        errorJSON: JSON.stringify(error, Object.getOwnPropertyNames(error)),
-        requestContext: {
-          method: req.method,
-          url: req.url,
-          headers: req.headers,
-          query: req.query,
-          userId,
           timestamp: new Date().toISOString()
         }
       });
       
-      const genericErrorResponse = {
+    } catch (error) {
+      const totalTime = Date.now() - startTime;
+      
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          error: 'Validation error',
+          message: 'Invalid query parameters provided',
+          details: error.errors.map(err => ({
+            field: err.path.join('.'),
+            message: err.message
+          })),
+          timestamp: new Date().toISOString()
+        });
+      }
+      
+      console.error('Get recommended feeds error:', error);
+      
+      // Handle specific error types
+      if (error instanceof Error) {
+        if (error.message.includes('connection') || error.message.includes('timeout')) {
+          return res.status(503).json({
+            error: 'Service temporarily unavailable',
+            message: 'Please try again in a few moments.',
+            retryAfter: 30
+          });
+        }
+      }
+      
+      res.status(500).json({
         error: 'Internal server error',
-        message: 'An unexpected error occurred while retrieving recommended feeds. Please try again later.',
-        requestId,
-        timestamp: new Date().toISOString(),
-        processingTime: totalTime,
-        supportContact: 'support@cronkite.app'
-      };
-      
-      console.error(`[${requestId}] 📤 Sending generic error response (500)`);
-      console.error(`=== [${requestId}] REQUEST END (INTERNAL ERROR) ===\n`);
-      
-      res.status(500).json(genericErrorResponse);
+        message: 'An error occurred while retrieving recommended feeds.'
+      });
     }
   });
   
@@ -1353,11 +940,51 @@ export async function registerRoutes(
     }
   });
   
+  // GET /api/feeds/sync/status - Get current sync status for authenticated user
+  // Requirements: 2.6, 2.7 - Provide sync progress tracking and visual feedback
+  app.get('/api/feeds/sync/status', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      
+      console.log(`📊 Getting sync status for user ${userId}`);
+      
+      const storage = await getStorage();
+      const syncStatus = await storage.getFeedSyncStatus(userId);
+      
+      console.log(`📊 Sync status for user ${userId}:`, {
+        totalFeeds: syncStatus.totalFeeds,
+        syncing: syncStatus.syncing,
+        completed: syncStatus.completed,
+        failed: syncStatus.failed,
+        isActive: syncStatus.isActive
+      });
+      
+      res.json({
+        isActive: syncStatus.isActive,
+        totalFeeds: syncStatus.totalFeeds,
+        completedFeeds: syncStatus.completed,
+        failedFeeds: syncStatus.failed,
+        syncingFeeds: syncStatus.syncing,
+        currentFeed: syncStatus.currentFeed,
+        errors: syncStatus.errors,
+        newArticlesCount: syncStatus.newArticlesCount,
+        lastSyncAt: syncStatus.lastSyncAt?.toISOString()
+      });
+    } catch (error) {
+      console.error('Get sync status error:', error);
+      res.status(500).json({
+        error: 'Failed to get sync status',
+        message: 'An error occurred while retrieving sync status'
+      });
+    }
+  });
+  
   // POST /api/feeds/sync - Trigger feed synchronization
+  // Requirements: 2.1, 2.4, 2.9 - Trigger sync with detailed results
   app.post('/api/feeds/sync', requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = req.user!.id;
-      const { feedIds } = req.body;
+      const { feedIds, waitForResults } = req.body;
       
       const storage = await getStorage();
       
@@ -1380,7 +1007,7 @@ export async function registerRoutes(
       // Start RSS synchronization for feeds
       console.log(`Starting RSS sync for ${feedsToSync.length} feeds for user ${userId}`);
       
-      // Process feeds in background (don't await to return immediately)
+      // Process feeds
       const syncPromise = syncFeeds(feedsToSync, {
         maxArticles: 50, // Limit articles per feed
         respectEtag: true,
@@ -1388,6 +1015,61 @@ export async function registerRoutes(
         batchSize: 3, // Process 3 feeds at a time
         delayMs: 2000 // 2 second delay between batches
       });
+      
+      // If waitForResults is true, wait for sync to complete and return detailed results
+      if (waitForResults) {
+        try {
+          const results = await syncPromise;
+          
+          const successCount = results.filter(r => r.success).length;
+          const failureCount = results.filter(r => !r.success).length;
+          const newArticlesCount = results.reduce((sum, r) => sum + r.articlesNew, 0);
+          const updatedArticlesCount = results.reduce((sum, r) => sum + r.articlesUpdated, 0);
+          
+          // Build errors array with feed names
+          const errors: Array<{ feedId: string; feedName: string; error: string }> = [];
+          results.forEach((result, index) => {
+            if (!result.success && result.error) {
+              const feed = feedsToSync[index];
+              errors.push({
+                feedId: feed.id,
+                feedName: feed.name,
+                error: result.error
+              });
+            }
+          });
+          
+          console.log(`RSS sync completed for user ${userId}: ${successCount} success, ${failureCount} failed, ${newArticlesCount} new articles`);
+          
+          return res.json({
+            success: true,
+            message: 'Feed synchronization completed',
+            totalFeeds: feedsToSync.length,
+            successfulSyncs: successCount,
+            failedSyncs: failureCount,
+            newArticles: newArticlesCount,
+            updatedArticles: updatedArticlesCount,
+            errors
+          });
+        } catch (syncError) {
+          console.error('RSS sync error:', syncError);
+          return res.status(500).json({
+            success: false,
+            error: 'Sync failed',
+            message: syncError instanceof Error ? syncError.message : 'An error occurred during synchronization',
+            totalFeeds: feedsToSync.length,
+            successfulSyncs: 0,
+            failedSyncs: feedsToSync.length,
+            newArticles: 0,
+            updatedArticles: 0,
+            errors: feedsToSync.map(feed => ({
+              feedId: feed.id,
+              feedName: feed.name,
+              error: 'Sync failed'
+            }))
+          });
+        }
+      }
       
       // Don't await the sync, let it run in background
       syncPromise.catch(error => {
@@ -1401,13 +1083,21 @@ export async function registerRoutes(
       }));
       
       res.json({
+        success: true,
         message: 'Feed synchronization started',
         sync_results: syncResults,
-        total_feeds: feedsToSync.length
+        totalFeeds: feedsToSync.length,
+        // Initial values - client should poll /api/feeds/sync/status for updates
+        successfulSyncs: 0,
+        failedSyncs: 0,
+        newArticles: 0,
+        updatedArticles: 0,
+        errors: []
       });
     } catch (error) {
       console.error('Trigger feed sync error:', error);
       res.status(500).json({
+        success: false,
         error: 'Failed to trigger feed sync',
         message: 'An error occurred while starting feed synchronization'
       });
@@ -1546,6 +1236,7 @@ export async function registerRoutes(
   });
 
   // GET /api/articles - Get user's article feed
+  // OPTIMIZED: Uses parallel queries instead of sequential N+1 pattern
   app.get('/api/articles', requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = req.user!.id;
@@ -1560,30 +1251,33 @@ export async function registerRoutes(
         return res.json({
           articles: [],
           total: 0,
+          feeds_count: 0,
           message: 'No subscribed feeds found'
         });
       }
       
-      // Get articles from all user feeds
-      const allArticles = [];
-      for (const feed of userFeeds) {
+      // OPTIMIZATION: Fetch articles from all feeds in parallel instead of sequentially
+      const articlesPerFeed = Math.ceil(limit / userFeeds.length);
+      const feedArticlePromises = userFeeds.map(async (feed) => {
         try {
-          const feedArticles = await storage.getArticlesByFeedId(feed.id, Math.ceil(limit / userFeeds.length));
+          const feedArticles = await storage.getArticlesByFeedId(feed.id, articlesPerFeed);
           
           // Add feed information to each article
-          const articlesWithFeed = feedArticles.map(article => ({
+          return feedArticles.map(article => ({
             ...article,
             feed_name: feed.name,
             feed_url: feed.site_url || feed.url,
             feed_icon: feed.icon_url
           }));
-          
-          allArticles.push(...articlesWithFeed);
         } catch (error) {
           console.error(`Failed to get articles for feed ${feed.id}:`, error);
-          // Continue with other feeds even if one fails
+          return []; // Return empty array on error, continue with other feeds
         }
-      }
+      });
+      
+      // Wait for all parallel queries to complete
+      const feedArticlesArrays = await Promise.all(feedArticlePromises);
+      const allArticles = feedArticlesArrays.flat();
       
       // Sort by published date (newest first)
       allArticles.sort((a, b) => {

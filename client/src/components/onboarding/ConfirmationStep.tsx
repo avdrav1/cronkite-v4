@@ -5,8 +5,31 @@ import { REGIONS } from "@/data/regions";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
 import { Confetti } from "@/components/ui/confetti"; // Placeholder import, simulating confetti
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { apiRequest } from "@/lib/queryClient";
+import { Spinner } from "@/components/ui/spinner";
+import { RefreshCw, AlertCircle, CheckCircle2 } from "lucide-react";
+
+// Sync status response type from API
+interface SyncStatusResponse {
+  isActive: boolean;
+  totalFeeds: number;
+  completedFeeds: number;
+  failedFeeds: number;
+  syncingFeeds: number;
+  currentFeed?: string;
+  errors: Array<{ feedName: string; error: string }>;
+  newArticlesCount?: number;
+  lastSyncAt?: string;
+}
+
+// Sync progress state for UI
+interface SyncProgress {
+  current: number;
+  total: number;
+  currentFeedName?: string;
+  newArticles: number;
+}
 
 interface ConfirmationStepProps {
   selectedInterests: string[];
@@ -18,15 +41,82 @@ export function ConfirmationStep({ selectedInterests, selectedRegion, selectedFe
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncComplete, setSyncComplete] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncProgress, setSyncProgress] = useState<SyncProgress>({ current: 0, total: 0, newArticles: 0 });
+  const [failedFeeds, setFailedFeeds] = useState<Array<{ feedName: string; error: string }>>([]);
+  const pollingRef = useRef<NodeJS.Timeout | null>(null);
+  const hasStartedRef = useRef(false);
 
   const regionName = selectedRegion ? REGIONS.find(r => r.code === selectedRegion)?.name : null;
   const regionFlag = selectedRegion ? REGIONS.find(r => r.code === selectedRegion)?.flag : null;
 
+  // Poll sync status for progress updates
+  const pollSyncStatus = useCallback(async () => {
+    try {
+      const response = await apiRequest('GET', '/api/feeds/sync/status');
+      const status: SyncStatusResponse = await response.json();
+      
+      setSyncProgress({
+        current: status.completedFeeds + status.failedFeeds,
+        total: status.totalFeeds,
+        currentFeedName: status.currentFeed,
+        newArticles: status.newArticlesCount || 0
+      });
+      
+      if (status.errors && status.errors.length > 0) {
+        setFailedFeeds(status.errors);
+      }
+      
+      // Check if sync is complete
+      if (!status.isActive && status.totalFeeds > 0) {
+        // Sync finished
+        if (pollingRef.current) {
+          clearInterval(pollingRef.current);
+          pollingRef.current = null;
+        }
+        
+        if (status.failedFeeds === status.totalFeeds) {
+          // All feeds failed
+          setSyncError('All feeds failed to sync. Please try again.');
+        } else {
+          setSyncComplete(true);
+        }
+        setIsSyncing(false);
+      }
+    } catch (error) {
+      console.error('Failed to poll sync status:', error);
+      // Don't stop polling on error, just log it
+    }
+  }, []);
+
+  // Retry sync for failed feeds
+  const handleRetrySync = async () => {
+    setIsSyncing(true);
+    setSyncError(null);
+    setFailedFeeds([]);
+    setSyncProgress({ current: 0, total: selectedFeedsCount, newArticles: 0 });
+    
+    try {
+      await apiRequest('POST', '/api/feeds/sync', {});
+      
+      // Start polling for progress
+      pollingRef.current = setInterval(pollSyncStatus, 1500);
+    } catch (error) {
+      console.error('Failed to retry sync:', error);
+      setSyncError(error instanceof Error ? error.message : 'Failed to sync feeds');
+      setIsSyncing(false);
+    }
+  };
+
   // Complete onboarding process when component mounts
   useEffect(() => {
+    // Prevent double execution in strict mode
+    if (hasStartedRef.current) return;
+    hasStartedRef.current = true;
+    
     const completeOnboarding = async () => {
       setIsSyncing(true);
       setSyncError(null);
+      setSyncProgress({ current: 0, total: selectedFeedsCount, newArticles: 0 });
 
       try {
         // Mark onboarding as completed
@@ -37,17 +127,28 @@ export function ConfirmationStep({ selectedInterests, selectedRegion, selectedFe
         // Trigger initial feed synchronization for subscribed feeds
         await apiRequest('POST', '/api/feeds/sync', {});
         
-        setSyncComplete(true);
+        // Start polling for sync progress
+        pollingRef.current = setInterval(pollSyncStatus, 1500);
+        
+        // Initial poll
+        await pollSyncStatus();
       } catch (error) {
         console.error('Failed to complete onboarding:', error);
         setSyncError(error instanceof Error ? error.message : 'Failed to complete setup');
-      } finally {
         setIsSyncing(false);
       }
     };
 
     completeOnboarding();
-  }, []);
+    
+    // Cleanup polling on unmount
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    };
+  }, [selectedFeedsCount, pollSyncStatus]);
 
   return (
     <motion.div 
@@ -61,18 +162,87 @@ export function ConfirmationStep({ selectedInterests, selectedRegion, selectedFe
         {isSyncing ? "Setting up your feed..." : syncComplete ? "You're all set!" : "Almost ready!"}
       </h1>
 
+      {/* Sync Progress Indicator - Requirements 2.6, 2.7 */}
       {isSyncing && (
-        <div className="flex flex-col items-center gap-4 mb-8">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-          <p className="text-muted-foreground">Fetching your first articles...</p>
+        <div className="flex flex-col items-center gap-4 mb-8 w-full">
+          <div className="flex items-center gap-3">
+            <Spinner className="h-6 w-6 text-primary" />
+            <span className="text-lg font-medium">Syncing feeds...</span>
+          </div>
+          
+          {/* Progress bar */}
+          <div className="w-full max-w-xs">
+            <div className="flex justify-between text-sm text-muted-foreground mb-2">
+              <span>
+                {syncProgress.current} of {syncProgress.total || selectedFeedsCount} feeds
+              </span>
+              {syncProgress.total > 0 && (
+                <span>
+                  {Math.round((syncProgress.current / syncProgress.total) * 100)}%
+                </span>
+              )}
+            </div>
+            <div className="h-2 bg-muted rounded-full overflow-hidden">
+              <motion.div 
+                className="h-full bg-primary rounded-full"
+                initial={{ width: 0 }}
+                animate={{ 
+                  width: syncProgress.total > 0 
+                    ? `${(syncProgress.current / syncProgress.total) * 100}%` 
+                    : '0%' 
+                }}
+                transition={{ duration: 0.3, ease: "easeOut" }}
+              />
+            </div>
+          </div>
+          
+          {/* Current feed being synced */}
+          {syncProgress.currentFeedName && (
+            <p className="text-sm text-muted-foreground">
+              Fetching: {syncProgress.currentFeedName}
+            </p>
+          )}
+          
+          {/* New articles count */}
+          {syncProgress.newArticles > 0 && (
+            <p className="text-sm text-green-600 dark:text-green-400 flex items-center gap-1">
+              <CheckCircle2 className="h-4 w-4" />
+              {syncProgress.newArticles} new articles found
+            </p>
+          )}
         </div>
       )}
 
+      {/* Sync Complete with partial failures */}
+      {syncComplete && failedFeeds.length > 0 && (
+        <div className="text-sm text-amber-600 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-4 py-3 mb-8 w-full">
+          <div className="flex items-center gap-2 font-medium mb-2">
+            <AlertCircle className="h-4 w-4" />
+            <span>Some feeds couldn't be synced</span>
+          </div>
+          <p className="text-xs text-amber-700 dark:text-amber-300">
+            {failedFeeds.length} feed{failedFeeds.length > 1 ? 's' : ''} failed. You can retry from settings later.
+          </p>
+        </div>
+      )}
+
+      {/* Sync Error - Requirement 2.9 */}
       {syncError && (
-        <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-3 mb-8">
-          <p className="font-medium">Sync Error</p>
-          <p>{syncError}</p>
-          <p className="mt-2 text-xs">Don't worry, you can sync feeds later from the settings page.</p>
+        <div className="text-sm text-red-600 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3 mb-8 w-full">
+          <div className="flex items-center gap-2 font-medium mb-2">
+            <AlertCircle className="h-4 w-4" />
+            <span>Sync Error</span>
+          </div>
+          <p className="text-xs mb-3">{syncError}</p>
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={handleRetrySync}
+            className="flex items-center gap-2"
+          >
+            <RefreshCw className="h-3 w-3" />
+            Retry Sync
+          </Button>
         </div>
       )}
 

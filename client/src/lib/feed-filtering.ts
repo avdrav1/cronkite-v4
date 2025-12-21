@@ -207,7 +207,23 @@ export function filterFeeds(
 }
 
 /**
+ * Sorts feeds by featured status first, then by popularity_score descending
+ * Implements Requirement 3.1: Featured feeds first, then by popularity
+ */
+export function sortFeedsByFeaturedAndPopularity(feeds: RecommendedFeed[]): RecommendedFeed[] {
+  return [...feeds].sort((a, b) => {
+    // Featured feeds first
+    if (a.is_featured !== b.is_featured) {
+      return b.is_featured ? 1 : -1;
+    }
+    // Then by popularity_score descending
+    return (b.popularity_score || 0) - (a.popularity_score || 0);
+  });
+}
+
+/**
  * Groups filtered feeds by category for display using category mapping
+ * Feeds within each category are sorted by featured status and popularity
  */
 export function groupFeedsByCategory(
   feeds: RecommendedFeed[],
@@ -225,7 +241,8 @@ export function groupFeedsByCategory(
       const categoryFeeds = feeds.filter(feed => feed.category === dbCategory);
       
       if (categoryFeeds.length > 0) {
-        feedsByCategory[frontendCategory] = categoryFeeds;
+        // Sort feeds by featured status and popularity within each category
+        feedsByCategory[frontendCategory] = sortFeedsByFeaturedAndPopularity(categoryFeeds);
       }
     }
   });

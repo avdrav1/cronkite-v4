@@ -11,13 +11,6 @@ export interface UserFeedsResponse {
 }
 
 /**
- * Extended feed type with optional category for grouping
- */
-export interface UserFeed extends Feed {
-  folder_name?: string;
-}
-
-/**
  * Hook for fetching user's subscribed feeds
  * Uses TanStack Query with 5-minute stale time for caching
  * 

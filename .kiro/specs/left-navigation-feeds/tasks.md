@@ -1,4 +1,4 @@
-# Implementation Plan: Left Navigation & Flagship Feeds
+# I mplementation Plan: Left Navigation & Flagship Feeds
 
 ## Overview
 
