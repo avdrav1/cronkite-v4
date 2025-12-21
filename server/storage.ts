@@ -385,7 +385,6 @@ export class MemStorage implements IStorage {
           id: randomUUID(),
           user_id: userId,
           folder_id: null,
-          folder_name: recommendedFeed.category, // Copy category to folder_name for sidebar grouping
           name: recommendedFeed.name,
           url: recommendedFeed.url,
           site_url: recommendedFeed.site_url,

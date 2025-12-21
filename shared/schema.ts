@@ -71,7 +71,6 @@ export const feeds = pgTable("feeds", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   user_id: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
   folder_id: uuid("folder_id").references(() => folders.id, { onDelete: "set null" }),
-  folder_name: text("folder_name"), // Category name for sidebar grouping (copied from recommended_feeds)
   name: text("name").notNull(),
   url: text("url").notNull(),
   site_url: text("site_url"),

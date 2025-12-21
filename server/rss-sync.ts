@@ -1,7 +1,7 @@
 import Parser from 'rss-parser';
 import * as cheerio from 'cheerio';
 import { storage } from './storage.js';
-import type { Feed, Article, InsertArticle } from '@shared/schema';
+import type { Feed, InsertArticle } from '@shared/schema';
 
 // RSS parser configuration
 const parser = new Parser({
@@ -316,8 +316,10 @@ function extractArticleData(item: any, feedId: string): InsertArticle {
   // Extract image URL
   const imageUrl = extractImageUrl(item);
   
-  // Generate mock embedding (will be replaced with real AI embeddings later)
-  const embedding = generateMockEmbedding();
+  // NOTE: Embeddings are disabled due to database index size limitations
+  // The idx_articles_ai_summary_embedding btree index cannot handle large embedding vectors
+  // Set to null for now - embeddings can be generated later via a background job
+  // when the index is properly configured (e.g., using pgvector extension)
   
   return {
     feed_id: feedId,
@@ -330,7 +332,7 @@ function extractArticleData(item: any, feedId: string): InsertArticle {
     image_url: imageUrl,
     published_at: publishedAt,
     fetched_at: new Date(),
-    embedding
+    embedding: null
   };
 }
 
@@ -417,15 +419,6 @@ function generateGuidFromContent(item: any): string {
     hash = hash & hash; // Convert to 32-bit integer
   }
   return `generated-${Math.abs(hash)}`;
-}
-
-/**
- * Generates a mock embedding vector (will be replaced with real AI embeddings)
- */
-function generateMockEmbedding(): string {
-  // Generate a mock 1536-dimensional embedding (OpenAI ada-002 compatible)
-  const embedding = Array.from({ length: 1536 }, () => Math.random() * 2 - 1);
-  return JSON.stringify(embedding);
 }
 
 /**

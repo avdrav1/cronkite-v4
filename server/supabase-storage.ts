@@ -108,75 +108,29 @@ export class SupabaseStorage implements IStorage {
         await this.validateConnection();
       }
       
-      console.log(`🔄 SupabaseStorage: Executing ${operationName} via Supabase...`);
-      
       // Attempt the primary operation
-      const result = await operation();
-      const duration = Date.now() - startTime;
-      
-      console.log(`✅ SupabaseStorage: ${operationName} completed successfully in ${duration}ms`);
-      return result;
+      return await operation();
       
     } catch (error) {
-      const duration = Date.now() - startTime;
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      
-      console.warn(`⚠️  SupabaseStorage: ${operationName} failed after ${duration}ms:`, errorMessage);
-      
-      // Enhanced error categorization and logging
-      if (errorMessage.includes('timeout')) {
-        console.warn(`⚠️  SupabaseStorage: ${operationName} error type: TIMEOUT`);
-        console.warn(`⚠️  SupabaseStorage: Operation exceeded time limit - database may be overloaded`);
-      } else if (errorMessage.includes('ENOTFOUND') || errorMessage.includes('ECONNREFUSED')) {
-        console.warn(`⚠️  SupabaseStorage: ${operationName} error type: NETWORK ERROR`);
-        console.warn(`⚠️  SupabaseStorage: Cannot reach database server during operation`);
-      } else if (errorMessage.includes('authentication') || errorMessage.includes('unauthorized')) {
-        console.warn(`⚠️  SupabaseStorage: ${operationName} error type: AUTHENTICATION ERROR`);
-        console.warn(`⚠️  SupabaseStorage: Invalid credentials during operation`);
-      } else if (errorMessage.includes('relation') && errorMessage.includes('does not exist')) {
-        console.warn(`⚠️  SupabaseStorage: ${operationName} error type: SCHEMA ERROR`);
-        console.warn(`⚠️  SupabaseStorage: Database table or relation missing - check migrations`);
-      } else {
-        console.warn(`⚠️  SupabaseStorage: ${operationName} error type: UNKNOWN ERROR`);
-      }
       
       // If we have a fallback storage and a fallback operation, use it
       if (this.fallbackStorage && fallbackOperation) {
-        console.log(`🔄 SupabaseStorage: Using MemStorage fallback for ${operationName}`);
-        console.log(`🔄 SupabaseStorage: Fallback ensures operation continuity despite Supabase issues`);
-        
         try {
-          const fallbackStartTime = Date.now();
-          const fallbackResult = await fallbackOperation();
-          const fallbackDuration = Date.now() - fallbackStartTime;
-          
-          console.log(`✅ SupabaseStorage: ${operationName} completed via fallback in ${fallbackDuration}ms`);
-          console.log(`✅ SupabaseStorage: Fallback operation successful - user experience preserved`);
-          
-          return fallbackResult;
+          return await fallbackOperation();
         } catch (fallbackError) {
-          const fallbackErrorMessage = fallbackError instanceof Error ? fallbackError.message : 'Unknown error';
-          console.error(`❌ SupabaseStorage: Fallback for ${operationName} also failed:`, fallbackErrorMessage);
-          console.error(`❌ SupabaseStorage: Both primary and fallback operations failed`);
-          console.error(`❌ SupabaseStorage: This indicates a critical system issue`);
-          
           // Re-throw the original error since fallback also failed
           throw error;
         }
       }
       
       // If no fallback available, re-throw the error
-      console.error(`❌ SupabaseStorage: ${operationName} failed and no fallback available`);
-      console.error(`❌ SupabaseStorage: No fallback operation provided for ${operationName}`);
-      console.error(`❌ SupabaseStorage: Operation will fail completely`);
       throw error;
     }
   }
 
   // User Management
   async getUser(id: string): Promise<Profile | undefined> {
-    console.log('🔐 SupabaseStorage.getUser: Looking up user:', id);
-    
     return this.executeWithFallback(
       async () => {
         const { data, error } = await this.supabase
@@ -188,24 +142,12 @@ export class SupabaseStorage implements IStorage {
         if (error) {
           // PGRST116 means no rows found, which is expected for new users
           if (error.code === 'PGRST116') {
-            console.log('🔐 SupabaseStorage.getUser: User not found (expected for new OAuth users)');
             return undefined;
           }
-          console.error('❌ SupabaseStorage.getUser: Error fetching user:', {
-            message: error.message,
-            code: error.code,
-            details: error.details
-          });
           return undefined;
         }
         
-        if (!data) {
-          console.log('🔐 SupabaseStorage.getUser: No user data returned');
-          return undefined;
-        }
-        
-        console.log('✅ SupabaseStorage.getUser: Found user:', data.email);
-        return data as Profile;
+        return data as Profile || undefined;
       },
       async () => {
         if (this.fallbackStorage) {
@@ -243,57 +185,21 @@ export class SupabaseStorage implements IStorage {
   }
 
   async createUser(user: InsertProfile): Promise<Profile> {
-    console.log('🔐 SupabaseStorage.createUser: Starting user creation...');
-    console.log('🔐 SupabaseStorage.createUser: User data:', {
-      id: user.id,
-      email: user.email,
-      display_name: user.display_name,
-      hasAvatarUrl: !!user.avatar_url
-    });
+    const { data, error } = await this.supabase
+      .from('profiles')
+      .insert(user)
+      .select()
+      .single();
     
-    try {
-      const { data, error } = await this.supabase
-        .from('profiles')
-        .insert(user)
-        .select()
-        .single();
-      
-      if (error) {
-        console.error('❌ SupabaseStorage.createUser: Supabase error:', {
-          message: error.message,
-          code: error.code,
-          details: error.details,
-          hint: error.hint
-        });
-        throw new Error(`Failed to create user: ${error.message} (code: ${error.code})`);
-      }
-      
-      if (!data) {
-        console.error('❌ SupabaseStorage.createUser: No data returned from insert');
-        throw new Error('Failed to create user: No data returned');
-      }
-      
-      console.log('✅ SupabaseStorage.createUser: User created successfully:', {
-        id: data.id,
-        email: data.email
-      });
-      
-      return data as Profile;
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      console.error('❌ SupabaseStorage.createUser: Exception during user creation:', errorMessage);
-      
-      // Check for common Supabase errors
-      if (errorMessage.includes('duplicate key')) {
-        console.error('❌ SupabaseStorage.createUser: User already exists with this ID or email');
-      } else if (errorMessage.includes('violates row-level security')) {
-        console.error('❌ SupabaseStorage.createUser: RLS policy blocking insert - check profiles table policies');
-      } else if (errorMessage.includes('relation') && errorMessage.includes('does not exist')) {
-        console.error('❌ SupabaseStorage.createUser: profiles table does not exist - run migrations');
-      }
-      
-      throw error;
+    if (error) {
+      throw new Error(`Failed to create user: ${error.message} (code: ${error.code})`);
     }
+    
+    if (!data) {
+      throw new Error('Failed to create user: No data returned');
+    }
+    
+    return data as Profile;
   }
 
   async updateUser(id: string, updates: Partial<Profile>): Promise<Profile> {
@@ -468,51 +374,20 @@ export class SupabaseStorage implements IStorage {
   async getRecommendedFeeds(): Promise<RecommendedFeed[]> {
     return this.executeWithFallback(
       async () => {
-        console.log('🔍 SupabaseStorage: Querying recommended_feeds table...');
-        
         const { data, error } = await this.supabase
           .from('recommended_feeds')
           .select('*')
           .order('popularity_score', { ascending: false });
         
         if (error) {
-          console.error('❌ SupabaseStorage: Failed to get recommended feeds:', error.message);
           throw new Error(`Failed to get recommended feeds: ${error.message}`);
         }
         
         const feeds = (data || []) as RecommendedFeed[];
         
-        // Enhanced error handling for empty recommended_feeds table
-        // Implements Requirements 2.5 - proper error handling for empty recommended_feeds table
-        if (feeds.length === 0) {
-          console.warn('⚠️  SupabaseStorage: recommended_feeds table is empty - no feeds available');
-          console.warn('⚠️  SupabaseStorage: This may indicate:');
-          console.warn('     - Database migration not run');
-          console.warn('     - Seed data not loaded');
-          console.warn('     - Data deletion occurred');
-          console.warn('⚠️  SupabaseStorage: Consider running database migrations and seed data');
-          
-          // If we have fallback storage, trigger fallback by throwing an error
-          if (this.fallbackStorage) {
-            console.log('🔄 SupabaseStorage: Empty table detected, triggering fallback mechanism');
-            throw new Error('Empty recommended_feeds table - triggering fallback');
-          }
-          
-          // Return empty array if no fallback available
-          return feeds;
-        } else {
-          console.log(`📊 SupabaseStorage: Successfully retrieved ${feeds.length} recommended feeds`);
-          
-          // Log feed distribution for debugging
-          const categoryCount: Record<string, number> = {};
-          feeds.forEach(feed => {
-            categoryCount[feed.category] = (categoryCount[feed.category] || 0) + 1;
-          });
-          
-          console.log('📊 SupabaseStorage: Feed distribution by category:');
-          Object.entries(categoryCount).forEach(([category, count]) => {
-            console.log(`     ${category}: ${count} feeds`);
-          });
+        // If empty and we have fallback, trigger it
+        if (feeds.length === 0 && this.fallbackStorage) {
+          throw new Error('Empty recommended_feeds table - triggering fallback');
         }
         
         return feeds;
@@ -520,7 +395,6 @@ export class SupabaseStorage implements IStorage {
       // Fallback operation using MemStorage
       async () => {
         if (this.fallbackStorage) {
-          console.log('🔄 SupabaseStorage: Using MemStorage fallback for getRecommendedFeeds');
           return await this.fallbackStorage.getRecommendedFeeds();
         }
         return [];
@@ -531,16 +405,10 @@ export class SupabaseStorage implements IStorage {
 
   // Recommended Feeds Management with Category Validation
   async createRecommendedFeed(insertFeed: InsertRecommendedFeed): Promise<RecommendedFeed> {
-    console.log(`🔍 SupabaseStorage: Creating recommended feed with category validation...`);
-    
     // Validate category using category mapping service
     if (!categoryMappingService.isValidDatabaseCategory(insertFeed.category)) {
-      const errorMsg = `Invalid category "${insertFeed.category}" - not found in category mapping`;
-      console.error(`❌ SupabaseStorage: ${errorMsg}`);
-      throw new Error(errorMsg);
+      throw new Error(`Invalid category "${insertFeed.category}" - not found in category mapping`);
     }
-    
-    console.log(`✅ SupabaseStorage: Category "${insertFeed.category}" validation passed`);
     
     const { data, error } = await this.supabase
       .from('recommended_feeds')
@@ -625,8 +493,9 @@ export class SupabaseStorage implements IStorage {
       return; // No feeds to subscribe to
     }
     
-    // Create user feeds from recommended feeds - PRESERVE CATEGORY AS folder_name
-    // Requirements: 1.1, 1.4 - Copy category from recommended_feeds to folder_name in user feeds
+    // Create user feeds from recommended feeds
+    // Note: The feeds table uses folder_id (UUID reference) not folder_name
+    // Category information is stored in recommended_feeds, not in user feeds
     const userFeedsData: InsertFeed[] = recommendedFeeds.map(recommendedFeed => ({
       user_id: userId,
       name: recommendedFeed.name,
@@ -634,7 +503,6 @@ export class SupabaseStorage implements IStorage {
       site_url: recommendedFeed.site_url,
       description: recommendedFeed.description,
       icon_url: recommendedFeed.icon_url,
-      folder_name: recommendedFeed.category, // Copy category to folder_name for sidebar grouping
       status: "active" as const,
       priority: "medium" as const,
     }));
