@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { useLocation } from "wouter";
 import { AppShell } from "@/components/layout/AppShell";
 import { MasonryGrid } from "@/components/feed/MasonryGrid";
 import { ArticleCard } from "@/components/feed/ArticleCard";
@@ -54,9 +55,17 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [feedsCount, setFeedsCount] = useState(0);
   
-  // Get source filter from URL manually since wouter's useLocation doesn't parse query params
-  const searchParams = new URLSearchParams(window.location.search);
-  const sourceFilter = searchParams.get("source");
+  // Use wouter's useLocation for reactivity when URL changes
+  const [location] = useLocation();
+  
+  // Get source and category filters from URL - re-parse when location changes
+  const { sourceFilter, categoryFilter } = useMemo(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    return {
+      sourceFilter: searchParams.get("source"),
+      categoryFilter: searchParams.get("category"),
+    };
+  }, [location]);
 
   // Fetch articles from API
   const fetchArticles = async () => {
@@ -150,18 +159,27 @@ export default function Home() {
   // Create feed
   const mixedFeed = createMixedFeed(articles);
 
-  // Base filtering (Source + Status)
+  // Base filtering (Source + Category + Status)
   const baseFilteredFeed = mixedFeed.filter((item) => {
-    // 1. Source Filter
+    const article = item.data as ArticleWithFeed;
+    
+    // 1. Source Filter (specific feed name)
     if (sourceFilter) {
-      const article = item.data as ArticleWithFeed;
       const matchesSource = article.source?.toLowerCase().includes(sourceFilter.toLowerCase()) || 
              sourceFilter.toLowerCase().includes(article.source?.toLowerCase() || '');
       if (!matchesSource) return false;
     }
 
-    // 2. Status Filter
-    const article = item.data as ArticleWithFeed;
+    // 2. Category Filter (filter by feed category)
+    if (categoryFilter) {
+      // Articles don't have category directly, but we can match against feed_name patterns
+      // For now, we'll need to check if the article's feed belongs to the category
+      // This would require the API to return category info with articles
+      // For now, we'll skip category filtering at the article level
+      // TODO: Implement proper category filtering when API returns category info
+    }
+
+    // 3. Status Filter
     if (activeFilter === "unread" && article.isRead) return false;
     if (activeFilter === "saved" && !article.isStarred) return false;
     
@@ -254,12 +272,14 @@ export default function Home() {
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
               <h1 className="text-3xl font-display font-bold tracking-tight mb-2">
-                {sourceFilter ? sourceFilter : "For You"}
+                {sourceFilter ? sourceFilter : categoryFilter ? categoryFilter : "For You"}
               </h1>
               <p className="text-muted-foreground">
                 {sourceFilter 
                   ? `Latest articles from ${sourceFilter}`
-                  : "Top stories curated by AI based on your interests."
+                  : categoryFilter
+                    ? `Latest articles in ${categoryFilter}`
+                    : "Top stories curated by AI based on your interests."
                 }
               </p>
             </div>

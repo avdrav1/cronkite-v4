@@ -5,16 +5,11 @@ import { format } from "date-fns";
 import {
   Search,
   Settings,
-  User,
   Menu,
   Plus,
   LayoutGrid,
   Star,
   Clock,
-  ChevronLeft,
-  ChevronRight,
-  Folder,
-  Rss,
   Sparkles,
   LogOut
 } from "lucide-react";
@@ -34,6 +29,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuth } from "@/contexts/AuthContext";
 
 import { AddFeedModal } from "@/components/feed/AddFeedModal";
+import { FeedsList } from "@/components/layout/FeedsList";
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -152,9 +148,9 @@ export function AppShell({ children }: AppShellProps) {
           </Button>
 
           <nav className="flex flex-col gap-1">
-            <NavItem icon={LayoutGrid} label="All Articles" count={42} active={location === "/" && !window.location.search} />
-            <NavItem icon={Clock} label="Unread" count={12} />
-            <NavItem icon={Star} label="Starred" count={5} />
+            <NavItem icon={LayoutGrid} label="All Articles" active={location === "/" && !window.location.search} />
+            <NavItem icon={Clock} label="Unread" />
+            <NavItem icon={Star} label="Starred" />
             <Link href="/onboarding" className="w-full">
               <NavItem icon={Sparkles} label="Onboarding (Dev)" />
             </Link>
@@ -163,22 +159,7 @@ export function AppShell({ children }: AppShellProps) {
             </Link>
           </nav>
 
-          <div className="space-y-4">
-            <div className="px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              Feeds
-            </div>
-            <div className="space-y-1">
-              <FolderItem label="Tech" count={18} isOpen>
-                <FeedItem label="TechCrunch" count={8} />
-                <FeedItem label="Ars Technica" count={4} />
-                <FeedItem label="The Verge" count={6} />
-              </FolderItem>
-              <FolderItem label="News" count={5}>
-                <FeedItem label="BBC News" count={3} />
-                <FeedItem label="NPR" count={2} />
-              </FolderItem>
-            </div>
-          </div>
+          <FeedsList />
         </aside>
 
         {/* Main Content */}
@@ -199,10 +180,9 @@ function NavItem({ icon: Icon, label, count, active }: { icon: any; label: strin
 
   const handleClick = () => {
     if (label === "All Articles") {
-      // Force navigation to clear query parameters
-      window.history.pushState(null, "", "/");
-      // Dispatch a popstate event so wouter picks it up
-      window.dispatchEvent(new PopStateEvent('popstate'));
+      // Clear filters by navigating to root without query parameters
+      // Requirements: 4.2 - Clear any feed/category filters when navigating to "All Articles"
+      setLocation("/", { replace: true });
     }
   };
 
@@ -222,37 +202,6 @@ function NavItem({ icon: Icon, label, count, active }: { icon: any; label: strin
           {count}
         </span>
       )}
-    </Button>
-  );
-}
-
-function FolderItem({ label, count, isOpen, children }: { label: string; count?: number; isOpen?: boolean; children?: React.ReactNode }) {
-  return (
-    <div className="space-y-1">
-      <Button
-        variant="ghost"
-        className="w-full justify-start gap-2 px-3 h-9 text-sm text-muted-foreground hover:text-foreground font-medium"
-      >
-        <Folder className="h-4 w-4 text-muted-foreground/70" />
-        <span className="flex-1 text-left">{label}</span>
-      </Button>
-      {isOpen && <div className="pl-4 space-y-1 border-l border-border/50 ml-5">{children}</div>}
-    </div>
-  );
-}
-
-function FeedItem({ label, count }: { label: string; count?: number }) {
-  const [, setLocation] = useLocation();
-  
-  return (
-    <Button
-      variant="ghost"
-      onClick={() => setLocation(`/?source=${encodeURIComponent(label)}`)}
-      className="w-full justify-start gap-2 px-3 h-8 text-sm text-muted-foreground hover:text-primary transition-colors"
-    >
-      <div className="h-1.5 w-1.5 rounded-full bg-primary/40" />
-      <span className="flex-1 text-left truncate">{label}</span>
-      {count !== undefined && <span className="text-xs text-muted-foreground/50">{count}</span>}
     </Button>
   );
 }

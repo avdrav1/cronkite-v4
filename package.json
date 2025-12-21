@@ -16,6 +16,7 @@
     "db:seed": "tsx scripts/seed-database.ts",
     "db:seed:comprehensive": "tsx scripts/seed-comprehensive.ts",
     "db:seed:production": "tsx scripts/seed-production.ts",
+    "db:seed:flagship": "tsx scripts/seed-flagship-feeds.ts",
     "db:seed:validate": "npm run validate:categories:mapping && npm run db:seed",
     "db:seed:comprehensive:validate": "npm run validate:categories:mapping && npm run db:seed:comprehensive",
     "db:seed:production:validate": "npm run validate:categories:mapping && npm run db:seed:production",

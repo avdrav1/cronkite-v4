@@ -11,6 +11,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { type RecommendedFeed } from "@shared/schema";
 import { filterFeedsByInterests, groupFeedsByCategory, validateFilteringConsistency } from "@/lib/feed-filtering";
 import { useAuth } from "@/contexts/AuthContext";
+import { useInvalidateFeedsQuery } from "@/hooks/useFeedsQuery";
 
 interface FeedPreviewProps {
   selectedInterests: string[];
@@ -49,6 +50,7 @@ export function FeedPreview({ selectedInterests, selectedFeeds, toggleFeed, togg
   const [isRetrying, setIsRetrying] = useState(false);
   const [debugInfo, setDebugInfo] = useState<any>(null);
   const { checkAuth } = useAuth();
+  const invalidateFeedsQuery = useInvalidateFeedsQuery();
 
   // Enhanced error classification
   const classifyError = (error: any): ErrorState => {
@@ -252,6 +254,10 @@ export function FeedPreview({ selectedInterests, selectedFeeds, toggleFeed, togg
           timestamp: new Date().toISOString()
         });
       }
+
+      // Invalidate the user feeds query to update sidebar immediately
+      // Requirements: 5.1 - Add feed to sidebar without page refresh
+      invalidateFeedsQuery();
 
       // Refresh user data to get updated onboarding_completed status
       await checkAuth();

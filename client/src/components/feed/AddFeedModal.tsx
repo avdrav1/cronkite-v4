@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { useInvalidateFeedsQuery } from "@/hooks/useFeedsQuery";
 
 interface AddFeedModalProps {
   isOpen: boolean;
@@ -24,6 +25,7 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [addedFeeds, setAddedFeeds] = useState<string[]>([]);
   const { toast } = useToast();
+  const invalidateFeedsQuery = useInvalidateFeedsQuery();
 
   // Custom URL State
   const [customUrl, setCustomUrl] = useState("");
@@ -47,6 +49,11 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
       });
       
       setAddedFeeds(prev => [...prev, feedId]);
+      
+      // Invalidate the user feeds query to update sidebar immediately
+      // Requirements: 5.1 - Add feed to sidebar without page refresh
+      invalidateFeedsQuery();
+      
       toast({
         title: "Feed Added",
         description: `${feedName} has been added to your ${category} folder.`,
@@ -121,6 +128,10 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
       await apiRequest('POST', '/api/feeds/subscribe', {
         feedIds: [data.feedId]
       });
+      
+      // Invalidate the user feeds query to update sidebar immediately
+      // Requirements: 5.1 - Add feed to sidebar without page refresh
+      invalidateFeedsQuery();
       
       toast({
         title: "Feed Added",

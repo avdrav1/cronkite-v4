@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
+import { useInvalidateFeedsQuery } from "@/hooks/useFeedsQuery";
 import { 
   Search, 
   Plus, 
@@ -70,6 +71,7 @@ export function FeedManagement() {
   const [expandedFolders, setExpandedFolders] = useState<string[]>(['Tech', 'News', 'Gaming']);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const { toast } = useToast();
+  const invalidateFeedsQuery = useInvalidateFeedsQuery();
 
   // Fetch user's feeds from API
   const fetchFeeds = async () => {
@@ -155,6 +157,9 @@ export function FeedManagement() {
           break;
         case 'delete':
           await apiRequest('DELETE', `/api/feeds/unsubscribe/${feedId}`);
+          // Invalidate the user feeds query to update sidebar immediately
+          // Requirements: 5.2 - Remove feed from sidebar without page refresh
+          invalidateFeedsQuery();
           toast({
             title: "Feed Removed",
             description: "Feed has been removed from your subscriptions.",
