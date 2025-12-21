@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { type Profile } from '@shared/schema';
-import { supabase } from '@shared/supabase';
+import { isSupabaseConfigured, getSupabaseClient } from '@shared/supabase';
 
 interface AuthContextType {
   user: Profile | null;
@@ -40,17 +40,24 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     try {
       // First check if there's a Supabase session (for OAuth)
       // Only check Supabase if it's properly configured
-      try {
-        const { data: { session }, error } = await supabase.auth.getSession();
-        
-        if (session && !error) {
-          // We have a Supabase session, send it to our backend for profile creation/retrieval
-          await handleOAuthSession(session);
-          return;
+      if (isSupabaseConfigured()) {
+        try {
+          const client = getSupabaseClient();
+          if (client) {
+            const { data: { session }, error } = await client.auth.getSession();
+            
+            if (session && !error) {
+              // We have a Supabase session, send it to our backend for profile creation/retrieval
+              await handleOAuthSession(session);
+              return;
+            }
+          }
+        } catch (supabaseError) {
+          // Supabase not configured or unavailable - continue with regular session check
+          console.log('Supabase session check skipped:', supabaseError instanceof Error ? supabaseError.message : 'Unknown error');
         }
-      } catch (supabaseError) {
-        // Supabase not configured or unavailable - continue with regular session check
-        console.log('Supabase session check skipped:', supabaseError instanceof Error ? supabaseError.message : 'Unknown error');
+      } else {
+        console.log('Supabase not configured - skipping OAuth session check');
       }
 
       // No Supabase session, check for regular session
@@ -208,8 +215,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const logout = async () => {
     setIsLoading(true);
     try {
-      // Sign out from Supabase
-      await supabase.auth.signOut();
+      // Sign out from Supabase if configured
+      if (isSupabaseConfigured()) {
+        const client = getSupabaseClient();
+        if (client) {
+          await client.auth.signOut();
+        }
+      }
 
       // Also logout from our backend
       const response = await fetch('/api/auth/logout', {
@@ -267,17 +279,24 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     // Listen for auth state changes from Supabase (only if properly configured)
     let subscription: { unsubscribe: () => void } | null = null;
     
-    try {
-      const { data } = supabase.auth.onAuthStateChange(async (event, session) => {
-        if (event === 'SIGNED_IN' && session) {
-          await handleOAuthSession(session);
-        } else if (event === 'SIGNED_OUT') {
-          setUser(null);
+    if (isSupabaseConfigured()) {
+      try {
+        const client = getSupabaseClient();
+        if (client) {
+          const { data } = client.auth.onAuthStateChange(async (event, session) => {
+            if (event === 'SIGNED_IN' && session) {
+              await handleOAuthSession(session);
+            } else if (event === 'SIGNED_OUT') {
+              setUser(null);
+            }
+          });
+          subscription = data.subscription;
         }
-      });
-      subscription = data.subscription;
-    } catch (error) {
-      console.log('Supabase auth listener not available:', error instanceof Error ? error.message : 'Unknown error');
+      } catch (error) {
+        console.log('Supabase auth listener not available:', error instanceof Error ? error.message : 'Unknown error');
+      }
+    } else {
+      console.log('Supabase not configured - auth listener not set up');
     }
 
     return () => {

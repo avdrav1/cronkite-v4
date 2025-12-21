@@ -17,12 +17,17 @@ export const GoogleAuthButton: React.FC<GoogleAuthButtonProps> = ({ disabled = f
 
     try {
       console.log('🔐 GoogleAuth: Starting OAuth flow...');
+      console.log('🔐 GoogleAuth: Redirect URL will be:', `${window.location.origin}/auth/callback`);
       
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
           redirectTo: `${window.location.origin}/auth/callback`,
-          scopes: 'email profile'
+          scopes: 'email profile',
+          queryParams: {
+            access_type: 'offline',
+            prompt: 'consent'
+          }
         }
       });
 
@@ -41,7 +46,7 @@ export const GoogleAuthButton: React.FC<GoogleAuthButtonProps> = ({ disabled = f
         throw error;
       }
 
-      console.log('✅ GoogleAuth: OAuth initiated, redirecting...');
+      console.log('✅ GoogleAuth: OAuth initiated, data:', data);
       // The redirect will happen automatically
       // No need to handle the response here as the user will be redirected
       

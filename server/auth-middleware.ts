@@ -4,7 +4,7 @@ import createMemoryStore from 'memorystore';
 import passport from 'passport';
 import { Strategy as LocalStrategy } from 'passport-local';
 import { createClient } from '@supabase/supabase-js';
-import { storage } from './storage';
+import { getStorage } from './storage';
 import { type Profile } from '@shared/schema';
 
 // Extend Express Request type to include user
@@ -44,7 +44,7 @@ console.log(`🔐 Session configured for ${isProduction ? 'production' : 'develo
   proxy: isProduction
 });
 
-// Passport configuration
+// Passport configuration - uses async storage
 passport.use(new LocalStrategy(
   {
     usernameField: 'email',
@@ -52,12 +52,14 @@ passport.use(new LocalStrategy(
   },
   async (email: string, password: string, done) => {
     try {
+      const storage = await getStorage();
       const user = await storage.authenticateUser(email, password);
       if (!user) {
         return done(null, false, { message: 'Invalid email or password' });
       }
       return done(null, user);
     } catch (error) {
+      console.error('Passport authentication error:', error);
       return done(error);
     }
   }
@@ -69,9 +71,11 @@ passport.serializeUser((user: Profile, done) => {
 
 passport.deserializeUser(async (id: string, done) => {
   try {
+    const storage = await getStorage();
     const user = await storage.getUser(id);
     done(null, user || false);
   } catch (error) {
+    console.error('Passport deserialize error:', error);
     done(error);
   }
 });
@@ -129,6 +133,8 @@ export const handleSupabaseAuth = async (req: Request, res: Response, next: Next
     if (error || !user) {
       return next();
     }
+    
+    const storage = await getStorage();
     
     // Get or create user profile
     let profile = await storage.getUser(user.id);

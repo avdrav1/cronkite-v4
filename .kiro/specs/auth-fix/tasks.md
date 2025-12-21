@@ -4,6 +4,10 @@
 
 This implementation plan addresses authentication issues where email login redirects back to the login page and Google OAuth returns "Unsupported provider" errors. The fixes involve session configuration, error handling improvements, and debug logging.
 
+## Current Status: BLOCKED - Awaiting Netlify Environment Configuration
+
+**Root Cause Identified:** The 502 errors are caused by missing/invalid Netlify environment variables. Build logs showed `SUPABASE_ANON_KEY` with length 21 - valid JWT keys are 100+ characters starting with `eyJ`.
+
 ## Tasks
 
 - [x] 1. Fix session cookie configuration for environment-aware settings
@@ -38,20 +42,52 @@ This implementation plan addresses authentication issues where email login redir
 - [x] 4. Checkpoint - Test authentication flow
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 5. Add authentication property tests
-  - [ ]* 5.1 Write property test for valid credentials authentication
+- [x] 5. Fix Netlify serverless function handler
+  - [x] 5.1 Replace custom request/response handling with serverless-http
+    - Install serverless-http package
+    - Update netlify-handler.ts to use serverless-http
+    - Add serverless-http to build allowlist
+    - _Fixes: 502 errors on /api/auth/login_
+
+  - [x] 5.2 Fix async storage initialization in auth-middleware
+    - Update passport strategies to use async getStorage()
+    - Fix handleSupabaseAuth to use async storage
+    - _Fixes: Storage not initialized errors_
+
+  - [x] 5.3 Fix type errors in routes.ts
+    - Update registerRoutes signature to accept null httpServer
+    - Fix parameter types for Netlify compatibility
+    - _Fixes: TypeScript compilation errors_
+
+- [ ] 6. **USER ACTION REQUIRED: Configure Netlify Environment Variables**
+  - Go to https://app.netlify.com/projects/cronkite-v4/settings/env
+  - Set the following environment variables:
+    - `SUPABASE_URL` - Your Supabase project URL (e.g., `https://xxxxx.supabase.co`)
+    - `SUPABASE_ANON_KEY` - Your Supabase anon key (starts with `eyJ...`, 100+ chars)
+    - `SUPABASE_SERVICE_ROLE_KEY` - Your Supabase service role key
+    - `SESSION_SECRET` - A randomly generated secret (run: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`)
+    - `APP_URL` - `https://cronkite-v4.netlify.app`
+  - After setting variables, trigger a new deploy
+
+- [ ] 7. **USER ACTION REQUIRED: Enable Google OAuth in Supabase**
+  - Go to your Supabase project → Authentication → Providers → Google
+  - Enable the Google provider
+  - Configure Google OAuth credentials (Client ID and Secret)
+
+- [ ]* 8. Add authentication property tests (optional)
+  - [ ]* 8.1 Write property test for valid credentials authentication
     - **Property 1: Authentication Success Establishes Session**
     - **Validates: Requirements 1.1, 1.2**
 
-  - [ ]* 5.2 Write property test for invalid credentials error handling
+  - [ ]* 8.2 Write property test for invalid credentials error handling
     - **Property 3: Invalid Credentials Return Error**
     - **Validates: Requirements 1.4, 4.2**
 
-  - [ ]* 5.3 Write property test for auth error logging
+  - [ ]* 8.3 Write property test for auth error logging
     - **Property 6: Auth Errors Logged Server-Side**
     - **Validates: Requirements 4.1**
 
-- [ ] 6. Final checkpoint - Verify authentication works
+- [ ] 9. Final checkpoint - Verify authentication works
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes
@@ -60,3 +96,23 @@ This implementation plan addresses authentication issues where email login redir
 - The Google OAuth "provider not enabled" error requires manual Supabase configuration
 - Session cookie changes may require clearing browser cookies to test
 - Property tests validate universal correctness properties
+- **Important**: Session-based auth in serverless has limitations - sessions don't persist between function invocations. For production, consider JWT-based auth or using Supabase Auth directly.
+
+## Quick Reference: Environment Variables Needed
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `SUPABASE_URL` | Supabase project URL | `https://xxxxx.supabase.co` |
+| `SUPABASE_ANON_KEY` | Supabase anon/public key | `eyJhbGciOiJIUzI1NiIs...` (100+ chars) |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key | `eyJhbGciOiJIUzI1NiIs...` (100+ chars) |
+| `SESSION_SECRET` | Random secret for sessions | 64-char hex string |
+| `APP_URL` | Production app URL | `https://cronkite-v4.netlify.app` |
+| `DATABASE_URL` | PostgreSQL connection string | `postgresql://postgres:...` |
+
+## Notes
+
+- Tasks marked with `*` are optional and can be skipped for faster MVP
+- The Google OAuth "provider not enabled" error requires manual Supabase configuration
+- Session cookie changes may require clearing browser cookies to test
+- Property tests validate universal correctness properties
+- **Important**: Session-based auth in serverless has limitations - sessions don't persist between function invocations. For production, consider JWT-based auth or using Supabase Auth directly.

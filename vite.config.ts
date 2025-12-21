@@ -9,6 +9,17 @@ export default defineConfig(({ mode }) => {
   // Load env file based on `mode` in the current working directory.
   const env = loadEnv(mode, process.cwd(), '');
   
+  // For Netlify builds, prefer process.env over loadEnv (Netlify sets env vars directly)
+  const supabaseUrl = process.env.SUPABASE_URL || env.SUPABASE_URL || '';
+  const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || env.SUPABASE_ANON_KEY || '';
+  const appUrl = process.env.APP_URL || env.APP_URL || '';
+  
+  // Log environment variable status during build (without exposing values)
+  console.log('🔧 Vite build environment check:');
+  console.log(`   SUPABASE_URL: ${supabaseUrl ? '✅ Set (' + supabaseUrl.substring(0, 30) + '...)' : '❌ Not set'}`);
+  console.log(`   SUPABASE_ANON_KEY: ${supabaseAnonKey ? '✅ Set (length: ' + supabaseAnonKey.length + ')' : '❌ Not set'}`);
+  console.log(`   APP_URL: ${appUrl ? '✅ Set (' + appUrl + ')' : '❌ Not set'}`);
+  
   return {
     plugins: [
       react(),
@@ -28,12 +39,11 @@ export default defineConfig(({ mode }) => {
         : []),
     ],
     // Define environment variables that should be exposed to the client
+    // Only expose public Supabase variables (not service role key!)
     define: {
-      // Only expose public Supabase variables (not service role key!)
-      // Use fallback values for development if not set
-      'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(env.SUPABASE_URL || 'http://127.0.0.1:54321'),
-      'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0'),
-      'import.meta.env.VITE_APP_URL': JSON.stringify(env.APP_URL || 'http://localhost:5173'),
+      'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(supabaseUrl),
+      'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(supabaseAnonKey),
+      'import.meta.env.VITE_APP_URL': JSON.stringify(appUrl),
     },
     resolve: {
       alias: {

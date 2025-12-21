@@ -52,9 +52,9 @@ const setUserInterestsSchema = z.object({
 });
 
 export async function registerRoutes(
-  httpServer: Server,
-  app: Express
-): Promise<Server> {
+  httpServer: Server | null,
+  app: any
+): Promise<Server | null> {
   
   // Health Check Route (for deployment validation)
   app.get('/api/health', (req: Request, res: Response) => {
@@ -137,7 +137,7 @@ export async function registerRoutes(
   });
   
   // POST /api/auth/login - Email/password login
-  app.post('/api/auth/login', requireNoAuth, (req: Request, res: Response, next) => {
+  app.post('/api/auth/login', requireNoAuth, (req: Request, res: Response, next: any) => {
     console.log('🔐 Login attempt:', { 
       email: req.body.email, 
       hasPassword: !!req.body.password,
