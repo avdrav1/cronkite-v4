@@ -39,12 +39,18 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const checkAuth = async () => {
     try {
       // First check if there's a Supabase session (for OAuth)
-      const { data: { session }, error } = await supabase.auth.getSession();
-      
-      if (session && !error) {
-        // We have a Supabase session, send it to our backend for profile creation/retrieval
-        await handleOAuthSession(session);
-        return;
+      // Only check Supabase if it's properly configured
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        
+        if (session && !error) {
+          // We have a Supabase session, send it to our backend for profile creation/retrieval
+          await handleOAuthSession(session);
+          return;
+        }
+      } catch (supabaseError) {
+        // Supabase not configured or unavailable - continue with regular session check
+        console.log('Supabase session check skipped:', supabaseError instanceof Error ? supabaseError.message : 'Unknown error');
       }
 
       // No Supabase session, check for regular session
@@ -258,16 +264,27 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   useEffect(() => {
     checkAuth();
 
-    // Listen for auth state changes from Supabase
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_IN' && session) {
-        await handleOAuthSession(session);
-      } else if (event === 'SIGNED_OUT') {
-        setUser(null);
-      }
-    });
+    // Listen for auth state changes from Supabase (only if properly configured)
+    let subscription: { unsubscribe: () => void } | null = null;
+    
+    try {
+      const { data } = supabase.auth.onAuthStateChange(async (event, session) => {
+        if (event === 'SIGNED_IN' && session) {
+          await handleOAuthSession(session);
+        } else if (event === 'SIGNED_OUT') {
+          setUser(null);
+        }
+      });
+      subscription = data.subscription;
+    } catch (error) {
+      console.log('Supabase auth listener not available:', error instanceof Error ? error.message : 'Unknown error');
+    }
 
-    return () => subscription.unsubscribe();
+    return () => {
+      if (subscription) {
+        subscription.unsubscribe();
+      }
+    };
   }, []);
 
   // Handle authentication errors (like session expiry)

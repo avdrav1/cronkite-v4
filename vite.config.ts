@@ -30,9 +30,10 @@ export default defineConfig(({ mode }) => {
     // Define environment variables that should be exposed to the client
     define: {
       // Only expose public Supabase variables (not service role key!)
-      'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(env.SUPABASE_URL || ''),
-      'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(env.SUPABASE_ANON_KEY || ''),
-      'import.meta.env.VITE_APP_URL': JSON.stringify(env.APP_URL || ''),
+      // Use fallback values for development if not set
+      'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(env.SUPABASE_URL || 'http://127.0.0.1:54321'),
+      'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0'),
+      'import.meta.env.VITE_APP_URL': JSON.stringify(env.APP_URL || 'http://localhost:5173'),
     },
     resolve: {
       alias: {

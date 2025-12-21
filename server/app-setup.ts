@@ -158,13 +158,11 @@ export async function setupApp(app: express.Application): Promise<void> {
     }
   }
 
-  // Initialize storage for production
-  if (env.NODE_ENV === "production" || env.NETLIFY_FUNCTION) {
-    log("🔍 Initializing production storage...");
-    const { getStorage } = await import("./storage");
-    await getStorage(); // Initialize storage
-    logSuccess("✅ Production storage initialized");
-  }
+  // Initialize storage for ALL environments (not just production)
+  log("🔍 Initializing storage...");
+  const { getStorage } = await import("./storage");
+  await getStorage(); // Initialize storage
+  logSuccess("✅ Storage initialized");
 
   // Register API routes
   await registerRoutes(null, app); // No HTTP server needed for Netlify functions
