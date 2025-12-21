@@ -22,25 +22,31 @@ export function ConfirmationStep({ selectedInterests, selectedRegion, selectedFe
   const regionName = selectedRegion ? REGIONS.find(r => r.code === selectedRegion)?.name : null;
   const regionFlag = selectedRegion ? REGIONS.find(r => r.code === selectedRegion)?.flag : null;
 
-  // Trigger initial feed sync when component mounts
+  // Complete onboarding process when component mounts
   useEffect(() => {
-    const triggerInitialSync = async () => {
+    const completeOnboarding = async () => {
       setIsSyncing(true);
       setSyncError(null);
 
       try {
-        // Trigger feed synchronization
+        // Mark onboarding as completed
+        await apiRequest('PUT', '/api/users/profile', {
+          onboarding_completed: true
+        });
+
+        // Trigger initial feed synchronization for subscribed feeds
         await apiRequest('POST', '/api/feeds/sync', {});
+        
         setSyncComplete(true);
       } catch (error) {
-        console.error('Failed to trigger feed sync:', error);
-        setSyncError(error instanceof Error ? error.message : 'Failed to sync feeds');
+        console.error('Failed to complete onboarding:', error);
+        setSyncError(error instanceof Error ? error.message : 'Failed to complete setup');
       } finally {
         setIsSyncing(false);
       }
     };
 
-    triggerInitialSync();
+    completeOnboarding();
   }, []);
 
   return (

@@ -10,6 +10,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useState } from "react";
+import { apiRequest } from "@/lib/queryClient";
 
 interface RegionSelectorProps {
   selectedRegion: string | null;
@@ -18,7 +20,34 @@ interface RegionSelectorProps {
 }
 
 export function RegionSelector({ selectedRegion, setRegion, onNext }: RegionSelectorProps) {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  
   const POPULAR_REGIONS = ['US', 'GB', 'CA', 'AU', 'IN', 'DE', 'FR', 'JP'];
+
+  const handleNext = async () => {
+    if (isSubmitting) return;
+
+    setIsSubmitting(true);
+    setError(null);
+
+    try {
+      // Save region preference to user profile
+      if (selectedRegion) {
+        await apiRequest('PUT', '/api/users/profile', {
+          region_code: selectedRegion
+        });
+      }
+
+      // Proceed to next step
+      onNext();
+    } catch (error) {
+      console.error('Failed to save region preference:', error);
+      setError(error instanceof Error ? error.message : 'Failed to save region preference');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full max-w-xl mx-auto w-full">
@@ -83,16 +112,23 @@ export function RegionSelector({ selectedRegion, setRegion, onNext }: RegionSele
       </div>
 
       <div className="mt-auto flex flex-col items-center gap-4">
+        {error && (
+          <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+            {error}
+          </div>
+        )}
         <Button 
           size="lg" 
-          onClick={onNext} 
+          onClick={handleNext} 
+          disabled={isSubmitting}
           className="w-full md:w-auto px-12 h-12 rounded-xl"
         >
-          Continue
+          {isSubmitting ? "Saving..." : "Continue"}
         </Button>
         <button 
-          onClick={onNext}
-          className="text-sm text-muted-foreground hover:text-foreground transition-colors underline decoration-dotted underline-offset-4"
+          onClick={handleNext}
+          disabled={isSubmitting}
+          className="text-sm text-muted-foreground hover:text-foreground transition-colors underline decoration-dotted underline-offset-4 disabled:opacity-50"
         >
           Skip for now
         </button>

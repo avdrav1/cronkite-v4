@@ -329,8 +329,8 @@ export const CategoryMappingUtils = {
       frontendCategories: categoryMappingService.getAllFrontendCategories().length,
       databaseCategories: categoryMappingService.getAllDatabaseCategories().length,
       aliasCount,
-      duplicateFrontendIds: [...new Set(duplicateFrontendIds)],
-      duplicateDatabaseNames: [...new Set(duplicateDatabaseNames)],
+      duplicateFrontendIds: Array.from(new Set(duplicateFrontendIds)),
+      duplicateDatabaseNames: Array.from(new Set(duplicateDatabaseNames)),
       circularMappings
     };
 

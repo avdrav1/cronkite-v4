@@ -6,6 +6,7 @@ import { registerRoutes } from "./routes";
 import { sessionConfig, authMiddleware } from "./auth-middleware";
 import { performStartupValidation, logValidationReport } from "./startup-validation";
 import { env } from "./env";
+import { sanitizeString, safeStringify, validateEnvironmentSecurity } from "./security-utils";
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -15,7 +16,9 @@ export function log(message: string, source = "express") {
     hour12: true,
   });
 
-  console.log(`${formattedTime} [${source}] ${message}`);
+  // Sanitize message to prevent secret exposure
+  const sanitizedMessage = sanitizeString(message);
+  console.log(`${formattedTime} [${source}] ${sanitizedMessage}`);
 }
 
 export function logError(message: string, error?: Error, source = "express") {
@@ -26,9 +29,14 @@ export function logError(message: string, error?: Error, source = "express") {
     hour12: true,
   });
 
-  console.error(`${formattedTime} [${source}] ERROR: ${message}`);
+  // Sanitize message and error to prevent secret exposure
+  const sanitizedMessage = sanitizeString(message);
+  console.error(`${formattedTime} [${source}] ERROR: ${sanitizedMessage}`);
+  
   if (error) {
-    console.error(`${formattedTime} [${source}] Stack trace:`, error.stack);
+    // Sanitize error stack trace
+    const sanitizedStack = error.stack ? sanitizeString(error.stack) : 'No stack trace available';
+    console.error(`${formattedTime} [${source}] Stack trace:`, sanitizedStack);
   }
 }
 
@@ -40,7 +48,9 @@ export function logSuccess(message: string, source = "express") {
     hour12: true,
   });
 
-  console.log(`${formattedTime} [${source}] ✅ ${message}`);
+  // Sanitize message to prevent secret exposure
+  const sanitizedMessage = sanitizeString(message);
+  console.log(`${formattedTime} [${source}] ✅ ${sanitizedMessage}`);
 }
 
 // Setup Express application with all middleware and routes
@@ -97,7 +107,8 @@ export async function setupApp(app: express.Application): Promise<void> {
       if (path.startsWith("/api")) {
         let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
         if (capturedJsonResponse) {
-          logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+          // Use safe stringify to prevent secret exposure in logs
+          logLine += ` :: ${safeStringify(capturedJsonResponse)}`;
         }
 
         log(logLine);
@@ -110,6 +121,25 @@ export async function setupApp(app: express.Application): Promise<void> {
   // Perform startup validation
   if (env.NODE_ENV === "production" || env.NETLIFY_FUNCTION) {
     log("🔍 Performing production startup validation...");
+    
+    // First, validate environment security
+    log("🔒 Validating environment security...");
+    const securityValidation = validateEnvironmentSecurity();
+    
+    if (!securityValidation.isSecure) {
+      logError("❌ Environment security validation failed");
+      securityValidation.errors.forEach(error => logError(`   • ${error}`));
+      throw new Error("Environment security validation failed");
+    }
+    
+    if (securityValidation.warnings.length > 0) {
+      log("⚠️  Environment security warnings:");
+      securityValidation.warnings.forEach(warning => log(`   • ${warning}`));
+    }
+    
+    logSuccess("✅ Environment security validation passed");
+    
+    // Then perform comprehensive startup validation
     const validationResult = await performStartupValidation();
     
     if (!validationResult.isValid) {
@@ -146,18 +176,22 @@ export async function setupApp(app: express.Application): Promise<void> {
 
     logError(`Request failed: ${req.method} ${req.path}`, err);
     
-    // Enhanced error handling for production
+    // Enhanced error handling for production with secret sanitization
     if (env.NODE_ENV === "production") {
-      // Don't expose internal errors in production
+      // Don't expose internal errors in production, and sanitize any messages
+      const safeMessage = status >= 500 ? "Internal Server Error" : sanitizeString(message);
       res.status(status).json({ 
-        message: status >= 500 ? "Internal Server Error" : message,
+        message: safeMessage,
         timestamp: new Date().toISOString()
       });
     } else {
-      // Detailed errors for development
+      // Sanitized detailed errors for development
+      const sanitizedMessage = sanitizeString(message);
+      const sanitizedStack = err.stack ? sanitizeString(err.stack) : undefined;
+      
       res.status(status).json({ 
-        message,
-        stack: err.stack,
+        message: sanitizedMessage,
+        stack: sanitizedStack,
         path: req.path,
         method: req.method,
         timestamp: new Date().toISOString()

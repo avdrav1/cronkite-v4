@@ -3,6 +3,7 @@ import { build as viteBuild } from "vite";
 import { rm, readFile, mkdir, copyFile, writeFile } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
+import { validateClientSecurity } from "./validate-client-security";
 
 // server deps to bundle to reduce openat(2) syscalls
 // which helps cold start times for Netlify Functions
@@ -42,6 +43,18 @@ async function buildAll() {
   await rm("dist", { recursive: true, force: true });
 
   console.log("🏗️  Building for Netlify production deployment...");
+
+  // Validate client security before building
+  console.log("🔒 Validating client-side security...");
+  const securityValidation = validateClientSecurity("client");
+  
+  if (!securityValidation.isSecure) {
+    console.error("❌ Client security validation failed - build aborted");
+    console.error("Fix security violations before building for production");
+    process.exit(1);
+  }
+  
+  console.log("✅ Client security validation passed");
 
   // Create necessary directories
   await mkdir("dist/functions", { recursive: true });
@@ -113,12 +126,23 @@ async function buildAll() {
     logLevel: "info",
   });
 
+  // Final security validation on built files
+  console.log("🔒 Performing final security validation on built files...");
+  const builtSecurityValidation = validateClientSecurity("dist/public");
+  
+  if (!builtSecurityValidation.isSecure) {
+    console.error("❌ Built files contain security violations!");
+    console.error("This should not happen - please review the build process");
+    process.exit(1);
+  }
+
   console.log("✅ Netlify build completed successfully!");
   console.log("📁 Build artifacts:");
   console.log("   • Frontend: dist/public/ (served by Netlify CDN)");
   console.log("   • Backend:  dist/functions/api.js (Netlify Function)");
   console.log("   • Server:   dist/index.cjs (standalone production server)");
   console.log("   • Assets:   dist/migrations/ (database migrations)");
+  console.log("🔒 Security: All files validated for secret exposure");
 }
 
 buildAll().catch((err) => {

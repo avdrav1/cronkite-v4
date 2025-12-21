@@ -1,6 +1,6 @@
-import { useState } from "react";
-import { MOCK_FEEDS, Feed } from "@/lib/mock-feeds";
+import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
+import { apiRequest } from "@/lib/queryClient";
 import { 
   Search, 
   Plus, 
@@ -41,14 +41,83 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useToast } from "@/hooks/use-toast";
 
 import { AddFeedModal } from "@/components/feed/AddFeedModal";
 
+// Feed interface matching the API response
+interface Feed {
+  id: string;
+  name: string;
+  url: string;
+  site_url?: string;
+  description?: string;
+  icon_url?: string;
+  status: 'active' | 'paused' | 'error';
+  priority: 'high' | 'medium' | 'low';
+  last_fetched_at?: string;
+  article_count: number;
+  folder_name?: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export function FeedManagement() {
-  const [feeds, setFeeds] = useState<Feed[]>(MOCK_FEEDS);
+  const [feeds, setFeeds] = useState<Feed[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedFolders, setExpandedFolders] = useState<string[]>(['Tech', 'News', 'Gaming']);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const { toast } = useToast();
+
+  // Fetch user's feeds from API
+  const fetchFeeds = async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      
+      const response = await apiRequest('GET', '/api/feeds/user');
+      const data = await response.json();
+      
+      if (!data.feeds) {
+        throw new Error('No feeds data received');
+      }
+      
+      // Transform API response to match our Feed interface
+      const transformedFeeds: Feed[] = data.feeds.map((feed: any) => ({
+        id: feed.id,
+        name: feed.name,
+        url: feed.url,
+        site_url: feed.site_url,
+        description: feed.description,
+        icon_url: feed.icon_url,
+        status: feed.status || 'active',
+        priority: feed.priority || 'medium',
+        last_fetched_at: feed.last_fetched_at,
+        article_count: feed.article_count || 0,
+        folder_name: feed.folder_name || 'General',
+        created_at: feed.created_at,
+        updated_at: feed.updated_at
+      }));
+      
+      setFeeds(transformedFeeds);
+      
+      // Auto-expand folders that have feeds
+      const folders = Array.from(new Set(transformedFeeds.map(f => f.folder_name || 'General')));
+      setExpandedFolders(folders);
+    } catch (error) {
+      console.error('Failed to fetch feeds:', error);
+      setError(error instanceof Error ? error.message : 'Failed to load feeds');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Load feeds on component mount
+  useEffect(() => {
+    fetchFeeds();
+  }, []);
 
   // Filter feeds based on search
   const filteredFeeds = feeds.filter(feed => 
@@ -59,11 +128,65 @@ export function FeedManagement() {
   // Group by folder
   const feedsByFolder: Record<string, Feed[]> = {};
   filteredFeeds.forEach(feed => {
-    if (!feedsByFolder[feed.folder]) {
-      feedsByFolder[feed.folder] = [];
+    const folder = feed.folder_name || 'General';
+    if (!feedsByFolder[folder]) {
+      feedsByFolder[folder] = [];
     }
-    feedsByFolder[feed.folder].push(feed);
+    feedsByFolder[folder].push(feed);
   });
+
+  // Handle feed actions (pause, resume, delete)
+  const handleFeedAction = async (feedId: string, action: 'pause' | 'resume' | 'delete' | 'retry') => {
+    try {
+      switch (action) {
+        case 'pause':
+          await apiRequest('PUT', `/api/feeds/${feedId}`, { status: 'paused' });
+          toast({
+            title: "Feed Paused",
+            description: "Feed has been paused and will not sync new articles.",
+          });
+          break;
+        case 'resume':
+          await apiRequest('PUT', `/api/feeds/${feedId}`, { status: 'active' });
+          toast({
+            title: "Feed Resumed",
+            description: "Feed has been resumed and will sync new articles.",
+          });
+          break;
+        case 'delete':
+          await apiRequest('DELETE', `/api/feeds/unsubscribe/${feedId}`);
+          toast({
+            title: "Feed Removed",
+            description: "Feed has been removed from your subscriptions.",
+          });
+          break;
+        case 'retry':
+          await apiRequest('POST', '/api/feeds/sync', { feedIds: [feedId] });
+          toast({
+            title: "Sync Started",
+            description: "Feed synchronization has been started.",
+          });
+          break;
+      }
+      
+      // Refresh feeds list
+      await fetchFeeds();
+    } catch (error) {
+      console.error(`Failed to ${action} feed:`, error);
+      toast({
+        variant: "destructive",
+        title: `Failed to ${action} feed`,
+        description: error instanceof Error ? error.message : `An error occurred while ${action}ing the feed.`,
+        duration: 5000,
+      });
+    }
+  };
+
+  // Handle feed refresh callback from AddFeedModal
+  const handleFeedAdded = () => {
+    fetchFeeds();
+    setIsAddModalOpen(false);
+  };
 
   const toggleFolder = (folder: string) => {
     setExpandedFolders(prev => 
@@ -90,6 +213,43 @@ export function FeedManagement() {
       default: return null;
     }
   };
+
+  // Loading state
+  if (isLoading) {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="p-6 border-b border-border">
+          <h2 className="text-2xl font-display font-bold">Feed Management</h2>
+          <p className="text-muted-foreground">Loading your feeds...</p>
+        </div>
+        <div className="flex-1 flex items-center justify-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="p-6 border-b border-border">
+          <h2 className="text-2xl font-display font-bold">Feed Management</h2>
+          <p className="text-muted-foreground">Failed to load feeds</p>
+        </div>
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <AlertTriangle className="h-12 w-12 text-red-500 mx-auto mb-4" />
+            <p className="text-red-600 mb-4">{error}</p>
+            <Button onClick={fetchFeeds} className="gap-2">
+              <RefreshCw className="h-4 w-4" />
+              Try Again
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full">
@@ -170,7 +330,7 @@ export function FeedManagement() {
                             {getStatusIcon(feed.status)}
                             {feed.status === 'error' && (
                               <span className="text-xs text-red-500 font-medium bg-red-500/10 px-2 py-0.5 rounded">
-                                {feed.errorMessage}
+                                Error syncing
                               </span>
                             )}
                             {feed.status === 'paused' && (
@@ -187,9 +347,9 @@ export function FeedManagement() {
                           <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-muted-foreground pl-5">
                             <div className="flex items-center gap-1.5">
                               <RefreshCw className="h-3 w-3" />
-                              Last sync: {formatDistanceToNow(feed.lastSync, { addSuffix: true })}
+                              Last sync: {feed.last_fetched_at ? formatDistanceToNow(new Date(feed.last_fetched_at), { addSuffix: true }) : 'Never'}
                             </div>
-                            <div>~{feed.articlesPerDay} articles/day</div>
+                            <div>{feed.article_count} articles</div>
                             <div className="flex items-center gap-1.5">
                               Priority: 
                               <span className={cn(
@@ -205,7 +365,12 @@ export function FeedManagement() {
 
                         <div className="flex items-center gap-2 self-start md:self-center pl-5 md:pl-0">
                            {feed.status === 'error' && (
-                             <Button variant="outline" size="sm" className="h-8 text-xs gap-1 border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-900/30 dark:bg-red-900/10 dark:text-red-400">
+                             <Button 
+                               variant="outline" 
+                               size="sm" 
+                               className="h-8 text-xs gap-1 border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-900/30 dark:bg-red-900/10 dark:text-red-400"
+                               onClick={() => handleFeedAction(feed.id, 'retry')}
+                             >
                                <RefreshCw className="h-3 w-3" /> Retry Now
                              </Button>
                            )}
@@ -221,16 +386,22 @@ export function FeedManagement() {
                                  <Edit2 className="h-4 w-4 mr-2" /> Edit
                                </DropdownMenuItem>
                                {feed.status === 'paused' ? (
-                                 <DropdownMenuItem className="text-emerald-600 focus:text-emerald-600 focus:bg-emerald-50 dark:focus:bg-emerald-900/20">
+                                 <DropdownMenuItem 
+                                   className="text-emerald-600 focus:text-emerald-600 focus:bg-emerald-50 dark:focus:bg-emerald-900/20"
+                                   onClick={() => handleFeedAction(feed.id, 'resume')}
+                                 >
                                    <Play className="h-4 w-4 mr-2" /> Resume
                                  </DropdownMenuItem>
                                ) : (
-                                 <DropdownMenuItem>
+                                 <DropdownMenuItem onClick={() => handleFeedAction(feed.id, 'pause')}>
                                    <Pause className="h-4 w-4 mr-2" /> Pause
                                  </DropdownMenuItem>
                                )}
                                <DropdownMenuSeparator />
-                               <DropdownMenuItem className="text-red-600 focus:text-red-600 focus:bg-red-50 dark:focus:bg-red-900/20">
+                               <DropdownMenuItem 
+                                 className="text-red-600 focus:text-red-600 focus:bg-red-50 dark:focus:bg-red-900/20"
+                                 onClick={() => handleFeedAction(feed.id, 'delete')}
+                               >
                                  <Trash2 className="h-4 w-4 mr-2" /> Delete
                                </DropdownMenuItem>
                              </DropdownMenuContent>
@@ -252,7 +423,11 @@ export function FeedManagement() {
         )}
       </div>
 
-      <AddFeedModal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} />
+      <AddFeedModal 
+        isOpen={isAddModalOpen} 
+        onClose={() => setIsAddModalOpen(false)}
+        onFeedAdded={handleFeedAdded}
+      />
     </div>
   );
 }

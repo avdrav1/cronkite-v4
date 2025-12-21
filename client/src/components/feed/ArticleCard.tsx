@@ -1,18 +1,36 @@
-import { Article } from "@/lib/mock-data";
+import { type Article } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
 import { Star, Circle, X, Check } from "lucide-react";
 import { motion } from "framer-motion";
 
+// Extended article interface for UI compatibility
+interface ArticleWithUIState extends Article {
+  isRead?: boolean;
+  isStarred?: boolean;
+  relevancyScore?: number;
+  source?: string;
+  date?: string;
+  readTime?: string;
+  imageUrl?: string;
+}
+
 interface ArticleCardProps {
-  article: Article;
-  onClick: (article: Article) => void;
+  article: ArticleWithUIState;
+  onClick: (article: ArticleWithUIState) => void;
   onRemove?: (id: string) => void;
   onStar?: (id: string) => void;
 }
 
 export function ArticleCard({ article, onClick, onRemove, onStar }: ArticleCardProps) {
-  const { relevancyScore, imageUrl, isRead } = article;
+  const { 
+    relevancyScore = 50, 
+    imageUrl = article.image_url, 
+    isRead = false,
+    source = 'Unknown Source',
+    date = article.published_at || article.created_at.toISOString(),
+    isStarred = false
+  } = article;
 
   const handleAction = (e: React.MouseEvent, action: () => void) => {
     e.stopPropagation();
@@ -116,9 +134,9 @@ export function ArticleCard({ article, onClick, onRemove, onStar }: ArticleCardP
         <div className="flex items-center justify-between mt-auto pt-2">
           <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground">
             <Circle className={cn("h-2.5 w-2.5 fill-current", scoreColor)} />
-            <span className="font-semibold text-foreground">{article.source}</span>
+            <span className="font-semibold text-foreground">{source}</span>
             <span>•</span>
-            <span>{formatDistanceToNow(new Date(article.date), { addSuffix: true })}</span>
+            <span>{formatDistanceToNow(new Date(date), { addSuffix: true })}</span>
           </div>
           
           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -126,9 +144,9 @@ export function ArticleCard({ article, onClick, onRemove, onStar }: ArticleCardP
               <button 
                 onClick={(e) => handleAction(e, () => onStar(article.id))}
                 className="p-1.5 hover:bg-muted rounded-full text-muted-foreground hover:text-yellow-500 transition-colors"
-                title={article.isStarred ? "Unstar" : "Star"}
+                title={isStarred ? "Unstar" : "Star"}
               >
-                <Star className={cn("h-4 w-4", article.isStarred && "fill-yellow-500 text-yellow-500")} />
+                <Star className={cn("h-4 w-4", isStarred && "fill-yellow-500 text-yellow-500")} />
               </button>
             )}
             {onRemove && (

@@ -3,9 +3,6 @@ import { AppShell } from "@/components/layout/AppShell";
 import { MasonryGrid } from "@/components/feed/MasonryGrid";
 import { ArticleCard } from "@/components/feed/ArticleCard";
 import { ArticleSheet } from "@/components/article/ArticleSheet";
-import { TrendingTopicCard } from "@/components/trending/TrendingTopicCard";
-import { TrendingDrillDown } from "@/components/trending/TrendingDrillDown";
-import { MOCK_CLUSTERS, TopicCluster } from "@/lib/mock-clusters";
 import { motion } from "framer-motion";
 import { SlidersHorizontal, RefreshCw, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -14,19 +11,29 @@ import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { type Article } from "@shared/schema";
 
-// Extended article type with feed information
+// Extended article type with feed information and UI state
 interface ArticleWithFeed extends Article {
+  // UI state fields
+  isRead?: boolean;
+  isStarred?: boolean;
+  relevancyScore?: number;
+  
+  // Computed/display fields
+  source?: string; // Feed name for display
+  date?: string; // Formatted date for display
+  readTime?: string; // Estimated read time
+  imageUrl?: string; // Alias for image_url for compatibility
+  
+  // Feed information
   feed_name?: string;
   feed_url?: string;
   feed_icon?: string;
-  isRead?: boolean;
-  isStarred?: boolean;
 }
 
-// Mixed feed item type (article or cluster)
+// Mixed feed item type (just articles for now)
 interface FeedItem {
-  type: 'article' | 'cluster';
-  data: ArticleWithFeed | TopicCluster;
+  type: 'article';
+  data: ArticleWithFeed;
   id: string;
 }
 
@@ -38,7 +45,6 @@ const CHUNK_SIZE_DAYS = 7;
 
 export default function Home() {
   const [selectedArticle, setSelectedArticle] = useState<ArticleWithFeed | null>(null);
-  const [selectedCluster, setSelectedCluster] = useState<TopicCluster | null>(null);
   const [activeFilter, setActiveFilter] = useState("all");
   const [historyDepth, setHistoryDepth] = useState(CHUNK_SIZE_DAYS);
   
@@ -68,9 +74,7 @@ export default function Home() {
       // Convert API articles to our format with UI state
       const articlesWithState: ArticleWithFeed[] = data.articles.map((article: any) => ({
         ...article,
-        isRead: false,
-        isStarred: false,
-        // Convert API fields to match expected format
+        // Map API fields to expected UI fields
         id: article.id,
         title: article.title,
         url: article.url,
@@ -78,9 +82,20 @@ export default function Home() {
         content: article.content,
         author: article.author,
         date: article.published_at || article.created_at,
+        published_at: article.published_at,
         source: article.feed_name || 'Unknown Source',
         image: article.image_url,
-        readTime: Math.max(1, Math.floor((article.content?.length || 0) / 200)) + ' min read'
+        imageUrl: article.image_url, // For compatibility with ArticleCard
+        readTime: Math.max(1, Math.floor((article.content?.length || 0) / 200)) + ' min read',
+        relevancyScore: 75, // Default relevancy score for now
+        tags: [], // Default empty tags
+        // UI state
+        isRead: article.is_read || false,
+        isStarred: article.is_starred || false,
+        // Feed information
+        feed_name: article.feed_name,
+        feed_url: article.feed_url,
+        feed_icon: article.feed_icon
       }));
       
       setArticles(articlesWithState);
@@ -98,28 +113,13 @@ export default function Home() {
     fetchArticles();
   }, []);
 
-  // Create mixed feed with articles and clusters
+  // Create feed with just articles
   const createMixedFeed = (articles: ArticleWithFeed[]): FeedItem[] => {
-    const mixedFeed: FeedItem[] = articles.map(article => ({
+    return articles.map(article => ({
       type: 'article',
       data: article,
       id: article.id
     }));
-    
-    // Insert clusters at specific intervals (every 5 articles)
-    const clustersToInsert = MOCK_CLUSTERS.slice(0, Math.min(3, Math.floor(articles.length / 5)));
-    clustersToInsert.forEach((cluster, index) => {
-      const insertIndex = (index + 1) * 5 + index; // 5, 11, 17, etc.
-      if (insertIndex < mixedFeed.length) {
-        mixedFeed.splice(insertIndex, 0, {
-          type: 'cluster',
-          data: cluster,
-          id: `cluster-${cluster.id}`
-        });
-      }
-    });
-    
-    return mixedFeed;
   };
 
   // Actions
@@ -147,13 +147,13 @@ export default function Home() {
     }));
   };
 
-  // Create mixed feed
+  // Create feed
   const mixedFeed = createMixedFeed(articles);
 
   // Base filtering (Source + Status)
   const baseFilteredFeed = mixedFeed.filter((item) => {
     // 1. Source Filter
-    if (sourceFilter && item.type === 'article') {
+    if (sourceFilter) {
       const article = item.data as ArticleWithFeed;
       const matchesSource = article.source?.toLowerCase().includes(sourceFilter.toLowerCase()) || 
              sourceFilter.toLowerCase().includes(article.source?.toLowerCase() || '');
@@ -161,19 +161,15 @@ export default function Home() {
     }
 
     // 2. Status Filter
-    if (item.type === 'article') {
-      const article = item.data as ArticleWithFeed;
-      if (activeFilter === "unread" && article.isRead) return false;
-      if (activeFilter === "saved" && !article.isStarred) return false;
-    }
+    const article = item.data as ArticleWithFeed;
+    if (activeFilter === "unread" && article.isRead) return false;
+    if (activeFilter === "saved" && !article.isStarred) return false;
     
     return true;
   });
 
   // Calculate visible feed based on history depth
   const visibleFeed = baseFilteredFeed.filter((item) => {
-    if (item.type === 'cluster') return true; // Always show relevant clusters for now
-    
     const article = item.data as ArticleWithFeed;
     if (!article.date) return true; // Show articles without dates
     
@@ -187,7 +183,6 @@ export default function Home() {
   const nextChunkEndDate = subDays(CURRENT_DATE, historyDepth);
   
   const nextChunkCount = baseFilteredFeed.filter((item) => {
-    if (item.type === 'cluster') return false;
     const article = item.data as ArticleWithFeed;
     if (!article.date) return false;
     const articleDate = parseISO(article.date);
@@ -292,17 +287,6 @@ export default function Home() {
         {/* Masonry Feed */}
         <MasonryGrid>
           {visibleFeed.map((item, index) => {
-            if (item.type === 'cluster') {
-              const cluster = item.data as TopicCluster;
-              return (
-                <TrendingTopicCard
-                  key={item.id}
-                  cluster={cluster}
-                  onClick={(c) => setSelectedCluster(c)}
-                />
-              );
-            }
-            // Regular article
             const article = item.data as ArticleWithFeed;
             return (
               <ArticleCard
@@ -343,21 +327,11 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Slide-over Sheets */}
+      {/* Article Sheet */}
       <ArticleSheet
         article={selectedArticle as any} // Type assertion for compatibility
         isOpen={!!selectedArticle}
         onClose={() => setSelectedArticle(null)}
-      />
-
-      <TrendingDrillDown
-        cluster={selectedCluster}
-        isOpen={!!selectedCluster}
-        onClose={() => setSelectedCluster(null)}
-        onArticleClick={(article) => {
-          setSelectedCluster(null); // Close cluster view
-          setTimeout(() => setSelectedArticle(article as ArticleWithFeed), 300); // Open article view with slight delay
-        }}
       />
     </AppShell>
   );

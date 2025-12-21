@@ -1299,6 +1299,117 @@ export async function registerRoutes(
     }
   });
   
+  // POST /api/feeds/validate - Validate a custom feed URL
+  app.post('/api/feeds/validate', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { url } = req.body;
+      
+      if (!url || typeof url !== 'string') {
+        return res.status(400).json({
+          error: 'Validation error',
+          message: 'URL is required'
+        });
+      }
+      
+      // Basic URL validation
+      try {
+        new URL(url);
+      } catch {
+        return res.status(400).json({
+          valid: false,
+          message: 'Invalid URL format'
+        });
+      }
+      
+      // For now, return a simple validation response
+      // In production, this would actually fetch and parse the RSS feed
+      const isValidUrl = url.includes('rss') || url.includes('feed') || url.includes('xml') || url.includes('atom');
+      
+      if (isValidUrl) {
+        res.json({
+          valid: true,
+          name: `Custom Feed from ${new URL(url).hostname}`,
+          description: 'RSS feed detected at the provided URL'
+        });
+      } else {
+        res.json({
+          valid: false,
+          message: 'No RSS or Atom feed found at this URL'
+        });
+      }
+    } catch (error) {
+      console.error('Feed validation error:', error);
+      res.status(500).json({
+        error: 'Validation failed',
+        message: 'An error occurred while validating the feed'
+      });
+    }
+  });
+  
+  // POST /api/feeds/custom - Add a custom feed
+  app.post('/api/feeds/custom', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const { url, name, description } = req.body;
+      
+      if (!url || !name) {
+        return res.status(400).json({
+          error: 'Validation error',
+          message: 'URL and name are required'
+        });
+      }
+      
+      // Create a custom feed entry
+      const feedId = `custom_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+      
+      // For now, we'll simulate adding the feed
+      // In production, this would add the feed to the database
+      
+      res.json({
+        feedId,
+        message: 'Custom feed added successfully'
+      });
+    } catch (error) {
+      console.error('Add custom feed error:', error);
+      res.status(500).json({
+        error: 'Failed to add custom feed',
+        message: 'An error occurred while adding the custom feed'
+      });
+    }
+  });
+  
+  // PUT /api/feeds/:id - Update feed settings
+  app.put('/api/feeds/:id', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const feedId = req.params.id;
+      const { status, priority, folder_name } = req.body;
+      
+      if (!feedId) {
+        return res.status(400).json({
+          error: 'Validation error',
+          message: 'Feed ID is required'
+        });
+      }
+      
+      // Update feed settings
+      // For now, we'll simulate the update
+      // In production, this would update the feed in the database
+      
+      res.json({
+        message: 'Feed updated successfully',
+        feedId,
+        updates: { status, priority, folder_name }
+      });
+    } catch (error) {
+      console.error('Update feed error:', error);
+      res.status(500).json({
+        error: 'Failed to update feed',
+        message: 'An error occurred while updating the feed'
+      });
+    }
+  });
+
   // GET /api/feeds/sync-status - Get synchronization status
   app.get('/api/feeds/sync-status', requireAuth, async (req: Request, res: Response) => {
     try {

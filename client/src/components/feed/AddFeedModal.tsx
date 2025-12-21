@@ -10,13 +10,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 
 interface AddFeedModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onFeedAdded?: () => void;
 }
 
-export function AddFeedModal({ isOpen, onClose }: AddFeedModalProps) {
+export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps) {
   const [activeTab, setActiveTab] = useState("browse");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
@@ -37,49 +39,112 @@ export function AddFeedModal({ isOpen, onClose }: AddFeedModalProps) {
     return matchesSearch && matchesCategory;
   });
 
-  const handleQuickAdd = (feedId: string, feedName: string, category: string) => {
-    setAddedFeeds(prev => [...prev, feedId]);
-    toast({
-      title: "Feed Added",
-      description: `${feedName} has been added to your ${category} folder.`,
-      duration: 3000,
-    });
+  const handleQuickAdd = async (feedId: string, feedName: string, category: string) => {
+    try {
+      // Subscribe to the selected feed
+      await apiRequest('POST', '/api/feeds/subscribe', {
+        feedIds: [feedId]
+      });
+      
+      setAddedFeeds(prev => [...prev, feedId]);
+      toast({
+        title: "Feed Added",
+        description: `${feedName} has been added to your ${category} folder.`,
+        duration: 3000,
+      });
+      
+      // Notify parent component
+      onFeedAdded?.();
+    } catch (error) {
+      console.error('Failed to add feed:', error);
+      toast({
+        variant: "destructive",
+        title: "Failed to Add Feed",
+        description: error instanceof Error ? error.message : "An error occurred while adding the feed.",
+        duration: 5000,
+      });
+    }
   };
 
-  const validateCustomUrl = () => {
+  const validateCustomUrl = async () => {
     if (!customUrl) return;
     setIsValidating(true);
     setIsValidFeed(false);
     
-    // Simulate API call
-    setTimeout(() => {
-      setIsValidating(false);
-      if (customUrl.includes('.')) {
+    try {
+      // Call API to validate the custom feed URL
+      const response = await apiRequest('POST', '/api/feeds/validate', {
+        url: customUrl
+      });
+      
+      const data = await response.json();
+      
+      if (data.valid) {
         setIsValidFeed(true);
         setFeedDetails({
-          name: "Detected Feed Name",
-          description: "This is a valid RSS feed found at the provided URL."
+          name: data.name || "Custom Feed",
+          description: data.description || "This is a valid RSS feed found at the provided URL."
         });
       } else {
         toast({
           variant: "destructive",
           title: "Invalid Feed",
-          description: "Could not find a valid RSS or Atom feed at this URL.",
+          description: data.message || "Could not find a valid RSS or Atom feed at this URL.",
         });
       }
-    }, 1500);
+    } catch (error) {
+      console.error('Feed validation error:', error);
+      toast({
+        variant: "destructive",
+        title: "Validation Error",
+        description: error instanceof Error ? error.message : "Failed to validate the feed URL.",
+      });
+    } finally {
+      setIsValidating(false);
+    }
   };
 
-  const handleAddCustomFeed = () => {
-    toast({
-      title: "Feed Added",
-      description: `${feedDetails?.name} added successfully.`,
-    });
-    onClose();
-    // Reset state
-    setCustomUrl("");
-    setIsValidFeed(false);
-    setFeedDetails(null);
+  const handleAddCustomFeed = async () => {
+    if (!feedDetails || !customUrl) return;
+    
+    try {
+      // Add the custom feed
+      const response = await apiRequest('POST', '/api/feeds/custom', {
+        url: customUrl,
+        name: feedDetails.name,
+        description: feedDetails.description
+      });
+      
+      const data = await response.json();
+      
+      // Subscribe to the newly added feed
+      await apiRequest('POST', '/api/feeds/subscribe', {
+        feedIds: [data.feedId]
+      });
+      
+      toast({
+        title: "Feed Added",
+        description: `${feedDetails.name} added successfully.`,
+      });
+      
+      onClose();
+      
+      // Reset state
+      setCustomUrl("");
+      setIsValidFeed(false);
+      setFeedDetails(null);
+      
+      // Notify parent component
+      onFeedAdded?.();
+    } catch (error) {
+      console.error('Failed to add custom feed:', error);
+      toast({
+        variant: "destructive",
+        title: "Failed to Add Feed",
+        description: error instanceof Error ? error.message : "An error occurred while adding the custom feed.",
+        duration: 5000,
+      });
+    }
   };
 
   return (

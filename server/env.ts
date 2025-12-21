@@ -76,8 +76,10 @@ export function validateEnvironment(): { valid: boolean; errors: string[]; warni
     // Validate specific formats
     switch (varName) {
       case 'SUPABASE_URL':
-        if (!isValidSupabaseUrl(value)) {
-          errors.push(`Invalid SUPABASE_URL format. Expected: https://[project-ref].supabase.co`);
+        if (process.env.NODE_ENV === 'production' && !isValidSupabaseUrl(value)) {
+          errors.push(`Invalid SUPABASE_URL format for production. Expected: https://[project-ref].supabase.co`);
+        } else if (process.env.NODE_ENV !== 'production' && !isValidUrl(value)) {
+          errors.push(`Invalid SUPABASE_URL format. Expected valid URL`);
         }
         break;
       case 'DATABASE_URL':
@@ -88,6 +90,16 @@ export function validateEnvironment(): { valid: boolean; errors: string[]; warni
       case 'SESSION_SECRET':
         if (!isValidSessionSecret(value)) {
           errors.push(`SESSION_SECRET must be at least 32 characters long for security`);
+        }
+        // Check for weak secrets
+        if (value === 'your_session_secret_key' || 
+            value === 'development' || 
+            value === 'secret') {
+          if (process.env.NODE_ENV === 'production') {
+            errors.push('SESSION_SECRET is using a default/weak value in production');
+          } else {
+            warnings.push('SESSION_SECRET is using a default/weak value (acceptable in development)');
+          }
         }
         break;
       case 'NODE_ENV':
