@@ -56,6 +56,18 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
   
+  // Health Check Route (for deployment validation)
+  app.get('/api/health', (req: Request, res: Response) => {
+    res.json({
+      status: 'healthy',
+      timestamp: new Date().toISOString(),
+      version: process.env.npm_package_version || '1.0.0',
+      environment: process.env.NODE_ENV || 'development',
+      uptime: process.uptime(),
+      memory: process.memoryUsage()
+    });
+  });
+  
   // Authentication Routes
   
   // POST /api/auth/register - Email/password registration
