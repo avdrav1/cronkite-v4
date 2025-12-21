@@ -99,6 +99,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   // Login with email and password
   const login = async (email: string, password: string) => {
     setIsLoading(true);
+    console.log('🔐 AuthContext: Starting login attempt for:', email);
+    
     try {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
@@ -109,15 +111,24 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         body: JSON.stringify({ email, password }),
       });
 
+      console.log('🔐 AuthContext: Login response status:', response.status);
+      
       const data = await response.json();
+      console.log('🔐 AuthContext: Login response data:', { 
+        hasUser: !!data.user, 
+        hasError: !!data.error,
+        error: data.error,
+        message: data.message 
+      });
 
       if (!response.ok) {
         throw new Error(data.message || 'Login failed');
       }
 
+      console.log('✅ AuthContext: Login successful, setting user:', data.user?.email);
       setUser(data.user);
     } catch (error) {
-      console.error('Login error:', error);
+      console.error('❌ AuthContext: Login error:', error);
       throw error;
     } finally {
       setIsLoading(false);

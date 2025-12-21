@@ -16,7 +16,10 @@ declare global {
 
 const MemoryStore = createMemoryStore(session);
 
-// Session configuration
+// Determine if we're in production
+const isProduction = process.env.NODE_ENV === 'production';
+
+// Session configuration with environment-aware cookie settings
 export const sessionConfig = session({
   secret: process.env.SESSION_SECRET || 'your-secret-key',
   resave: false,
@@ -24,15 +27,21 @@ export const sessionConfig = session({
   store: new MemoryStore({
     checkPeriod: 86400000 // prune expired entries every 24h
   }),
-  name: 'connect.sid', // Explicit session name
+  name: 'cronkite.sid', // Explicit session name
+  proxy: isProduction, // Trust proxy in production (Netlify, etc.)
   cookie: {
-    secure: false, // Set to false for development (HTTP)
+    secure: isProduction, // Use secure cookies in production (HTTPS)
     httpOnly: true,
     maxAge: 24 * 60 * 60 * 1000, // 24 hours
-    sameSite: 'lax', // Allow cross-site requests with cookies
-    domain: undefined, // Don't set domain for localhost
+    sameSite: isProduction ? 'none' : 'lax', // 'none' for cross-site in production, 'lax' for development
     path: '/' // Explicit path
   }
+});
+
+console.log(`🔐 Session configured for ${isProduction ? 'production' : 'development'} mode:`, {
+  secure: isProduction,
+  sameSite: isProduction ? 'none' : 'lax',
+  proxy: isProduction
 });
 
 // Passport configuration

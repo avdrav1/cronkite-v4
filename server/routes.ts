@@ -138,10 +138,18 @@ export async function registerRoutes(
   
   // POST /api/auth/login - Email/password login
   app.post('/api/auth/login', requireNoAuth, (req: Request, res: Response, next) => {
+    console.log('🔐 Login attempt:', { 
+      email: req.body.email, 
+      hasPassword: !!req.body.password,
+      sessionID: req.sessionID,
+      hasSession: !!req.session
+    });
+    
     try {
       loginSchema.parse(req.body);
     } catch (error) {
       if (error instanceof z.ZodError) {
+        console.log('❌ Login validation failed:', error.errors);
         return res.status(400).json({
           error: 'Validation error',
           message: 'Invalid input data',
@@ -151,7 +159,15 @@ export async function registerRoutes(
     }
     
     passport.authenticate('local', (err: any, user: any, info: any) => {
+      console.log('🔐 Passport authenticate result:', { 
+        hasError: !!err, 
+        hasUser: !!user, 
+        info: info,
+        errorMessage: err?.message 
+      });
+      
       if (err) {
+        console.error('❌ Authentication error:', err);
         return res.status(500).json({
           error: 'Authentication error',
           message: 'An error occurred during authentication'
@@ -159,6 +175,7 @@ export async function registerRoutes(
       }
       
       if (!user) {
+        console.log('❌ Authentication failed - no user returned:', info);
         return res.status(401).json({
           error: 'Authentication failed',
           message: info?.message || 'Invalid email or password'
@@ -167,11 +184,19 @@ export async function registerRoutes(
       
       req.login(user, (loginErr) => {
         if (loginErr) {
+          console.error('❌ Session creation error:', loginErr);
           return res.status(500).json({
             error: 'Login failed',
             message: 'An error occurred during login'
           });
         }
+        
+        console.log('✅ Login successful:', { 
+          userId: user.id, 
+          email: user.email,
+          sessionID: req.sessionID,
+          isAuthenticated: req.isAuthenticated()
+        });
         
         res.json({
           user: {
@@ -260,10 +285,13 @@ export async function registerRoutes(
 
   // POST /api/auth/oauth/callback - OAuth callback handler for Supabase sessions
   app.post('/api/auth/oauth/callback', async (req: Request, res: Response) => {
+    console.log('🔐 OAuth callback received');
+    
     try {
       const { session } = req.body;
       
       if (!session || !session.user) {
+        console.log('❌ OAuth callback: Invalid session data received');
         return res.status(400).json({
           error: 'Invalid session',
           message: 'No valid session data provided'
@@ -271,6 +299,11 @@ export async function registerRoutes(
       }
       
       const supabaseUser = session.user;
+      console.log('🔐 OAuth callback: Processing user:', { 
+        id: supabaseUser.id, 
+        email: supabaseUser.email,
+        provider: supabaseUser.app_metadata?.provider 
+      });
       
       // Get or create user profile from Supabase user data
       let user = await storage.getUser(supabaseUser.id);
@@ -281,6 +314,8 @@ export async function registerRoutes(
                            supabaseUser.user_metadata?.name || 
                            supabaseUser.email?.split('@')[0] || 
                            'User';
+        
+        console.log('🔐 OAuth callback: Creating new user profile');
         
         user = await storage.createUser({
           id: supabaseUser.id,
@@ -293,13 +328,15 @@ export async function registerRoutes(
           onboarding_completed: false
         });
         
-        console.log('Created new user from OAuth:', {
+        console.log('✅ OAuth callback: Created new user:', {
           id: user.id,
           email: user.email,
           display_name: user.display_name,
           provider: supabaseUser.app_metadata?.provider
         });
       } else {
+        console.log('🔐 OAuth callback: Found existing user:', user.id);
+        
         // Update existing user with latest OAuth data if needed
         const updates: any = {};
         
@@ -315,21 +352,25 @@ export async function registerRoutes(
         
         if (Object.keys(updates).length > 0) {
           user = await storage.updateUser(user.id, updates);
-          console.log('Updated user from OAuth:', { id: user.id, updates });
+          console.log('✅ OAuth callback: Updated user:', { id: user.id, updates });
         }
       }
       
       // Log the user in to create a session
       req.login(user, (err) => {
         if (err) {
-          console.error('OAuth session creation error:', err);
+          console.error('❌ OAuth callback: Session creation error:', err);
           return res.status(500).json({
             error: 'Session creation failed',
             message: 'User authenticated but session creation failed'
           });
         }
         
-        console.log('OAuth session created successfully for user:', user.id);
+        console.log('✅ OAuth callback: Session created successfully:', { 
+          userId: user.id,
+          sessionID: req.sessionID,
+          isAuthenticated: req.isAuthenticated()
+        });
         
         res.json({
           user: {
@@ -343,7 +384,7 @@ export async function registerRoutes(
       });
       
     } catch (error) {
-      console.error('OAuth callback error:', error);
+      console.error('❌ OAuth callback error:', error);
       res.status(500).json({
         error: 'OAuth callback failed',
         message: 'An error occurred during OAuth callback processing'

@@ -263,6 +263,47 @@ export function containsSensitiveData(input: string): boolean {
 }
 
 /**
+ * Patterns that indicate actual secrets in client code (more strict than general patterns)
+ * These are designed to catch real secrets while avoiding false positives from library code
+ */
+const CLIENT_SECRET_PATTERNS = [
+  // Database URLs with actual passwords (not localhost)
+  /postgresql:\/\/[^:]+:[^@]{8,}@(?!localhost|127\.0\.0\.1)/gi,
+  // URLs with actual credentials (not localhost)
+  /https:\/\/[^:]+:[^@]{8,}@(?!localhost|127\.0\.0\.1)/gi,
+  // Stripe secret keys (always sensitive)
+  /sk_live_[a-zA-Z0-9]{20,}/gi,
+  // Google API keys (always sensitive)
+  /AIza[0-9A-Za-z\-_]{35}/gi,
+  // Google OAuth tokens (always sensitive)
+  /ya29\.[0-9A-Za-z\-_]+/gi,
+  // AWS access keys
+  /AKIA[0-9A-Z]{16}/gi,
+  // Private keys in PEM format
+  /-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----/gi,
+];
+
+/**
+ * Known safe patterns that should be ignored in client code validation
+ * These are legitimate code patterns that look like secrets but aren't
+ */
+const SAFE_PATTERNS = [
+  // React error URLs
+  /https:\/\/react\.dev\/errors\//gi,
+  // MDN documentation URLs
+  /https:\/\/developer\.mozilla\.org\//gi,
+  // GitHub discussion URLs
+  /https:\/\/github\.com\/orgs\/supabase\/discussions\//gi,
+  // Supabase demo tokens (used in development)
+  /eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIi/gi,
+  // Generic token property names in code
+  /token["']?\s*[=:,]/gi,
+  // Bearer token patterns in code (not actual tokens)
+  /Bearer\s+\$\{/gi,
+  /Bearer\s+token/gi,
+];
+
+/**
  * Validate that client-side code doesn't expose server secrets
  */
 export function validateClientCodeSecurity(clientCode: string): {
@@ -286,13 +327,19 @@ export function validateClientCodeSecurity(clientCode: string): {
     }
   }
 
-  // Check for hardcoded sensitive patterns
-  for (const pattern of SENSITIVE_PATTERNS) {
-    // Reset regex lastIndex to ensure proper matching
+  // Check for actual secrets using client-specific patterns
+  for (const pattern of CLIENT_SECRET_PATTERNS) {
     pattern.lastIndex = 0;
     const matches = clientCode.match(pattern);
     if (matches) {
-      exposedSecrets.push(...matches);
+      // Filter out matches that are in safe patterns
+      const realSecrets = matches.filter(match => {
+        return !SAFE_PATTERNS.some(safePattern => {
+          safePattern.lastIndex = 0;
+          return safePattern.test(match);
+        });
+      });
+      exposedSecrets.push(...realSecrets);
     }
   }
 

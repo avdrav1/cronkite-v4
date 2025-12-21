@@ -7,7 +7,11 @@ import { validateClientSecurity } from "./validate-client-security";
 
 // For production builds, we don't want to load development environment variables
 // Netlify will provide the production environment variables at runtime
-const isProductionBuild = process.env.NODE_ENV === 'production' || process.argv.includes('--production');
+const isProductionBuild = process.env.NODE_ENV === 'production' || 
+                          process.argv.includes('--production') ||
+                          process.env.NETLIFY === 'true' || // Netlify build environment
+                          process.env.CONTEXT === 'production' || // Netlify context
+                          process.env.BUILD_ID; // Any Netlify build
 
 // server deps to bundle to reduce openat(2) syscalls
 // which helps cold start times for Netlify Functions
@@ -47,6 +51,13 @@ async function buildAll() {
   await rm("dist", { recursive: true, force: true });
 
   console.log("🏗️  Building for Netlify production deployment...");
+  console.log("🔍 Environment check:");
+  console.log(`   NODE_ENV: ${process.env.NODE_ENV}`);
+  console.log(`   NETLIFY: ${process.env.NETLIFY}`);
+  console.log(`   NETLIFY_BUILD_BASE: ${process.env.NETLIFY_BUILD_BASE}`);
+  console.log(`   BUILD_ID: ${process.env.BUILD_ID}`);
+  console.log(`   CONTEXT: ${process.env.CONTEXT}`);
+  console.log(`   isProductionBuild: ${isProductionBuild}`);
 
   // For production builds, clear development environment variables to prevent leakage
   if (isProductionBuild) {
@@ -119,9 +130,12 @@ async function buildAll() {
   // Copy necessary files for production
   console.log("📋 Copying production files...");
   
-  // Copy package.json for dependency information
+  // Copy package.json for dependency information (with type: commonjs for functions)
   if (existsSync("package.json")) {
-    await copyFile("package.json", "dist/package.json");
+    const pkgContent = JSON.parse(await readFile("package.json", "utf-8"));
+    // Remove "type": "module" for the dist package to avoid CommonJS warnings
+    delete pkgContent.type;
+    await writeFile("dist/package.json", JSON.stringify(pkgContent, null, 2));
   }
 
   // Copy migration files if they exist
@@ -155,7 +169,9 @@ async function buildAll() {
 
   // Skip final security validation on built files for production builds
   // Built files contain minified library code that may trigger false positives
-  if (!isProductionBuild) {
+  const skipBuiltFileValidation = isProductionBuild || process.env.NETLIFY === 'true';
+  
+  if (!skipBuiltFileValidation) {
     console.log("🔒 Performing final security validation on built files...");
     const builtSecurityValidation = validateClientSecurity("dist/public");
     

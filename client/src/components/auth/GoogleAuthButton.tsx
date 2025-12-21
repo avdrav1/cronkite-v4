@@ -16,6 +16,8 @@ export const GoogleAuthButton: React.FC<GoogleAuthButtonProps> = ({ disabled = f
     setError(null);
 
     try {
+      console.log('🔐 GoogleAuth: Starting OAuth flow...');
+      
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
@@ -25,15 +27,28 @@ export const GoogleAuthButton: React.FC<GoogleAuthButtonProps> = ({ disabled = f
       });
 
       if (error) {
+        console.error('❌ GoogleAuth: OAuth error:', error);
+        
+        // Check for provider not enabled error
+        if (error.message.includes('provider is not enabled') || 
+            error.message.includes('Unsupported provider') ||
+            error.message.includes('validation_failed')) {
+          setError('Google login is currently unavailable. Please use email/password to sign in, or contact support if this persists.');
+          setIsLoading(false);
+          return;
+        }
+        
         throw error;
       }
 
+      console.log('✅ GoogleAuth: OAuth initiated, redirecting...');
       // The redirect will happen automatically
       // No need to handle the response here as the user will be redirected
       
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Google authentication failed');
-      console.error('Google auth error:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Google authentication failed';
+      console.error('❌ GoogleAuth: Unexpected error:', err);
+      setError(errorMessage);
       setIsLoading(false);
     }
   };

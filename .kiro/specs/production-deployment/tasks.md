@@ -130,7 +130,7 @@ This implementation plan transforms Cronkite from a development application usin
   - Ensure all tests pass, ask the user if questions arise.
 
 - [x] 9. Deploy to production and validate
-  - [-] 9.1 Set up Netlify site and environment variables
+  - [x] 9.1 Set up Netlify site and environment variables
     - Create Netlify site and connect to repository
     - Configure all production environment variables
     - _Requirements: 1.4, 1.5_
