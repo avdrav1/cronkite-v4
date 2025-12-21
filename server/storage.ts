@@ -1127,20 +1127,28 @@ async function createStorageInstance(): Promise<IStorage> {
       console.log('🎯 DECISION: Using SupabaseStorage (production database) with enhanced fallback');
       
       try {
-        // Test database connection health before proceeding
-        console.log('🔍 Testing production database connection...');
-        const healthCheck = await checkDatabaseHealth();
-        
-        if (!healthCheck.healthy) {
-          throw new Error(`Database health check failed: ${healthCheck.error}`);
+        // Skip direct PostgreSQL health check if DATABASE_URL is not set
+        // SupabaseStorage uses the Supabase client API, not direct PostgreSQL connections
+        const databaseUrl = process.env.DATABASE_URL;
+        if (databaseUrl) {
+          console.log('🔍 Testing production database connection via DATABASE_URL...');
+          const healthCheck = await checkDatabaseHealth();
+          
+          if (!healthCheck.healthy) {
+            console.warn(`⚠️  Direct database health check failed: ${healthCheck.error}`);
+            console.warn('⚠️  Continuing with SupabaseStorage client API (may still work)');
+          } else {
+            console.log('✅ Production database health check passed');
+          }
+        } else {
+          console.log('ℹ️  DATABASE_URL not set - skipping direct PostgreSQL health check');
+          console.log('ℹ️  SupabaseStorage will use Supabase client API instead');
         }
-        
-        console.log('✅ Production database health check passed');
         
         const supabaseStorage = new SupabaseStorage();
         console.log('✅ SupabaseStorage initialized successfully');
-        console.log('📊 Storage Type: SupabaseStorage (PostgreSQL)');
-        console.log('📊 Database URL: ' + (supabaseUrl ? supabaseUrl.substring(0, 30) + '...' : 'undefined'));
+        console.log('📊 Storage Type: SupabaseStorage (PostgreSQL via Supabase API)');
+        console.log('📊 Supabase URL: ' + (supabaseUrl ? supabaseUrl.substring(0, 30) + '...' : 'undefined'));
         console.log('📊 Enhanced Fallback: MemStorage with 865 feeds and category mapping validation');
         console.log('📊 Production Features: Connection validation, comprehensive error handling');
         console.log('=== Enhanced Storage Layer Ready ===\n');

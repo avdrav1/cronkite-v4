@@ -376,13 +376,13 @@ export async function seedProductionDatabase(): Promise<void> {
 }
 
 // Allow running as standalone script
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
+// Note: This check only works when running as ESM, not when bundled as CJS
+// The bundled version should not execute this block
+const isMainModule = typeof require !== 'undefined' && require.main === module;
+const isESMMain = typeof import.meta !== 'undefined' && import.meta.url && 
+  import.meta.url === `file://${process.argv[1]}`;
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule || isESMMain) {
   seedProductionDatabase()
     .then(() => process.exit(0))
     .catch(() => process.exit(1));

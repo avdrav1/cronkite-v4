@@ -1,7 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import passport from "passport";
-import { storage } from "./storage";
+import { getStorage } from "./storage";
 import { requireAuth, requireNoAuth, createSupabaseClient } from "./auth-middleware";
 import { syncFeeds, syncFeed } from "./rss-sync";
 import { FeedFilteringValidator, type FilterOptions, validateFilterOptions, filterFeedsByInterestsWithMapping } from "./feed-filtering-validation";
@@ -74,6 +74,8 @@ export async function registerRoutes(
   app.post('/api/auth/register', requireNoAuth, async (req: Request, res: Response) => {
     try {
       const { email, password, display_name } = registerSchema.parse(req.body);
+      
+      const storage = await getStorage();
       
       // Check if user already exists
       const existingUser = await storage.getUserByEmail(email);
@@ -231,6 +233,8 @@ export async function registerRoutes(
         });
       }
       
+      const storage = await getStorage();
+      
       // Get or create user profile
       let user = await storage.getUser(data.user.id);
       
@@ -304,6 +308,8 @@ export async function registerRoutes(
         email: supabaseUser.email,
         provider: supabaseUser.app_metadata?.provider 
       });
+      
+      const storage = await getStorage();
       
       // Get or create user profile from Supabase user data
       let user = await storage.getUser(supabaseUser.id);
@@ -459,6 +465,7 @@ export async function registerRoutes(
       const userId = req.user!.id;
       const updates = updateProfileSchema.parse(req.body);
       
+      const storage = await getStorage();
       const updatedUser = await storage.updateUser(userId, updates);
       
       res.json({
@@ -496,6 +503,7 @@ export async function registerRoutes(
     try {
       const userId = req.user!.id;
       
+      const storage = await getStorage();
       let userSettings = await storage.getUserSettings(userId);
       
       // If no settings exist, create default settings
@@ -520,6 +528,8 @@ export async function registerRoutes(
     try {
       const userId = req.user!.id;
       const updates = updateUserSettingsSchema.parse(req.body);
+      
+      const storage = await getStorage();
       
       // Ensure user settings exist first
       let userSettings = await storage.getUserSettings(userId);
@@ -555,6 +565,7 @@ export async function registerRoutes(
       const userId = req.user!.id;
       const { interests } = setUserInterestsSchema.parse(req.body);
       
+      const storage = await getStorage();
       await storage.setUserInterests(userId, interests);
       
       // Don't mark onboarding as completed here - wait until feeds are subscribed
@@ -584,6 +595,8 @@ export async function registerRoutes(
   app.get('/api/users/onboarding-status', requireAuth, async (req: Request, res: Response) => {
     try {
       const user = req.user!;
+      
+      const storage = await getStorage();
       
       // Get user interests to check if they have been set
       const userInterests = await storage.getUserInterests(user.id);
@@ -740,6 +753,7 @@ export async function registerRoutes(
       console.log(`[${requestId}] 💾 Initiating storage layer query...`);
       const storageStartTime = Date.now();
       
+      const storage = await getStorage();
       let recommendedFeeds;
       try {
         recommendedFeeds = await storage.getRecommendedFeeds();
@@ -767,7 +781,7 @@ export async function registerRoutes(
             message: storageError.message,
             stack: storageError.stack
           } : storageError,
-          storageType: typeof storage.constructor.name !== 'undefined' ? storage.constructor.name : 'unknown'
+          storageType: 'SupabaseStorage'
         });
         throw storageError;
       }
@@ -989,7 +1003,7 @@ export async function registerRoutes(
           processingTime: totalTime,
           performance: performanceMetrics,
           timestamp: new Date().toISOString(),
-          storageType: storage.constructor.name || 'unknown'
+          storageType: 'SupabaseStorage'
         }
       };
       
@@ -1077,7 +1091,7 @@ export async function registerRoutes(
         errorName: error instanceof Error ? error.name : 'Unknown',
         errorMessage: error instanceof Error ? error.message : String(error),
         errorStack: error instanceof Error ? error.stack : undefined,
-        storageType: storage.constructor.name || 'unknown',
+        storageType: 'SupabaseStorage',
         systemInfo: {
           nodeVersion: process.version,
           platform: process.platform,
@@ -1208,6 +1222,7 @@ export async function registerRoutes(
     try {
       const userId = req.user!.id;
       
+      const storage = await getStorage();
       const userFeeds = await storage.getUserFeeds(userId);
       
       res.json({
@@ -1245,6 +1260,7 @@ export async function registerRoutes(
         });
       }
       
+      const storage = await getStorage();
       await storage.subscribeToFeeds(userId, feedIds);
       
       // Mark onboarding as completed after successful feed subscription
@@ -1279,6 +1295,7 @@ export async function registerRoutes(
         });
       }
       
+      const storage = await getStorage();
       await storage.unsubscribeFromFeed(userId, feedId);
       
       res.json({
@@ -1298,6 +1315,8 @@ export async function registerRoutes(
     try {
       const userId = req.user!.id;
       const { feedIds } = req.body;
+      
+      const storage = await getStorage();
       
       // Get user's feeds
       const userFeeds = await storage.getUserFeeds(userId);
@@ -1468,6 +1487,7 @@ export async function registerRoutes(
     try {
       const userId = req.user!.id;
       
+      const storage = await getStorage();
       const syncStatus = await storage.getFeedSyncStatus(userId);
       
       res.json({
@@ -1487,6 +1507,8 @@ export async function registerRoutes(
     try {
       const userId = req.user!.id;
       const limit = parseInt(req.query.limit as string) || 50;
+      
+      const storage = await getStorage();
       
       // Get user's subscribed feeds
       const userFeeds = await storage.getUserFeeds(userId);

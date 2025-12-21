@@ -139,16 +139,28 @@ export async function setupApp(app: express.Application): Promise<void> {
     
     logSuccess("✅ Environment security validation passed");
     
+    // Check if we're in a serverless environment
+    const isServerless = process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.VERCEL;
+    
     // Then perform comprehensive startup validation
     const validationResult = await performStartupValidation();
     
     if (!validationResult.isValid) {
-      logError("❌ Startup validation failed - application cannot start safely");
+      logError("❌ Startup validation failed");
       logValidationReport(validationResult);
-      throw new Error("Startup validation failed");
+      
+      if (isServerless) {
+        // In serverless environments, log the error but don't throw
+        // This allows the function to start and handle requests
+        // Individual requests may fail if the database is truly unavailable
+        log("⚠️  Running in serverless environment - continuing despite validation failures");
+        log("⚠️  Some features may not work correctly until issues are resolved");
+      } else {
+        throw new Error("Startup validation failed");
+      }
+    } else {
+      logSuccess("✅ Production startup validation passed");
     }
-    
-    logSuccess("✅ Production startup validation passed");
     
     if (validationResult.warnings.length > 0) {
       log("⚠️  Startup validation warnings (non-blocking):");

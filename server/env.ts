@@ -14,19 +14,22 @@ interface RequiredEnvVars {
   SUPABASE_URL: string;
   SUPABASE_ANON_KEY: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
-  DATABASE_URL: string;
   SESSION_SECRET: string;
 }
 
 interface OptionalEnvVars {
   PORT: string;
   APP_URL: string;
+  DATABASE_URL: string;  // Optional - only needed for direct PostgreSQL connections
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
   RSS_SYNC_INTERVAL: string;
   RSS_SYNC_BATCH_SIZE: string;
   RSS_SYNC_MAX_ARTICLES: string;
   NETLIFY_FUNCTION: string;
+  NETLIFY: string;
+  AWS_LAMBDA_FUNCTION_NAME: string;
+  VERCEL: string;
 }
 
 // Validation functions
@@ -62,7 +65,6 @@ export function validateEnvironment(): { valid: boolean; errors: string[]; warni
     'SUPABASE_URL',
     'SUPABASE_ANON_KEY',
     'SUPABASE_SERVICE_ROLE_KEY',
-    'DATABASE_URL',
     'SESSION_SECRET'
   ];
 
@@ -80,11 +82,6 @@ export function validateEnvironment(): { valid: boolean; errors: string[]; warni
           errors.push(`Invalid SUPABASE_URL format for production. Expected: https://[project-ref].supabase.co`);
         } else if (process.env.NODE_ENV !== 'production' && !isValidUrl(value)) {
           errors.push(`Invalid SUPABASE_URL format. Expected valid URL`);
-        }
-        break;
-      case 'DATABASE_URL':
-        if (!isValidDatabaseUrl(value)) {
-          errors.push(`Invalid DATABASE_URL format. Expected: postgresql://user:password@host:port/database`);
         }
         break;
       case 'SESSION_SECRET':
@@ -122,6 +119,15 @@ export function validateEnvironment(): { valid: boolean; errors: string[]; warni
         warnings.push(`Invalid APP_URL format. Expected: https://your-domain.com`);
       }
     }
+    
+    // Validate DATABASE_URL if provided (optional but validated if present)
+    const databaseUrl = process.env.DATABASE_URL;
+    if (databaseUrl && !isValidDatabaseUrl(databaseUrl)) {
+      warnings.push(`Invalid DATABASE_URL format. Expected: postgresql://user:password@host:port/database`);
+    }
+    if (!databaseUrl) {
+      console.log('ℹ️  DATABASE_URL not set - SupabaseStorage will use Supabase client API');
+    }
   }
 
   // Validate numeric environment variables
@@ -147,8 +153,16 @@ if (!validation.valid) {
   validation.errors.forEach(error => console.error(`   • ${error}`));
   
   if (process.env.NODE_ENV === 'production') {
-    console.error('🚨 Production deployment cannot continue with invalid environment configuration');
-    process.exit(1);
+    console.error('🚨 Production deployment has invalid environment configuration');
+    // Don't call process.exit(1) in serverless environments - it kills the function
+    // Instead, we'll let the app start and fail gracefully on requests
+    // The startup validation in app-setup.ts will handle this properly
+    if (!process.env.NETLIFY && !process.env.AWS_LAMBDA_FUNCTION_NAME && !process.env.VERCEL) {
+      console.error('🚨 Exiting due to invalid environment configuration');
+      process.exit(1);
+    } else {
+      console.error('⚠️  Running in serverless environment - will fail on requests instead of exiting');
+    }
   }
 }
 
@@ -165,7 +179,7 @@ export const env: RequiredEnvVars & Partial<OptionalEnvVars> = {
   SUPABASE_URL: process.env.SUPABASE_URL!,
   SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY!,
   SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  DATABASE_URL: process.env.DATABASE_URL!,
+  DATABASE_URL: process.env.DATABASE_URL,  // Optional
   APP_URL: process.env.APP_URL,
   GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
   GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
@@ -173,4 +187,7 @@ export const env: RequiredEnvVars & Partial<OptionalEnvVars> = {
   RSS_SYNC_BATCH_SIZE: process.env.RSS_SYNC_BATCH_SIZE || '5',
   RSS_SYNC_MAX_ARTICLES: process.env.RSS_SYNC_MAX_ARTICLES || '100',
   NETLIFY_FUNCTION: process.env.NETLIFY_FUNCTION,
+  NETLIFY: process.env.NETLIFY,
+  AWS_LAMBDA_FUNCTION_NAME: process.env.AWS_LAMBDA_FUNCTION_NAME,
+  VERCEL: process.env.VERCEL,
 };
