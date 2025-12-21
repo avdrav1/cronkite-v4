@@ -1,4 +1,5 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { isSupabaseConfigured, getSupabaseClient } from '@shared/supabase';
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
@@ -7,14 +8,48 @@ async function throwIfResNotOk(res: Response) {
   }
 }
 
+/**
+ * Get the current Supabase access token if available
+ */
+async function getAccessToken(): Promise<string | null> {
+  if (!isSupabaseConfigured()) {
+    return null;
+  }
+  
+  const client = getSupabaseClient();
+  if (!client) {
+    return null;
+  }
+  
+  try {
+    const { data: { session } } = await client.auth.getSession();
+    return session?.access_token || null;
+  } catch (error) {
+    console.warn('Failed to get access token:', error);
+    return null;
+  }
+}
+
 export async function apiRequest(
   method: string,
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
+  const headers: Record<string, string> = {};
+  
+  if (data) {
+    headers["Content-Type"] = "application/json";
+  }
+  
+  // Add Supabase JWT token for serverless auth (production)
+  const token = await getAccessToken();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  
   const res = await fetch(url, {
     method,
-    headers: data ? { "Content-Type": "application/json" } : {},
+    headers,
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
   });
@@ -23,14 +58,52 @@ export async function apiRequest(
   return res;
 }
 
+/**
+ * Make an authenticated fetch request without throwing on errors
+ * Useful for auth checks where 401 is expected
+ */
+export async function apiFetch(
+  method: string,
+  url: string,
+  data?: unknown | undefined,
+): Promise<Response> {
+  const headers: Record<string, string> = {};
+  
+  if (data) {
+    headers["Content-Type"] = "application/json";
+  }
+  
+  // Add Supabase JWT token for serverless auth (production)
+  const token = await getAccessToken();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  
+  return fetch(url, {
+    method,
+    headers,
+    body: data ? JSON.stringify(data) : undefined,
+    credentials: "include",
+  });
+}
+
 type UnauthorizedBehavior = "returnNull" | "throw";
 export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
+    const headers: Record<string, string> = {};
+    
+    // Add Supabase JWT token for serverless auth (production)
+    const token = await getAccessToken();
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+    
     const res = await fetch(queryKey.join("/") as string, {
       credentials: "include",
+      headers,
     });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {

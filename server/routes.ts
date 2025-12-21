@@ -312,34 +312,58 @@ export async function registerRoutes(
       const storage = await getStorage();
       
       // Get or create user profile from Supabase user data
+      // Note: Supabase may have already created the profile via trigger on auth.users insert
       let user = await storage.getUser(supabaseUser.id);
       
       if (!user) {
-        // Create new user from OAuth data
+        // Profile doesn't exist yet - create it
+        // This can happen if the trigger didn't fire or if using a different auth setup
         const displayName = supabaseUser.user_metadata?.full_name || 
                            supabaseUser.user_metadata?.name || 
                            supabaseUser.email?.split('@')[0] || 
                            'User';
         
-        console.log('🔐 OAuth callback: Creating new user profile');
+        console.log('🔐 OAuth callback: Creating new user profile (trigger may not have fired)');
         
-        user = await storage.createUser({
-          id: supabaseUser.id,
-          email: supabaseUser.email!,
-          display_name: displayName,
-          avatar_url: supabaseUser.user_metadata?.avatar_url || 
-                     supabaseUser.user_metadata?.picture || null,
-          timezone: "America/New_York",
-          region_code: null,
-          onboarding_completed: false
-        });
-        
-        console.log('✅ OAuth callback: Created new user:', {
-          id: user.id,
-          email: user.email,
-          display_name: user.display_name,
-          provider: supabaseUser.app_metadata?.provider
-        });
+        try {
+          user = await storage.createUser({
+            id: supabaseUser.id,
+            email: supabaseUser.email!,
+            display_name: displayName,
+            avatar_url: supabaseUser.user_metadata?.avatar_url || 
+                       supabaseUser.user_metadata?.picture || null,
+            timezone: "America/New_York",
+            region_code: null,
+            onboarding_completed: false
+          });
+          
+          console.log('✅ OAuth callback: Created new user:', {
+            id: user.id,
+            email: user.email,
+            display_name: user.display_name,
+            provider: supabaseUser.app_metadata?.provider
+          });
+        } catch (createError) {
+          // If creation fails due to duplicate key, the trigger may have created it
+          // Try to fetch the user again
+          const errorMessage = createError instanceof Error ? createError.message : 'Unknown error';
+          console.log('⚠️  OAuth callback: User creation failed, checking if trigger created it:', errorMessage);
+          
+          if (errorMessage.includes('duplicate') || errorMessage.includes('already exists')) {
+            // Wait a moment for the trigger to complete, then try fetching again
+            await new Promise(resolve => setTimeout(resolve, 500));
+            user = await storage.getUser(supabaseUser.id);
+            
+            if (user) {
+              console.log('✅ OAuth callback: Found user created by trigger:', user.email);
+            } else {
+              // Still can't find the user - re-throw the original error
+              throw createError;
+            }
+          } else {
+            throw createError;
+          }
+        }
       } else {
         console.log('🔐 OAuth callback: Found existing user:', user.id);
         
@@ -360,6 +384,15 @@ export async function registerRoutes(
           user = await storage.updateUser(user.id, updates);
           console.log('✅ OAuth callback: Updated user:', { id: user.id, updates });
         }
+      }
+      
+      // Ensure we have a valid user at this point
+      if (!user) {
+        console.error('❌ OAuth callback: Failed to get or create user profile');
+        return res.status(500).json({
+          error: 'Profile creation failed',
+          message: 'Could not create or retrieve user profile'
+        });
       }
       
       // Log the user in to create a session
@@ -390,10 +423,20 @@ export async function registerRoutes(
       });
       
     } catch (error) {
-      console.error('❌ OAuth callback error:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      
+      console.error('❌ OAuth callback error:', {
+        message: errorMessage,
+        stack: errorStack,
+        name: error instanceof Error ? error.name : 'Unknown'
+      });
+      
+      // Return more detailed error info for debugging (in production, you might want to hide this)
       res.status(500).json({
         error: 'OAuth callback failed',
-        message: 'An error occurred during OAuth callback processing'
+        message: errorMessage,
+        details: process.env.NODE_ENV === 'development' ? errorStack : undefined
       });
     }
   });

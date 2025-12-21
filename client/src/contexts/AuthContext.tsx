@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { type Profile } from '@shared/schema';
 import { isSupabaseConfigured, getSupabaseClient } from '@shared/supabase';
+import { apiRequest, apiFetch } from '@/lib/queryClient';
 
 interface AuthContextType {
   user: Profile | null;
@@ -61,9 +62,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       }
 
       // No Supabase session, check for regular session
-      const response = await fetch('/api/auth/me', {
-        credentials: 'include',
-      });
+      const response = await apiFetch('GET', '/api/auth/me');
 
       if (response.ok) {
         const data = await response.json();
@@ -87,21 +86,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   // Handle OAuth session from Supabase
   const handleOAuthSession = async (session: any) => {
     try {
-      const response = await fetch('/api/auth/oauth/callback', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify({ session }),
-      });
-
+      const response = await apiRequest('POST', '/api/auth/oauth/callback', { session });
       const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'OAuth session handling failed');
-      }
-
       setUser(data.user);
     } catch (error) {
       console.error('OAuth session handling error:', error);
@@ -115,29 +101,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     console.log('🔐 AuthContext: Starting login attempt for:', email);
     
     try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify({ email, password }),
-      });
-
-      console.log('🔐 AuthContext: Login response status:', response.status);
-      
+      const response = await apiRequest('POST', '/api/auth/login', { email, password });
       const data = await response.json();
-      console.log('🔐 AuthContext: Login response data:', { 
-        hasUser: !!data.user, 
-        hasError: !!data.error,
-        error: data.error,
-        message: data.message 
-      });
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Login failed');
-      }
-
+      
       console.log('✅ AuthContext: Login successful, setting user:', data.user?.email);
       setUser(data.user);
     } catch (error) {
@@ -152,24 +118,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const loginWithGoogle = async (accessToken: string, refreshToken?: string) => {
     setIsLoading(true);
     try {
-      const response = await fetch('/api/auth/google', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify({ 
-          access_token: accessToken,
-          refresh_token: refreshToken 
-        }),
+      const response = await apiRequest('POST', '/api/auth/google', { 
+        access_token: accessToken,
+        refresh_token: refreshToken 
       });
-
       const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Google login failed');
-      }
-
       setUser(data.user);
     } catch (error) {
       console.error('Google login error:', error);
@@ -183,25 +136,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const register = async (email: string, password: string, displayName: string) => {
     setIsLoading(true);
     try {
-      const response = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify({ 
-          email, 
-          password, 
-          display_name: displayName 
-        }),
+      const response = await apiRequest('POST', '/api/auth/register', { 
+        email, 
+        password, 
+        display_name: displayName 
       });
-
       const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Registration failed');
-      }
-
       setUser(data.user);
     } catch (error) {
       console.error('Registration error:', error);
@@ -223,21 +163,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         }
       }
 
-      // Also logout from our backend
-      const response = await fetch('/api/auth/logout', {
-        method: 'POST',
-        credentials: 'include',
-      });
-
-      // Even if the server request fails, clear local state
-      setUser(null);
-      
-      if (!response.ok) {
+      // Also logout from our backend (ignore errors)
+      try {
+        await apiRequest('POST', '/api/auth/logout');
+      } catch {
         console.warn('Server logout failed, but local session cleared');
       }
+
+      setUser(null);
     } catch (error) {
       console.error('Logout error:', error);
-      // Still clear local state even if server request fails
       setUser(null);
     } finally {
       setIsLoading(false);
@@ -251,21 +186,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
 
     try {
-      const response = await fetch('/api/users/profile', {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify(updates),
-      });
-
+      const response = await apiRequest('PUT', '/api/users/profile', updates);
       const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Profile update failed');
-      }
-
       setUser(data.user);
     } catch (error) {
       console.error('Profile update error:', error);

@@ -81,11 +81,68 @@ passport.deserializeUser(async (id: string, done) => {
 });
 
 // Middleware to check if user is authenticated
-export const requireAuth = (req: Request, res: Response, next: NextFunction) => {
-  if (req.isAuthenticated()) {
+// Supports both Express sessions (development) and Supabase JWT tokens (serverless/production)
+export const requireAuth = async (req: Request, res: Response, next: NextFunction) => {
+  // First check Express session (works in development and when sessions persist)
+  if (req.isAuthenticated() && req.user) {
     return next();
   }
   
+  // In serverless environments, sessions don't persist between invocations
+  // Check for Supabase JWT token in Authorization header
+  const authHeader = req.headers.authorization;
+  
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      const token = authHeader.substring(7);
+      const supabase = createSupabaseClient();
+      
+      const { data: { user: supabaseUser }, error } = await supabase.auth.getUser(token);
+      
+      if (error || !supabaseUser) {
+        console.log('🔐 requireAuth: Invalid Supabase token:', error?.message);
+        return res.status(401).json({ 
+          error: 'Authentication required',
+          message: 'Invalid or expired token'
+        });
+      }
+      
+      // Token is valid - get or create user profile
+      const storage = await getStorage();
+      let profile = await storage.getUser(supabaseUser.id);
+      
+      if (!profile) {
+        // Create profile for OAuth user (shouldn't normally happen, but handle it)
+        console.log('🔐 requireAuth: Creating profile for token user:', supabaseUser.email);
+        profile = await storage.createUser({
+          id: supabaseUser.id,
+          email: supabaseUser.email!,
+          display_name: supabaseUser.user_metadata?.full_name || 
+                       supabaseUser.user_metadata?.name || 
+                       supabaseUser.email!.split('@')[0],
+          avatar_url: supabaseUser.user_metadata?.avatar_url || 
+                     supabaseUser.user_metadata?.picture || null,
+          timezone: "America/New_York",
+          region_code: null,
+          onboarding_completed: false
+        });
+      }
+      
+      // Set user in request for downstream handlers
+      req.user = profile;
+      console.log('🔐 requireAuth: Authenticated via Supabase token:', profile.email);
+      return next();
+      
+    } catch (error) {
+      console.error('🔐 requireAuth: Token validation error:', error);
+      return res.status(401).json({ 
+        error: 'Authentication required',
+        message: 'Token validation failed'
+      });
+    }
+  }
+  
+  // No valid session or token
   res.status(401).json({ 
     error: 'Authentication required',
     message: 'You must be logged in to access this resource'

@@ -33,10 +33,26 @@ export class SupabaseStorage implements IStorage {
     const supabaseUrl = process.env.SUPABASE_URL;
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     
+    // Debug logging (safe - only logs lengths, not actual keys)
+    console.log('🔍 SupabaseStorage: Environment check:');
+    console.log(`   SUPABASE_URL: ${supabaseUrl ? `set (${supabaseUrl.substring(0, 30)}...)` : 'NOT SET'}`);
+    console.log(`   SUPABASE_SERVICE_ROLE_KEY: ${supabaseServiceKey ? `set (length: ${supabaseServiceKey.length})` : 'NOT SET'}`);
+    
     if (!supabaseUrl || !supabaseServiceKey) {
       const errorMsg = 'Missing Supabase configuration. Please check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables.';
       console.error('❌ SupabaseStorage initialization failed:', errorMsg);
       throw new Error(errorMsg);
+    }
+    
+    // Validate service role key format (should be a JWT starting with 'eyJ')
+    if (!supabaseServiceKey.startsWith('eyJ')) {
+      console.warn('⚠️  SupabaseStorage: SUPABASE_SERVICE_ROLE_KEY does not appear to be a valid JWT token');
+      console.warn('⚠️  SupabaseStorage: Service role keys should start with "eyJ"');
+    }
+    
+    // Service role keys are typically longer than anon keys
+    if (supabaseServiceKey.length < 200) {
+      console.warn('⚠️  SupabaseStorage: SUPABASE_SERVICE_ROLE_KEY seems short - make sure you are using the service_role key, not the anon key');
     }
     
     console.log('🔗 Creating Supabase client connection...');
@@ -302,6 +318,8 @@ export class SupabaseStorage implements IStorage {
 
   // User Management
   async getUser(id: string): Promise<Profile | undefined> {
+    console.log('🔐 SupabaseStorage.getUser: Looking up user:', id);
+    
     return this.executeWithFallback(
       async () => {
         const { data, error } = await this.supabase
@@ -310,10 +328,26 @@ export class SupabaseStorage implements IStorage {
           .eq('id', id)
           .single();
         
-        if (error || !data) {
+        if (error) {
+          // PGRST116 means no rows found, which is expected for new users
+          if (error.code === 'PGRST116') {
+            console.log('🔐 SupabaseStorage.getUser: User not found (expected for new OAuth users)');
+            return undefined;
+          }
+          console.error('❌ SupabaseStorage.getUser: Error fetching user:', {
+            message: error.message,
+            code: error.code,
+            details: error.details
+          });
           return undefined;
         }
         
+        if (!data) {
+          console.log('🔐 SupabaseStorage.getUser: No user data returned');
+          return undefined;
+        }
+        
+        console.log('✅ SupabaseStorage.getUser: Found user:', data.email);
         return data as Profile;
       },
       async () => {
@@ -352,17 +386,57 @@ export class SupabaseStorage implements IStorage {
   }
 
   async createUser(user: InsertProfile): Promise<Profile> {
-    const { data, error } = await this.supabase
-      .from('profiles')
-      .insert(user)
-      .select()
-      .single();
+    console.log('🔐 SupabaseStorage.createUser: Starting user creation...');
+    console.log('🔐 SupabaseStorage.createUser: User data:', {
+      id: user.id,
+      email: user.email,
+      display_name: user.display_name,
+      hasAvatarUrl: !!user.avatar_url
+    });
     
-    if (error || !data) {
-      throw new Error(`Failed to create user: ${error?.message}`);
+    try {
+      const { data, error } = await this.supabase
+        .from('profiles')
+        .insert(user)
+        .select()
+        .single();
+      
+      if (error) {
+        console.error('❌ SupabaseStorage.createUser: Supabase error:', {
+          message: error.message,
+          code: error.code,
+          details: error.details,
+          hint: error.hint
+        });
+        throw new Error(`Failed to create user: ${error.message} (code: ${error.code})`);
+      }
+      
+      if (!data) {
+        console.error('❌ SupabaseStorage.createUser: No data returned from insert');
+        throw new Error('Failed to create user: No data returned');
+      }
+      
+      console.log('✅ SupabaseStorage.createUser: User created successfully:', {
+        id: data.id,
+        email: data.email
+      });
+      
+      return data as Profile;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('❌ SupabaseStorage.createUser: Exception during user creation:', errorMessage);
+      
+      // Check for common Supabase errors
+      if (errorMessage.includes('duplicate key')) {
+        console.error('❌ SupabaseStorage.createUser: User already exists with this ID or email');
+      } else if (errorMessage.includes('violates row-level security')) {
+        console.error('❌ SupabaseStorage.createUser: RLS policy blocking insert - check profiles table policies');
+      } else if (errorMessage.includes('relation') && errorMessage.includes('does not exist')) {
+        console.error('❌ SupabaseStorage.createUser: profiles table does not exist - run migrations');
+      }
+      
+      throw error;
     }
-    
-    return data as Profile;
   }
 
   async updateUser(id: string, updates: Partial<Profile>): Promise<Profile> {
