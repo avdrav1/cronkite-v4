@@ -6,6 +6,7 @@ import { requireAuth, requireNoAuth, createSupabaseClient } from "./auth-middlew
 import { syncFeeds, syncFeed } from "./rss-sync";
 import { FeedFilteringValidator, type FilterOptions, validateFilterOptions, filterFeedsByInterestsWithMapping } from "./feed-filtering-validation";
 import { categoryMappingService } from "@shared/category-mapping";
+import { generateArticleSummary, isAISummaryAvailable } from "./ai-summary";
 import { 
   insertProfileSchema, 
   selectProfileSchema,
@@ -1301,6 +1302,65 @@ export async function registerRoutes(
         message: 'An error occurred while retrieving articles'
       });
     }
+  });
+
+  // POST /api/articles/:id/summary - Generate AI summary for an article
+  app.post('/api/articles/:id/summary', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const articleId = req.params.id;
+      const { title, content, excerpt } = req.body;
+
+      if (!title) {
+        return res.status(400).json({
+          error: 'Missing required field',
+          message: 'Article title is required'
+        });
+      }
+
+      // Check if AI is available
+      if (!isAISummaryAvailable()) {
+        return res.status(503).json({
+          error: 'AI service unavailable',
+          message: 'OpenAI API key not configured',
+          fallback: true
+        });
+      }
+
+      const summary = await generateArticleSummary(title, content || '', excerpt);
+
+      if (!summary) {
+        return res.status(500).json({
+          error: 'Summary generation failed',
+          message: 'Could not generate summary for this article',
+          fallback: true
+        });
+      }
+
+      res.json({
+        articleId,
+        summary: summary.points,
+        generatedAt: summary.generatedAt,
+        model: summary.model
+      });
+    } catch (error) {
+      console.error('AI summary error:', error);
+      res.status(500).json({
+        error: 'Summary generation failed',
+        message: 'An error occurred while generating the summary',
+        fallback: true
+      });
+    }
+  });
+
+  // GET /api/ai/status - Check AI service availability
+  app.get('/api/ai/status', requireAuth, async (req: Request, res: Response) => {
+    res.json({
+      available: isAISummaryAvailable(),
+      features: {
+        articleSummary: isAISummaryAvailable(),
+        topicClustering: false // Future feature
+      }
+    });
   });
 
   return httpServer;

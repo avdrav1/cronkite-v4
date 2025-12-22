@@ -152,7 +152,7 @@ export function AppShell({ children }: AppShellProps) {
             <NavItem icon={Clock} label="Unread" />
             <NavItem icon={Star} label="Starred" />
             <Link href="/onboarding" className="w-full">
-              <NavItem icon={Sparkles} label="Onboarding (Dev)" />
+              <NavItem icon={Sparkles} label="Discover" />
             </Link>
             <Link href="/settings" className="w-full">
               <NavItem icon={Settings} label="Settings" />

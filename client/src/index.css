@@ -177,19 +177,47 @@
 /* Masonry Utilities */
 .masonry-grid {
   column-count: 1;
-  column-gap: 1.5rem;
+  column-gap: 1.25rem;
 }
 @media (min-width: 640px) {
-  .masonry-grid { column-count: 2; }
+  .masonry-grid { 
+    column-count: 2; 
+    column-gap: 1.25rem;
+  }
 }
 @media (min-width: 1024px) {
-  .masonry-grid { column-count: 3; }
+  .masonry-grid { 
+    column-count: 3; 
+    column-gap: 1.5rem;
+  }
 }
 @media (min-width: 1280px) {
-  .masonry-grid { column-count: 4; }
+  .masonry-grid { 
+    column-count: 3; 
+    column-gap: 1.5rem;
+  }
+}
+@media (min-width: 1536px) {
+  .masonry-grid { 
+    column-count: 4; 
+    column-gap: 1.5rem;
+  }
 }
 
-.masonry-item {
+.masonry-grid > * {
   break-inside: avoid;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.25rem;
+  display: inline-block;
+  width: 100%;
+}
+
+/* Staggered card heights for visual interest */
+.masonry-grid > *:nth-child(3n+1) {
+  /* First in pattern - standard */
+}
+.masonry-grid > *:nth-child(3n+2) {
+  /* Second in pattern - slightly different */
+}
+.masonry-grid > *:nth-child(3n) {
+  /* Third in pattern */
 }

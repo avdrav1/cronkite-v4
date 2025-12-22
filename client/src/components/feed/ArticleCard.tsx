@@ -1,7 +1,7 @@
 import { type Article } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
-import { Star, Circle, X, Check } from "lucide-react";
+import { Star, Circle, X, Check, Clock, User } from "lucide-react";
 import { motion } from "framer-motion";
 
 // Extended article interface for UI compatibility
@@ -22,6 +22,15 @@ interface ArticleCardProps {
   onStar?: (id: string) => void;
 }
 
+// Calculate estimated read time from content
+function calculateReadTime(content?: string | null): string {
+  if (!content) return '1 min';
+  const wordsPerMinute = 200;
+  const words = content.split(/\s+/).length;
+  const minutes = Math.max(1, Math.ceil(words / wordsPerMinute));
+  return `${minutes} min`;
+}
+
 export function ArticleCard({ article, onClick, onRemove, onStar }: ArticleCardProps) {
   const { 
     relevancyScore = 50, 
@@ -29,7 +38,8 @@ export function ArticleCard({ article, onClick, onRemove, onStar }: ArticleCardP
     isRead = false,
     source = 'Unknown Source',
     date = article.published_at || article.created_at.toISOString(),
-    isStarred = false
+    isStarred = false,
+    readTime = calculateReadTime(article.content)
   } = article;
 
   const handleAction = (e: React.MouseEvent, action: () => void) => {
@@ -48,6 +58,14 @@ export function ArticleCard({ article, onClick, onRemove, onStar }: ArticleCardP
     relevancyScore >= 50 ? "text-green-500" : 
     "text-yellow-500";
 
+  // Get excerpt with appropriate length based on variant
+  const getExcerpt = () => {
+    const text = article.excerpt || article.content?.substring(0, 400) || '';
+    if (variant === "large") return text.substring(0, 280);
+    if (variant === "medium") return text.substring(0, 180);
+    return text.substring(0, 120);
+  };
+
   return (
     <motion.div
       layout
@@ -57,8 +75,9 @@ export function ArticleCard({ article, onClick, onRemove, onStar }: ArticleCardP
       whileHover={{ y: -4, scale: 1.01 }}
       transition={{ duration: 0.2, ease: "easeOut" }}
       className={cn(
-        "group relative bg-card text-card-foreground rounded-xl border overflow-hidden cursor-pointer shadow-sm hover:shadow-xl transition-shadow duration-300 mb-6 break-inside-avoid flex flex-col",
-        isRead ? "opacity-70 border-transparent bg-muted/20" : "border-border/50"
+        "group relative bg-card text-card-foreground rounded-xl border overflow-hidden cursor-pointer shadow-sm hover:shadow-xl transition-shadow duration-300 break-inside-avoid flex flex-col",
+        isRead ? "opacity-70 border-transparent bg-muted/20" : "border-border/50",
+        variant === "large" && "row-span-2"
       )}
       onClick={() => onClick(article)}
     >
@@ -71,7 +90,7 @@ export function ArticleCard({ article, onClick, onRemove, onStar }: ArticleCardP
 
       {/* Large Card Image */}
       {variant === "large" && imageUrl && (
-        <div className="aspect-video w-full overflow-hidden relative">
+        <div className="aspect-[16/10] w-full overflow-hidden relative">
           <img
             src={imageUrl}
             alt={article.title}
@@ -81,61 +100,67 @@ export function ArticleCard({ article, onClick, onRemove, onStar }: ArticleCardP
         </div>
       )}
 
-      <div className={cn("p-5 flex flex-col gap-3", variant === "large" ? "p-6" : "")}>
-        {/* Medium Card Image (Thumbnail style) */}
+      <div className={cn(
+        "p-4 flex flex-col gap-3 flex-1",
+        variant === "large" && "p-5"
+      )}>
+        {/* Source Badge - Top of card */}
+        <div className="flex items-center gap-2">
+          <span className={cn("h-2 w-2 rounded-full", scoreColor, "bg-current")} />
+          <span className="text-xs font-semibold text-primary uppercase tracking-wide">{source}</span>
+        </div>
+
+        {/* Medium Card with Thumbnail */}
         {variant === "medium" && imageUrl && (
-          <div className="flex gap-4 mb-2">
-            <div className="h-20 w-20 shrink-0 rounded-lg overflow-hidden bg-muted">
-              <img src={imageUrl} alt="" className="h-full w-full object-cover" />
-            </div>
+          <div className="flex gap-4">
             <div className="flex-1">
-               <h3 className="font-display font-bold text-lg leading-tight group-hover:text-primary transition-colors line-clamp-3">
+              <h3 className="font-display font-bold text-lg leading-tight group-hover:text-primary transition-colors line-clamp-3">
                 {article.title}
               </h3>
+            </div>
+            <div className="h-24 w-24 shrink-0 rounded-lg overflow-hidden bg-muted">
+              <img src={imageUrl} alt="" className="h-full w-full object-cover" />
             </div>
           </div>
         )}
 
-        {/* Title for Large and Small variants (Medium handled above) */}
+        {/* Title for Large and Small variants */}
         {variant !== "medium" && (
           <h3
             className={cn(
               "font-display font-bold leading-tight group-hover:text-primary transition-colors",
-              variant === "large" ? "text-2xl" : "text-lg"
+              variant === "large" ? "text-xl line-clamp-3" : "text-base line-clamp-2"
             )}
           >
             {article.title}
           </h3>
         )}
 
-        {/* Excerpt */}
-        {variant !== "small" && (
-          <p className={cn(
-            "text-muted-foreground font-serif leading-relaxed",
-            variant === "medium" && "hidden" // Hidden in medium layout structure above effectively, but let's just not show excerpt below image for medium to match spec roughly
-          )}>
-            {variant === "large" ? article.excerpt : null} 
-          </p>
-        )}
-        
-        {variant === "medium" && !imageUrl && (
-           <p className="text-muted-foreground font-serif text-sm line-clamp-3">
-             {article.excerpt}
-           </p>
-        )}
-        
-        {variant === "medium" && imageUrl && (
-             <p className="text-muted-foreground font-serif text-sm line-clamp-2 mt-[-0.5rem]">
-              {article.excerpt}
-            </p>
-        )}
+        {/* Excerpt - Show for all variants */}
+        <p className={cn(
+          "text-muted-foreground font-serif leading-relaxed",
+          variant === "large" ? "text-sm line-clamp-4" : "text-sm line-clamp-3"
+        )}>
+          {getExcerpt()}
+        </p>
+
+        {/* Author & Read Time Row */}
+        <div className="flex items-center gap-3 text-xs text-muted-foreground mt-auto">
+          {article.author && (
+            <div className="flex items-center gap-1.5">
+              <User className="h-3 w-3" />
+              <span className="font-medium truncate max-w-[120px]">{article.author}</span>
+            </div>
+          )}
+          <div className="flex items-center gap-1.5">
+            <Clock className="h-3 w-3" />
+            <span>{readTime}</span>
+          </div>
+        </div>
 
         {/* Metadata Footer */}
-        <div className="flex items-center justify-between mt-auto pt-2">
+        <div className="flex items-center justify-between pt-2 border-t border-border/30">
           <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground">
-            <Circle className={cn("h-2.5 w-2.5 fill-current", scoreColor)} />
-            <span className="font-semibold text-foreground">{source}</span>
-            <span>•</span>
             <span>{formatDistanceToNow(new Date(date), { addSuffix: true })}</span>
           </div>
           

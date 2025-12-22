@@ -56,17 +56,29 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [feedsCount, setFeedsCount] = useState(0);
   
+  // Track URL search params for filtering
+  const [searchParams, setSearchParams] = useState(() => new URLSearchParams(window.location.search));
+  
   // Use wouter's useLocation for reactivity when URL changes
   const [location] = useLocation();
   
-  // Get source and category filters from URL - re-parse when location changes
-  const { sourceFilter, categoryFilter } = useMemo(() => {
-    const searchParams = new URLSearchParams(window.location.search);
-    return {
-      sourceFilter: searchParams.get("source"),
-      categoryFilter: searchParams.get("category"),
-    };
+  // Update search params when location changes
+  useEffect(() => {
+    setSearchParams(new URLSearchParams(window.location.search));
   }, [location]);
+  
+  // Also listen for popstate events (browser back/forward)
+  useEffect(() => {
+    const handlePopState = () => {
+      setSearchParams(new URLSearchParams(window.location.search));
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+  
+  // Get source and category filters from URL params
+  const sourceFilter = searchParams.get("source");
+  const categoryFilter = searchParams.get("category");
 
   // Fetch articles from API
   const fetchArticles = async () => {
@@ -164,10 +176,11 @@ export default function Home() {
   const baseFilteredFeed = mixedFeed.filter((item) => {
     const article = item.data as ArticleWithFeed;
     
-    // 1. Source Filter (specific feed name)
+    // 1. Source Filter (specific feed name) - EXACT match
     if (sourceFilter) {
-      const matchesSource = article.source?.toLowerCase().includes(sourceFilter.toLowerCase()) || 
-             sourceFilter.toLowerCase().includes(article.source?.toLowerCase() || '');
+      // Match against the article's source (feed name)
+      const articleSource = article.source || article.feed_name || '';
+      const matchesSource = articleSource.toLowerCase() === sourceFilter.toLowerCase();
       if (!matchesSource) return false;
     }
 

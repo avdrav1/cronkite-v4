@@ -19,14 +19,71 @@ interface GroupedFeeds {
 }
 
 /**
- * Groups feeds by category (folder_name or 'Uncategorized')
+ * Infers a category from feed URL or name when folder is not set
+ */
+function inferCategoryFromFeed(feed: Feed): string {
+  const url = feed.url?.toLowerCase() || '';
+  const name = feed.name?.toLowerCase() || '';
+  
+  // Technology
+  if (url.includes('techcrunch') || url.includes('wired') || url.includes('arstechnica') || 
+      url.includes('theverge') || url.includes('engadget') || url.includes('zdnet') ||
+      name.includes('tech') || name.includes('gadget') || name.includes('software')) {
+    return 'Technology';
+  }
+  
+  // Business & Finance
+  if (url.includes('bloomberg') || url.includes('wsj') || url.includes('forbes') || 
+      url.includes('reuters') || url.includes('cnbc') || url.includes('economist') ||
+      name.includes('business') || name.includes('finance') || name.includes('market')) {
+    return 'Business';
+  }
+  
+  // Science
+  if (url.includes('nature') || url.includes('science') || url.includes('newscientist') ||
+      url.includes('phys.org') || url.includes('sciencedaily') ||
+      name.includes('science') || name.includes('research')) {
+    return 'Science';
+  }
+  
+  // World News
+  if (url.includes('bbc') || url.includes('cnn') || url.includes('nytimes') || 
+      url.includes('guardian') || url.includes('washingtonpost') || url.includes('apnews') ||
+      name.includes('news') || name.includes('world') || name.includes('global')) {
+    return 'World News';
+  }
+  
+  // Sports
+  if (url.includes('espn') || url.includes('sports') || url.includes('athletic') ||
+      name.includes('sport') || name.includes('football') || name.includes('basketball')) {
+    return 'Sports';
+  }
+  
+  // Entertainment
+  if (url.includes('variety') || url.includes('hollywood') || url.includes('entertainment') ||
+      name.includes('movie') || name.includes('entertainment') || name.includes('celebrity')) {
+    return 'Entertainment';
+  }
+  
+  // Health
+  if (url.includes('health') || url.includes('medical') || url.includes('webmd') ||
+      name.includes('health') || name.includes('medical') || name.includes('wellness')) {
+    return 'Health';
+  }
+  
+  // Default to "General" instead of "Uncategorized"
+  return 'General';
+}
+
+/**
+ * Groups feeds by category (inferred from URL/name patterns)
  * Property 1: Feed Grouping Preserves All Feeds
  * Validates: Requirements 3.2
  */
 export function groupFeedsByCategory(feeds: Feed[]): GroupedFeeds {
   return feeds.reduce((acc, feed) => {
-    // Use folder_name if available, otherwise 'Uncategorized'
-    const category = feed.folder_name || 'Uncategorized';
+    // Infer category from feed URL/name patterns
+    const category = inferCategoryFromFeed(feed);
     if (!acc[category]) {
       acc[category] = [];
     }
@@ -46,12 +103,12 @@ export function FeedsList({ onFeedSelect, onCategorySelect }: FeedsListProps) {
       const stored = sessionStorage.getItem(EXPANDED_CATEGORIES_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
-        return new Set(Array.isArray(parsed) ? parsed : ['Uncategorized']);
+        return new Set(Array.isArray(parsed) ? parsed : ['General']);
       }
     } catch {
       // Ignore parsing errors, use default
     }
-    return new Set(['Uncategorized']);
+    return new Set(['General']);
   });
 
   // Persist expanded categories to sessionStorage when they change
