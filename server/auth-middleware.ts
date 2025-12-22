@@ -73,12 +73,161 @@ passport.deserializeUser(async (id: string, done) => {
   try {
     const storage = await getStorage();
     const user = await storage.getUser(id);
-    done(null, user || false);
+    
+    if (!user) {
+      // User no longer exists in database - invalidate session
+      // This handles cases where user was deleted or session references stale data
+      console.log('🔐 deserializeUser: User not found, invalidating session:', id);
+      return done(null, false); // Return false to signal invalid session
+    }
+    
+    done(null, user);
   } catch (error) {
-    console.error('Passport deserialize error:', error);
-    done(error);
+    // Handle database errors gracefully - return false to invalidate session
+    // rather than crashing the application with done(error)
+    console.error('🔐 deserializeUser: Error fetching user:', error);
+    // On error, return false to invalidate session rather than crashing
+    // Requirements: 4.2, 4.3
+    done(null, false);
   }
 });
+
+// ============================================================================
+// Session Validation Utilities
+// ============================================================================
+
+/**
+ * Validates that a session has valid user data.
+ * Returns true only if the session is authenticated AND has valid user data.
+ * 
+ * @param req - Express request object
+ * @returns boolean indicating session validity
+ * 
+ * Requirements: 2.1, 2.2
+ */
+export function isValidSession(req: Request): boolean {
+  // Session must be authenticated
+  if (!req.isAuthenticated()) {
+    return false;
+  }
+  
+  // Check if user data exists
+  if (!req.user) {
+    return false;
+  }
+  
+  // Check if user has required fields (id and email)
+  if (!req.user.id || !req.user.email) {
+    return false;
+  }
+  
+  return true;
+}
+
+/**
+ * Result of session validation with detailed reason
+ */
+export interface SessionValidationResult {
+  isValid: boolean;
+  reason: 'not_authenticated' | 'missing_user' | 'invalid_user_data' | 'valid';
+}
+
+/**
+ * Validates session state and returns detailed result.
+ * Provides more information than isValidSession for debugging and logging.
+ * 
+ * @param req - Express request object
+ * @returns SessionValidationResult with isValid boolean and reason string
+ * 
+ * Requirements: 2.1, 2.2, 4.1
+ */
+export function validateSession(req: Request): SessionValidationResult {
+  // Check if authenticated
+  if (!req.isAuthenticated()) {
+    return { isValid: false, reason: 'not_authenticated' };
+  }
+  
+  // Check if user data exists
+  if (!req.user) {
+    return { isValid: false, reason: 'missing_user' };
+  }
+  
+  // Check if user has required fields (id and email)
+  if (!req.user.id || !req.user.email) {
+    return { isValid: false, reason: 'invalid_user_data' };
+  }
+  
+  return { isValid: true, reason: 'valid' };
+}
+
+/**
+ * Clears an invalid session and its cookie.
+ * Handles errors gracefully with logging - never throws.
+ * Includes timeout to prevent hanging.
+ * 
+ * @param req - Express request object
+ * @param res - Express response object
+ * @returns Promise that resolves when session is cleared
+ * 
+ * Requirements: 1.2, 1.3, 3.1
+ */
+export async function clearInvalidSession(req: Request, res: Response): Promise<void> {
+  return new Promise((resolve) => {
+    // Set a timeout to prevent hanging - resolve after 3 seconds regardless
+    const timeout = setTimeout(() => {
+      console.warn('⚠️ Session clearing timed out, proceeding anyway');
+      clearSessionCookie(res);
+      resolve();
+    }, 3000);
+    
+    // Log the session invalidation for debugging
+    console.log('🔐 Clearing invalid session:', {
+      sessionID: req.sessionID,
+      hasUser: !!req.user,
+      isAuthenticated: req.isAuthenticated()
+    });
+    
+    // Call req.logout() to clear Passport session
+    req.logout((logoutErr) => {
+      if (logoutErr) {
+        console.warn('⚠️ Error during logout:', logoutErr);
+      }
+      
+      // Call req.session.destroy() to destroy Express session
+      if (req.session) {
+        req.session.destroy((destroyErr) => {
+          clearTimeout(timeout);
+          if (destroyErr) {
+            console.warn('⚠️ Error destroying session:', destroyErr);
+          }
+          
+          // Clear session cookie
+          clearSessionCookie(res);
+          console.log('🔐 Session cleared successfully');
+          resolve();
+        });
+      } else {
+        clearTimeout(timeout);
+        // No session to destroy, just clear cookie
+        clearSessionCookie(res);
+        console.log('🔐 Session cleared (no session to destroy)');
+        resolve();
+      }
+    });
+  });
+}
+
+/**
+ * Helper to clear the session cookie with proper settings
+ */
+function clearSessionCookie(res: Response): void {
+  res.clearCookie('cronkite.sid', {
+    path: '/',
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax'
+  });
+}
 
 // Middleware to check if user is authenticated
 // Supports both Express sessions (development) and Supabase JWT tokens (serverless/production)
@@ -150,11 +299,24 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
 };
 
 // Middleware to check if user is not authenticated (for login/register routes)
-export const requireNoAuth = (req: Request, res: Response, next: NextFunction) => {
+// Enhanced to validate session integrity and handle stale/invalid sessions gracefully
+// Requirements: 1.1, 3.1, 3.2
+export const requireNoAuth = async (req: Request, res: Response, next: NextFunction) => {
+  // If not authenticated at all, proceed immediately
   if (!req.isAuthenticated()) {
     return next();
   }
   
+  // Check if the session has valid user data
+  if (!isValidSession(req)) {
+    // Session is authenticated but invalid (stale/corrupted) - clear it and proceed
+    // This allows users to log in even when they have stale cookies
+    console.log('🔐 requireNoAuth: Detected invalid session, clearing...');
+    await clearInvalidSession(req, res);
+    return next();
+  }
+  
+  // Valid authenticated session - block the request (user is already logged in)
   res.status(400).json({ 
     error: 'Already authenticated',
     message: 'You are already logged in'

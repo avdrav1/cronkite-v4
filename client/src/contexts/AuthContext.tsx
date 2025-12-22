@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { type Profile } from '@shared/schema';
 import { isSupabaseConfigured, getSupabaseClient } from '@shared/supabase';
-import { apiRequest, apiFetch } from '@/lib/queryClient';
+import { apiRequest } from '@/lib/queryClient';
 
 interface AuthContextType {
   user: Profile | null;
@@ -38,13 +38,40 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   // Check authentication status on mount
   const checkAuth = async () => {
+    console.log('🔐 AuthContext: Starting auth check...');
+    
     try {
       // First, try to check if we have an existing backend session
       // This is faster than going through Supabase OAuth flow
-      const response = await apiFetch('GET', '/api/auth/me');
+      // Add timeout to prevent hanging on stale sessions
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      
+      let response: Response;
+      try {
+        response = await fetch('/api/auth/me', {
+          method: 'GET',
+          credentials: 'include',
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+      } catch (fetchError) {
+        clearTimeout(timeoutId);
+        if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+          console.warn('⚠️ AuthContext: /api/auth/me request timed out');
+        } else {
+          console.error('❌ AuthContext: /api/auth/me fetch error:', fetchError);
+        }
+        // On timeout or network error, assume not authenticated
+        setUser(null);
+        return;
+      }
+      
+      console.log('🔐 AuthContext: /api/auth/me response status:', response.status);
 
       if (response.ok) {
         const data = await response.json();
+        console.log('✅ AuthContext: Authenticated via backend session:', data.user?.email);
         setUser(data.user);
         return; // Already authenticated via backend session
       }
@@ -52,10 +79,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       // No backend session - check if there's a Supabase session (for OAuth)
       // This handles the case where user logged in via OAuth but backend session expired
       if (response.status === 401 && isSupabaseConfigured()) {
+        console.log('🔐 AuthContext: Checking Supabase session...');
         try {
           const client = getSupabaseClient();
           if (client) {
-            const { data: { session }, error } = await client.auth.getSession();
+            // Add timeout to prevent hanging
+            const sessionPromise = client.auth.getSession();
+            const timeoutPromise = new Promise<{ data: { session: null }, error: Error }>((_, reject) => 
+              setTimeout(() => reject(new Error('Supabase session check timeout')), 3000)
+            );
+            
+            const { data: { session }, error } = await Promise.race([sessionPromise, timeoutPromise]);
             
             if (session && !error) {
               // We have a Supabase session but no backend session
@@ -64,19 +98,22 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               await handleOAuthSession(session);
               return;
             }
+            console.log('🔐 AuthContext: No Supabase session found');
           }
         } catch (supabaseError) {
-          // Supabase not configured or unavailable
+          // Supabase not configured, unavailable, or timed out
           console.log('Supabase session check skipped:', supabaseError instanceof Error ? supabaseError.message : 'Unknown error');
         }
       }
       
       // No valid session found
+      console.log('🔐 AuthContext: No valid session, setting user to null');
       setUser(null);
     } catch (error) {
       console.error('Auth check failed:', error);
       setUser(null);
     } finally {
+      console.log('🔐 AuthContext: Auth check complete, setting isLoading to false');
       setIsLoading(false);
     }
   };
@@ -99,15 +136,47 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     console.log('🔐 AuthContext: Starting login attempt for:', email);
     
     try {
-      const response = await apiRequest('POST', '/api/auth/login', { email, password });
-      const data = await response.json();
+      console.log('🔐 AuthContext: Sending login request...');
       
+      // Use direct fetch to avoid Supabase token check delay
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      
+      let response: Response;
+      try {
+        response = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ email, password }),
+          credentials: 'include',
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+      } catch (fetchError) {
+        clearTimeout(timeoutId);
+        if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+          throw new Error('Login request timed out. Please try again.');
+        }
+        throw fetchError;
+      }
+      
+      console.log('🔐 AuthContext: Login response status:', response.status);
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ message: 'Login failed' }));
+        throw new Error(errorData.message || errorData.error || 'Login failed');
+      }
+      
+      const data = await response.json();
       console.log('✅ AuthContext: Login successful, setting user:', data.user?.email);
       setUser(data.user);
     } catch (error) {
       console.error('❌ AuthContext: Login error:', error);
       throw error;
     } finally {
+      console.log('🔐 AuthContext: Login attempt complete, setting isLoading to false');
       setIsLoading(false);
     }
   };
@@ -134,11 +203,35 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const register = async (email: string, password: string, displayName: string) => {
     setIsLoading(true);
     try {
-      const response = await apiRequest('POST', '/api/auth/register', { 
-        email, 
-        password, 
-        display_name: displayName 
-      });
+      // Use direct fetch to avoid Supabase token check delay
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      
+      let response: Response;
+      try {
+        response = await fetch('/api/auth/register', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ email, password, display_name: displayName }),
+          credentials: 'include',
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+      } catch (fetchError) {
+        clearTimeout(timeoutId);
+        if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+          throw new Error('Registration request timed out. Please try again.');
+        }
+        throw fetchError;
+      }
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ message: 'Registration failed' }));
+        throw new Error(errorData.message || errorData.error || 'Registration failed');
+      }
+      
       const data = await response.json();
       setUser(data.user);
     } catch (error) {
@@ -194,7 +287,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   useEffect(() => {
-    checkAuth();
+    // Add a global timeout for auth check to prevent infinite loading
+    const authTimeout = setTimeout(() => {
+      console.warn('⚠️ AuthContext: Auth check timed out after 10 seconds');
+      setIsLoading(false);
+      setUser(null);
+    }, 10000);
+    
+    checkAuth().finally(() => {
+      clearTimeout(authTimeout);
+    });
 
     // Listen for auth state changes from Supabase (only if properly configured)
     let subscription: { unsubscribe: () => void } | null = null;
@@ -220,6 +322,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
 
     return () => {
+      clearTimeout(authTimeout);
       if (subscription) {
         subscription.unsubscribe();
       }

@@ -10,6 +10,7 @@ async function throwIfResNotOk(res: Response) {
 
 /**
  * Get the current Supabase access token if available
+ * Has a timeout to prevent hanging on network issues
  */
 async function getAccessToken(): Promise<string | null> {
   if (!isSupabaseConfigured()) {
@@ -22,7 +23,13 @@ async function getAccessToken(): Promise<string | null> {
   }
   
   try {
-    const { data: { session } } = await client.auth.getSession();
+    // Add timeout to prevent hanging
+    const sessionPromise = client.auth.getSession();
+    const timeoutPromise = new Promise<{ data: { session: null } }>((resolve) => 
+      setTimeout(() => resolve({ data: { session: null } }), 2000)
+    );
+    
+    const { data: { session } } = await Promise.race([sessionPromise, timeoutPromise]);
     return session?.access_token || null;
   } catch (error) {
     console.warn('Failed to get access token:', error);
