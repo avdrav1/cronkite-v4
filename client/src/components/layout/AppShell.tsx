@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { Link, useLocation } from "wouter";
+import React, { useState, useMemo } from "react";
+import { Link, useLocation, useSearch } from "wouter";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import {
@@ -10,7 +10,8 @@ import {
   Star,
   Clock,
   Sparkles,
-  LogOut
+  LogOut,
+  CheckCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -37,9 +38,26 @@ interface AppShellProps {
 
 export function AppShell({ children }: AppShellProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
+  const searchString = useSearch();
   const [isAddFeedOpen, setIsAddFeedOpen] = useState(false);
   const { user, logout } = useAuth();
+
+  // Parse search params reactively using wouter's useSearch
+  const { filter, source, category } = useMemo(() => {
+    const params = new URLSearchParams(searchString);
+    return {
+      filter: params.get('filter'),
+      source: params.get('source'),
+      category: params.get('category')
+    };
+  }, [searchString]);
+
+  // Determine which nav item is active
+  const isAllActive = location === "/" && !filter && !source && !category;
+  const isUnreadActive = filter === "unread";
+  const isStarredActive = filter === "starred";
+  const isReadActive = filter === "read";
 
   const handleLogout = async () => {
     try {
@@ -155,15 +173,12 @@ export function AppShell({ children }: AppShellProps) {
             </Button>
 
             <nav className="flex flex-col gap-1 shrink-0">
-              <NavItem icon={LayoutGrid} label="All Articles" active={location === "/" && !window.location.search} />
-              <NavItem icon={Clock} label="Unread" />
-              <NavItem icon={Star} label="Starred" />
-              <Link href="/onboarding" className="w-full">
-                <NavItem icon={Sparkles} label="Discover" />
-              </Link>
-              <Link href="/settings" className="w-full">
-                <NavItem icon={Settings} label="Settings" />
-              </Link>
+              <NavItem icon={LayoutGrid} label="All Articles" href="/" active={isAllActive} />
+              <NavItem icon={Clock} label="Unread" href="/?filter=unread" active={isUnreadActive} />
+              <NavItem icon={CheckCircle} label="Read" href="/?filter=read" active={isReadActive} />
+              <NavItem icon={Star} label="Starred" href="/?filter=starred" active={isStarredActive} />
+              <NavItem icon={Sparkles} label="Discover" href="/onboarding" active={location === "/onboarding"} />
+              <NavItem icon={Settings} label="Settings" href="/settings" active={location === "/settings"} />
             </nav>
 
             <TrendingClusters />
@@ -185,14 +200,15 @@ export function AppShell({ children }: AppShellProps) {
   );
 }
 
-function NavItem({ icon: Icon, label, count, active }: { icon: any; label: string; count?: number; active?: boolean }) {
+function NavItem({ icon: Icon, label, count, active, href }: { icon: any; label: string; count?: number; active?: boolean; href?: string }) {
   const [, setLocation] = useLocation();
 
   const handleClick = () => {
-    if (label === "All Articles") {
-      // Clear filters by navigating to root without query parameters
-      // Requirements: 4.2 - Clear any feed/category filters when navigating to "All Articles"
-      setLocation("/", { replace: true });
+    if (href) {
+      // Use wouter's setLocation for proper routing
+      setLocation(href);
+      // Dispatch event for components that need to react to filter changes
+      window.dispatchEvent(new CustomEvent('feedFilterChange', { detail: { href } }));
     }
   };
 

@@ -914,6 +914,33 @@ export class SupabaseStorage implements IStorage {
     return data as UserArticle;
   }
 
+  async getUserArticleStates(userId: string, articleIds: string[]): Promise<Map<string, UserArticle>> {
+    const result = new Map<string, UserArticle>();
+    
+    if (articleIds.length === 0) {
+      return result;
+    }
+    
+    const { data, error } = await this.supabase
+      .from('user_articles')
+      .select('*')
+      .eq('user_id', userId)
+      .in('article_id', articleIds);
+    
+    if (error) {
+      console.error('Failed to get user article states:', error);
+      return result;
+    }
+    
+    if (data) {
+      for (const state of data) {
+        result.set(state.article_id, state as UserArticle);
+      }
+    }
+    
+    return result;
+  }
+
   async createUserArticleState(userArticle: InsertUserArticle): Promise<UserArticle> {
     const { data, error } = await this.supabase
       .from('user_articles')

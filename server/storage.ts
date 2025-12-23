@@ -113,6 +113,7 @@ export interface IStorage {
   
   // User Article Management
   getUserArticleState(userId: string, articleId: string): Promise<UserArticle | undefined>;
+  getUserArticleStates(userId: string, articleIds: string[]): Promise<Map<string, UserArticle>>;
   createUserArticleState(userArticle: InsertUserArticle): Promise<UserArticle>;
   updateUserArticleState(userId: string, articleId: string, updates: Partial<UserArticle>): Promise<UserArticle>;
   
@@ -833,6 +834,18 @@ export class MemStorage implements IStorage {
   async getUserArticleState(userId: string, articleId: string): Promise<UserArticle | undefined> {
     const key = `${userId}:${articleId}`;
     return this.userArticles.get(key);
+  }
+
+  async getUserArticleStates(userId: string, articleIds: string[]): Promise<Map<string, UserArticle>> {
+    const result = new Map<string, UserArticle>();
+    for (const articleId of articleIds) {
+      const key = `${userId}:${articleId}`;
+      const state = this.userArticles.get(key);
+      if (state) {
+        result.set(articleId, state);
+      }
+    }
+    return result;
   }
 
   async createUserArticleState(insertUserArticle: InsertUserArticle): Promise<UserArticle> {

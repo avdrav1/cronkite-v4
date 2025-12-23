@@ -41,11 +41,13 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
     return matchesSearch && matchesCategory;
   });
 
-  const handleQuickAdd = async (feedId: string, feedName: string, category: string) => {
+  const handleQuickAdd = async (feedId: string, feedName: string, category: string, feedUrl: string) => {
     try {
-      // Subscribe to the selected feed
-      await apiRequest('POST', '/api/feeds/subscribe', {
-        feedIds: [feedId]
+      // Subscribe using the feed URL (the backend will look up the UUID)
+      await apiRequest('POST', '/api/feeds/subscribe-by-url', {
+        url: feedUrl,
+        name: feedName,
+        category: category
       });
       
       setAddedFeeds(prev => [...prev, feedId]);
@@ -255,7 +257,7 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
                                 size="sm" 
                                 variant="outline" 
                                 className="h-7 text-xs gap-1 hover:bg-primary hover:text-primary-foreground hover:border-primary transition-colors"
-                                onClick={() => handleQuickAdd(feed.id, feed.name, feed.category)}
+                                onClick={() => handleQuickAdd(feed.id, feed.name, feed.category, feed.url)}
                               >
                                 <Plus className="h-3 w-3" /> Add
                               </Button>

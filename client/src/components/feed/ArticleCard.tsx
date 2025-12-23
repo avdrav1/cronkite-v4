@@ -1,10 +1,10 @@
 import { type Article } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
-import { Star, X, Check, Clock, User, CircleDot, ThumbsUp, ThumbsDown } from "lucide-react";
+import { Star, X, Clock, User, ThumbsUp, ThumbsDown } from "lucide-react";
 import { motion } from "framer-motion";
 import { apiRequest } from "@/lib/queryClient";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 
 // Extended article interface for UI compatibility
 interface ArticleWithUIState extends Article {
@@ -53,30 +53,25 @@ export function ArticleCard({ article, onClick, onRemove, onStar, onReadChange, 
   const [localIsStarred, setLocalIsStarred] = useState(isStarred);
   const [localEngagement, setLocalEngagement] = useState<'positive' | 'negative' | null>(engagementSignal);
   const [isUpdating, setIsUpdating] = useState(false);
+  
+  // Track the previous article ID to detect when we're showing a different article
+  const prevArticleIdRef = useRef(article.id);
+
+  // Only sync local state with props when the article changes (different article ID)
+  // This prevents overwriting optimistic updates when the parent re-renders
+  useEffect(() => {
+    if (prevArticleIdRef.current !== article.id) {
+      // New article - sync all states
+      setLocalIsRead(isRead);
+      setLocalIsStarred(isStarred);
+      setLocalEngagement(engagementSignal);
+      prevArticleIdRef.current = article.id;
+    }
+  }, [article.id, isRead, isStarred, engagementSignal]);
 
   const handleAction = (e: React.MouseEvent, action: () => void) => {
     e.stopPropagation();
     action();
-  };
-
-  // Toggle read state with API persistence - Requirements: 6.1, 6.2
-  const handleToggleRead = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (isUpdating) return;
-    
-    const newReadState = !localIsRead;
-    setLocalIsRead(newReadState); // Optimistic update
-    setIsUpdating(true);
-    
-    try {
-      await apiRequest('PUT', `/api/articles/${article.id}/read`, { isRead: newReadState });
-      onReadChange?.(article.id, newReadState);
-    } catch (error) {
-      console.error('Failed to update read state:', error);
-      setLocalIsRead(!newReadState); // Revert on error
-    } finally {
-      setIsUpdating(false);
-    }
   };
 
   // Toggle star state with API persistence - Requirements: 7.1, 7.2
@@ -155,22 +150,7 @@ export function ArticleCard({ article, onClick, onRemove, onStar, onReadChange, 
       )}
       onClick={() => onClick(article)}
     >
-      {/* Read Indicator - Requirements: 6.1, 6.2 */}
-      <button
-        onClick={handleToggleRead}
-        className={cn(
-          "absolute top-2 left-2 z-10 bg-background/80 backdrop-blur-sm rounded-full p-1 shadow-sm transition-opacity",
-          "hover:bg-background",
-          localIsRead ? "opacity-70" : "opacity-0 group-hover:opacity-100"
-        )}
-        title={localIsRead ? "Mark as unread" : "Mark as read"}
-      >
-        {localIsRead ? (
-          <Check className="h-3 w-3 text-muted-foreground" />
-        ) : (
-          <CircleDot className="h-3 w-3 text-primary" />
-        )}
-      </button>
+
 
       {/* Large Card Image */}
       {variant === "large" && imageUrl && (

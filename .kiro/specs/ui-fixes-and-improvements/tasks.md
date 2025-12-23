@@ -1,4 +1,4 @@
-# Implementation Plan: UI Fixes and Improvements
+1. Left nav menu -- get all link# Implementation Plan: UI Fixes and Improvements
 
 ## Overview
 

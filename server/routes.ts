@@ -875,6 +875,78 @@ export async function registerRoutes(
       });
     }
   });
+
+  // POST /api/feeds/subscribe-by-url - Subscribe to a feed by URL
+  // Looks up the recommended feed by URL and subscribes the user
+  app.post('/api/feeds/subscribe-by-url', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const { url, name, category } = req.body;
+      
+      if (!url || typeof url !== 'string') {
+        return res.status(400).json({
+          error: 'Validation error',
+          message: 'Feed URL is required'
+        });
+      }
+      
+      const storage = await getStorage();
+      
+      // Check feed limit before subscribing
+      const currentCount = await storage.getUserFeedCount(userId);
+      const maxAllowed = 25;
+      
+      if (currentCount >= maxAllowed) {
+        return res.status(400).json({
+          error: 'FEED_LIMIT_EXCEEDED',
+          message: `Cannot subscribe: you have ${currentCount}/${maxAllowed} feeds. Remove some feeds to add new ones.`,
+          currentCount,
+          maxAllowed
+        });
+      }
+      
+      // Look up the recommended feed by URL
+      const recommendedFeeds = await storage.getRecommendedFeeds();
+      const matchingFeed = recommendedFeeds.find(f => 
+        f.url.toLowerCase() === url.toLowerCase() ||
+        f.url.toLowerCase().replace(/\/$/, '') === url.toLowerCase().replace(/\/$/, '')
+      );
+      
+      if (matchingFeed) {
+        // Subscribe using the UUID from the recommended feed
+        await storage.subscribeToFeeds(userId, [matchingFeed.id]);
+        
+        // Mark onboarding as completed
+        const user = req.user!;
+        if (!user.onboarding_completed) {
+          await storage.updateUser(userId, { onboarding_completed: true });
+        }
+        
+        return res.json({
+          success: true,
+          message: 'Successfully subscribed to feed',
+          feedId: matchingFeed.id,
+          feedName: matchingFeed.name
+        });
+      }
+      
+      // Feed not in recommended list - create a custom feed subscription
+      // For now, return an error suggesting to use the custom feed flow
+      return res.status(404).json({
+        error: 'Feed not found',
+        message: 'This feed is not in our recommended list. Please use the custom URL feature to add it.',
+        suggestion: 'custom'
+      });
+      
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Subscribe by URL error:', errorMessage, error);
+      res.status(500).json({
+        error: 'Failed to subscribe to feed',
+        message: errorMessage
+      });
+    }
+  });
   
   // POST /api/feeds/subscribe - Subscribe to feeds (bulk subscription)
   // Updated with feed limit enforcement (Requirements: 3.1, 3.2, 3.3)
@@ -1724,8 +1796,23 @@ export async function registerRoutes(
       const feedArticlesArrays = await Promise.all(feedArticlePromises);
       const allArticles = feedArticlesArrays.flat();
       
+      // Get user article states (is_read, is_starred, engagement_signal) in batch
+      const articleIds = allArticles.map(a => a.id);
+      const userArticleStates = await storage.getUserArticleStates(userId, articleIds);
+      
+      // Merge user states into articles
+      const articlesWithState = allArticles.map(article => {
+        const userState = userArticleStates.get(article.id);
+        return {
+          ...article,
+          is_read: userState?.is_read || false,
+          is_starred: userState?.is_starred || false,
+          engagement_signal: userState?.engagement_signal || null
+        };
+      });
+      
       // Sort by published date (newest first)
-      allArticles.sort((a, b) => {
+      articlesWithState.sort((a, b) => {
         const dateA = a.published_at ? new Date(a.published_at).getTime() : 0;
         const dateB = b.published_at ? new Date(b.published_at).getTime() : 0;
         return dateB - dateA;
@@ -1733,8 +1820,8 @@ export async function registerRoutes(
       
       // Return all articles - frontend handles date-based pagination (7-day chunks)
       res.json({
-        articles: allArticles,
-        total: allArticles.length,
+        articles: articlesWithState,
+        total: articlesWithState.length,
         feeds_count: userFeeds.length
       });
     } catch (error) {

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { AppShell } from "@/components/layout/AppShell";
 import { MasonryGrid } from "@/components/feed/MasonryGrid";
 import { ArticleCard } from "@/components/feed/ArticleCard";
@@ -66,17 +66,32 @@ export default function Home() {
   // Track URL search params for filtering
   const [filterKey, setFilterKey] = useState(0); // Force re-render key
   
-  // Use wouter's useLocation for reactivity when URL changes
-  const [location] = useLocation();
+  // Use wouter's useLocation and useSearch for reactivity when URL changes
+  const [location, setLocation] = useLocation();
+  const searchString = useSearch();
   
-  // Parse URL params - recalculate when location changes
-  const { sourceFilter, categoryFilter } = useMemo(() => {
-    const params = new URLSearchParams(window.location.search);
+  // Parse URL params reactively using wouter's useSearch
+  const { sourceFilter, categoryFilter, urlFilter } = useMemo(() => {
+    const params = new URLSearchParams(searchString);
     return {
       sourceFilter: params.get("source"),
-      categoryFilter: params.get("category")
+      categoryFilter: params.get("category"),
+      urlFilter: params.get("filter") // "starred", "unread", or "read" from side nav
     };
-  }, [location, filterKey]);
+  }, [searchString, filterKey]);
+  
+  // Sync activeFilter with URL filter param
+  useEffect(() => {
+    if (urlFilter === "starred") {
+      setActiveFilter("saved");
+    } else if (urlFilter === "unread") {
+      setActiveFilter("unread");
+    } else if (urlFilter === "read") {
+      setActiveFilter("read");
+    } else if (!urlFilter && !sourceFilter && !categoryFilter) {
+      setActiveFilter("all");
+    }
+  }, [urlFilter, sourceFilter, categoryFilter]);
   
   // Listen for custom filter change events from FeedsList
   useEffect(() => {
@@ -142,16 +157,26 @@ export default function Home() {
       setArticles(articlesWithState);
       setFeedsCount(data.feeds_count || 0);
       
-      // Process clusters if available
+      // Process clusters if available - use real data only, no mock fallback
       if (clustersResponse) {
         try {
           const clustersData = await clustersResponse.json();
-          if (clustersData.clusters) {
+          if (clustersData.clusters && clustersData.clusters.length > 0) {
             setClusters(clustersData.clusters);
+            console.log(`✅ Loaded ${clustersData.clusters.length} trending clusters from API`);
+          } else {
+            // No clusters available - this is fine, just don't show trending cards
+            console.log('ℹ️ No trending clusters available from API');
+            setClusters([]);
           }
         } catch (e) {
-          console.log('Clusters not available:', e);
+          console.log('ℹ️ Clusters not available:', e);
+          setClusters([]);
         }
+      } else {
+        // No clusters response at all
+        console.log('ℹ️ Clusters API not available');
+        setClusters([]);
       }
     } catch (error) {
       console.error('Failed to fetch articles:', error);
@@ -309,6 +334,7 @@ export default function Home() {
 
     // 3. Status Filter (only apply for non-starred filter since starred uses API)
     if (activeFilter === "unread" && article.isRead) return false;
+    if (activeFilter === "read" && !article.isRead) return false;
     // Note: "saved" filter now uses starredArticles from API, so no client-side filter needed
     
     return true;
@@ -456,17 +482,34 @@ export default function Home() {
                <FilterButton 
                  label="All" 
                  active={activeFilter === "all"} 
-                 onClick={() => setActiveFilter("all")} 
+                 onClick={() => {
+                   setActiveFilter("all");
+                   setLocation("/");
+                 }} 
                />
                <FilterButton 
                  label="Unread" 
                  active={activeFilter === "unread"} 
-                 onClick={() => setActiveFilter("unread")} 
+                 onClick={() => {
+                   setActiveFilter("unread");
+                   setLocation("/?filter=unread");
+                 }} 
+               />
+               <FilterButton 
+                 label="Read" 
+                 active={activeFilter === "read"} 
+                 onClick={() => {
+                   setActiveFilter("read");
+                   setLocation("/?filter=read");
+                 }} 
                />
                <FilterButton 
                  label="Starred" 
                  active={activeFilter === "saved"} 
-                 onClick={() => setActiveFilter("saved")} 
+                 onClick={() => {
+                   setActiveFilter("saved");
+                   setLocation("/?filter=starred");
+                 }} 
                />
             </div>
           </div>
