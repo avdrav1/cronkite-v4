@@ -457,6 +457,77 @@ export class SupabaseStorage implements IStorage {
     return data as RecommendedFeed;
   }
 
+  // Custom Feed Management (Requirements: 1.2, 1.3)
+  async createCustomFeed(feed: {
+    url: string;
+    name: string;
+    description?: string;
+    siteUrl?: string;
+    iconUrl?: string;
+    category?: string;
+    createdBy: string;
+  }): Promise<RecommendedFeed> {
+    console.log(`🔍 SupabaseStorage: Creating custom feed for user ${feed.createdBy}...`);
+    
+    // Check if feed with this URL already exists
+    const existingFeed = await this.getRecommendedFeedByUrl(feed.url);
+    if (existingFeed) {
+      console.log(`⚠️  SupabaseStorage: Feed with URL ${feed.url} already exists, returning existing feed`);
+      return existingFeed;
+    }
+    
+    // Use 'Custom' as default category for custom feeds
+    const category = feed.category || 'Custom';
+    
+    const insertData = {
+      name: feed.name,
+      url: feed.url,
+      site_url: feed.siteUrl || null,
+      description: feed.description || null,
+      icon_url: feed.iconUrl || null,
+      category,
+      country: null,
+      language: 'en',
+      tags: ['custom'],
+      popularity_score: 0,
+      article_frequency: null,
+      is_featured: false
+    };
+    
+    const { data, error } = await this.supabase
+      .from('recommended_feeds')
+      .insert(insertData)
+      .select()
+      .single();
+    
+    if (error || !data) {
+      // Check for duplicate key error
+      if (error?.code === '23505') {
+        console.log(`⚠️  SupabaseStorage: Feed URL already exists (race condition), fetching existing feed`);
+        const existing = await this.getRecommendedFeedByUrl(feed.url);
+        if (existing) return existing;
+      }
+      throw new Error(`Failed to create custom feed: ${error?.message}`);
+    }
+    
+    console.log(`✅ SupabaseStorage: Custom feed created successfully: ${data.name} (${data.id})`);
+    return data as RecommendedFeed;
+  }
+
+  async getRecommendedFeedByUrl(url: string): Promise<RecommendedFeed | undefined> {
+    const { data, error } = await this.supabase
+      .from('recommended_feeds')
+      .select('*')
+      .eq('url', url)
+      .single();
+    
+    if (error || !data) {
+      return undefined;
+    }
+    
+    return data as RecommendedFeed;
+  }
+
   // User Feed Subscription Management
   async getUserFeeds(userId: string): Promise<Feed[]> {
     return this.executeWithFallback(
@@ -1567,20 +1638,6 @@ export class SupabaseStorage implements IStorage {
     }
     
     return data as Feed;
-  }
-
-  async getRecommendedFeedByUrl(url: string): Promise<RecommendedFeed | undefined> {
-    const { data, error } = await this.supabase
-      .from('recommended_feeds')
-      .select('*')
-      .eq('url', url)
-      .single();
-    
-    if (error || !data) {
-      return undefined;
-    }
-    
-    return data as RecommendedFeed;
   }
 
   async getNewArticleIds(feedId: string, since: Date): Promise<string[]> {

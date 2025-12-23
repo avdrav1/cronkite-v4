@@ -64,6 +64,18 @@ export interface IStorage {
   createRecommendedFeed(feed: InsertRecommendedFeed): Promise<RecommendedFeed>;
   updateRecommendedFeed(id: string, updates: Partial<RecommendedFeed>): Promise<RecommendedFeed>;
   
+  // Custom Feed Management (Requirements: 1.2, 1.3)
+  createCustomFeed(feed: {
+    url: string;
+    name: string;
+    description?: string;
+    siteUrl?: string;
+    iconUrl?: string;
+    category?: string;
+    createdBy: string;
+  }): Promise<RecommendedFeed>;
+  getRecommendedFeedByUrl(url: string): Promise<RecommendedFeed | undefined>;
+  
   // User Feed Subscription Management
   getUserFeeds(userId: string): Promise<Feed[]>;
   subscribeToFeeds(userId: string, feedIds: string[]): Promise<void>;
@@ -200,7 +212,6 @@ export interface IStorage {
     sync_interval_hours?: number;
     last_fetched_at?: Date;
   }): Promise<Feed>;
-  getRecommendedFeedByUrl(url: string): Promise<RecommendedFeed | undefined>;
   getNewArticleIds(feedId: string, since: Date): Promise<string[]>;
   
   // AI Rate Limiter Storage (Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6)
@@ -466,6 +477,7 @@ export class MemStorage implements IStorage {
       popularity_score: insertFeed.popularity_score || 0,
       article_frequency: insertFeed.article_frequency || null,
       is_featured: insertFeed.is_featured || false,
+      default_priority: insertFeed.default_priority || "medium",
       created_at: insertFeed.created_at || new Date(),
       updated_at: insertFeed.updated_at || new Date()
     };
@@ -506,6 +518,58 @@ export class MemStorage implements IStorage {
     console.log(`✅ MemStorage: Recommended feed updated successfully with valid category "${updatedFeed.category}"`);
     
     return updatedFeed;
+  }
+
+  // Custom Feed Management (Requirements: 1.2, 1.3)
+  async createCustomFeed(feed: {
+    url: string;
+    name: string;
+    description?: string;
+    siteUrl?: string;
+    iconUrl?: string;
+    category?: string;
+    createdBy: string;
+  }): Promise<RecommendedFeed> {
+    console.log(`🔍 MemStorage: Creating custom feed for user ${feed.createdBy}...`);
+    
+    // Check if feed with this URL already exists
+    const existingFeed = this.recommendedFeeds.find(f => f.url === feed.url);
+    if (existingFeed) {
+      console.log(`⚠️  MemStorage: Feed with URL ${feed.url} already exists, returning existing feed`);
+      return existingFeed;
+    }
+    
+    // Use 'Custom' as default category for custom feeds
+    const category = feed.category || 'Custom';
+    
+    const id = randomUUID();
+    const customFeed: RecommendedFeed = {
+      id,
+      name: feed.name,
+      url: feed.url,
+      site_url: feed.siteUrl || null,
+      description: feed.description || null,
+      icon_url: feed.iconUrl || null,
+      category,
+      country: null,
+      language: "en",
+      tags: ['custom'],
+      popularity_score: 0,
+      article_frequency: null,
+      is_featured: false,
+      default_priority: "medium",
+      created_at: new Date(),
+      updated_at: new Date()
+    };
+    
+    this.recommendedFeeds.push(customFeed);
+    console.log(`✅ MemStorage: Custom feed created successfully: ${customFeed.name} (${customFeed.id})`);
+    
+    return customFeed;
+  }
+
+  async getRecommendedFeedByUrl(url: string): Promise<RecommendedFeed | undefined> {
+    return this.recommendedFeeds.find(feed => feed.url === url);
   }
 
   // User Feed Subscription Management
@@ -2236,10 +2300,6 @@ export class MemStorage implements IStorage {
     }
     
     throw new Error(`Feed with id ${feedId} not found`);
-  }
-
-  async getRecommendedFeedByUrl(url: string): Promise<RecommendedFeed | undefined> {
-    return this.recommendedFeeds.find(f => f.url === url);
   }
 
   async getNewArticleIds(feedId: string, since: Date): Promise<string[]> {

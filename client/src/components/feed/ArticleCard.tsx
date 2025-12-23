@@ -1,7 +1,7 @@
 import { type Article } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
-import { Star, Circle, X, Check, Clock, User, CircleDot, ThumbsUp, ThumbsDown } from "lucide-react";
+import { Star, X, Check, Clock, User, CircleDot, ThumbsUp, ThumbsDown } from "lucide-react";
 import { motion } from "framer-motion";
 import { apiRequest } from "@/lib/queryClient";
 import { useState } from "react";
@@ -242,51 +242,51 @@ export function ArticleCard({ article, onClick, onRemove, onStar, onReadChange, 
           </div>
         </div>
 
-        {/* Metadata Footer */}
-        <div className="flex items-center justify-between pt-2 border-t border-border/30">
-          <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground">
-            <span>{formatDistanceToNow(new Date(date), { addSuffix: true })}</span>
+        {/* Metadata Footer - Time display */}
+        <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground pt-2 border-t border-border/30">
+          <span>{formatDistanceToNow(new Date(date), { addSuffix: true })}</span>
+        </div>
+        
+        {/* Action Buttons Row - Requirements: 3.1, 3.2, 3.3 - Separated groups with justify-between */}
+        <div className="flex items-center justify-between pt-1">
+          {/* Left Group: Engagement Buttons - Requirements: 3.2, 3.6, 3.7 - Always visible */}
+          <div className="flex items-center gap-0.5">
+            <button 
+              onClick={(e) => handleEngagement(e, 'positive')}
+              disabled={isUpdating}
+              className={cn(
+                "p-1.5 rounded-full transition-colors",
+                localEngagement === 'positive'
+                  ? "text-green-500 bg-green-500/10"
+                  : "text-muted-foreground hover:text-green-500 hover:bg-muted"
+              )}
+              title="More like this"
+            >
+              <ThumbsUp className={cn("h-3.5 w-3.5", localEngagement === 'positive' && "fill-green-500")} />
+            </button>
+            <button 
+              onClick={(e) => handleEngagement(e, 'negative')}
+              disabled={isUpdating}
+              className={cn(
+                "p-1.5 rounded-full transition-colors",
+                localEngagement === 'negative'
+                  ? "text-red-500 bg-red-500/10"
+                  : "text-muted-foreground hover:text-red-500 hover:bg-muted"
+              )}
+              title="Less like this"
+            >
+              <ThumbsDown className={cn("h-3.5 w-3.5", localEngagement === 'negative' && "fill-red-500")} />
+            </button>
           </div>
           
+          {/* Right Group: Star and Remove Buttons - Requirements: 3.3, 2.1, 2.2 - Always visible */}
           <div className="flex items-center gap-1">
-            {/* Engagement Buttons - Requirements: 8.1, 8.2, 8.6 */}
-            <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-              <button 
-                onClick={(e) => handleEngagement(e, 'positive')}
-                disabled={isUpdating}
-                className={cn(
-                  "p-1.5 rounded-full transition-colors",
-                  localEngagement === 'positive'
-                    ? "text-green-500 bg-green-500/10"
-                    : "text-muted-foreground hover:text-green-500 hover:bg-muted"
-                )}
-                title="More like this"
-              >
-                <ThumbsUp className={cn("h-3.5 w-3.5", localEngagement === 'positive' && "fill-green-500")} />
-              </button>
-              <button 
-                onClick={(e) => handleEngagement(e, 'negative')}
-                disabled={isUpdating}
-                className={cn(
-                  "p-1.5 rounded-full transition-colors",
-                  localEngagement === 'negative'
-                    ? "text-red-500 bg-red-500/10"
-                    : "text-muted-foreground hover:text-red-500 hover:bg-muted"
-                )}
-                title="Less like this"
-              >
-                <ThumbsDown className={cn("h-3.5 w-3.5", localEngagement === 'negative' && "fill-red-500")} />
-              </button>
-            </div>
-            
-            {/* Star Button - Requirements: 7.1, 7.2 */}
+            {/* Star Button - Requirements: 2.1, 2.3, 2.4 - Always visible */}
             <button 
               onClick={handleToggleStar}
               disabled={isUpdating}
               className={cn(
                 "p-1.5 hover:bg-muted rounded-full transition-colors",
-                "opacity-0 group-hover:opacity-100",
-                localIsStarred && "opacity-100",
                 localIsStarred 
                   ? "text-yellow-500" 
                   : "text-muted-foreground hover:text-yellow-500"
@@ -295,10 +295,11 @@ export function ArticleCard({ article, onClick, onRemove, onStar, onReadChange, 
             >
               <Star className={cn("h-4 w-4", localIsStarred && "fill-yellow-500")} />
             </button>
+            {/* Remove Button - Requirements: 2.2 - Always visible */}
             {onRemove && (
               <button 
                 onClick={(e) => handleAction(e, () => onRemove(article.id))}
-                className="p-1.5 hover:bg-muted rounded-full text-muted-foreground hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                className="p-1.5 hover:bg-muted rounded-full text-muted-foreground hover:text-red-500 transition-colors"
                 title="Remove from feed"
               >
                 <X className="h-4 w-4" />

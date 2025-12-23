@@ -1172,79 +1172,271 @@ export async function registerRoutes(
   });
   
   // POST /api/feeds/validate - Validate a custom feed URL
+  // Requirements: 1.1, 1.5 - Validate RSS/Atom feed URL and return feed metadata
   app.post('/api/feeds/validate', requireAuth, async (req: Request, res: Response) => {
     try {
       const { url } = req.body;
       
       if (!url || typeof url !== 'string') {
         return res.status(400).json({
-          error: 'Validation error',
-          message: 'URL is required'
+          valid: false,
+          error: 'INVALID_URL',
+          message: 'Please enter a valid URL'
         });
       }
       
       // Basic URL validation
+      let parsedUrl: URL;
       try {
-        new URL(url);
+        parsedUrl = new URL(url);
       } catch {
         return res.status(400).json({
           valid: false,
-          message: 'Invalid URL format'
+          error: 'INVALID_URL',
+          message: 'Please enter a valid URL'
         });
       }
       
-      // For now, return a simple validation response
-      // In production, this would actually fetch and parse the RSS feed
-      const isValidUrl = url.includes('rss') || url.includes('feed') || url.includes('xml') || url.includes('atom');
+      // Only allow http/https protocols
+      if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+        return res.status(400).json({
+          valid: false,
+          error: 'INVALID_URL',
+          message: 'URL must use HTTP or HTTPS protocol'
+        });
+      }
       
-      if (isValidUrl) {
+      // Import RSS parser dynamically to avoid circular dependencies
+      const Parser = (await import('rss-parser')).default;
+      const parser = new Parser({
+        timeout: 15000, // 15 second timeout for validation
+        headers: {
+          'User-Agent': 'Cronkite News Aggregator/1.0 (+https://cronkite.app)',
+          'Accept': 'application/rss+xml, application/xml, text/xml, application/atom+xml'
+        }
+      });
+      
+      try {
+        // Fetch and parse the RSS feed
+        const feed = await parser.parseURL(url);
+        
+        // Extract feed metadata
+        const feedTitle = feed.title || `Feed from ${parsedUrl.hostname}`;
+        const feedDescription = feed.description || feed.subtitle || `RSS feed from ${parsedUrl.hostname}`;
+        const feedLink = feed.link || parsedUrl.origin;
+        const feedImage = feed.image?.url || feed.itunes?.image || null;
+        const articleCount = feed.items?.length || 0;
+        
+        console.log(`✅ Feed validation successful: ${feedTitle} (${articleCount} articles)`);
+        
         res.json({
           valid: true,
-          name: `Custom Feed from ${new URL(url).hostname}`,
-          description: 'RSS feed detected at the provided URL'
+          name: feedTitle,
+          description: feedDescription,
+          siteUrl: feedLink,
+          iconUrl: feedImage,
+          articleCount,
+          language: feed.language || 'en'
         });
-      } else {
-        res.json({
+        
+      } catch (parseError) {
+        const errorMessage = parseError instanceof Error ? parseError.message : 'Unknown error';
+        console.log(`❌ Feed validation failed for ${url}: ${errorMessage}`);
+        
+        // Provide user-friendly error messages
+        if (errorMessage.includes('timeout') || errorMessage.includes('ETIMEDOUT')) {
+          return res.status(504).json({
+            valid: false,
+            error: 'TIMEOUT',
+            message: 'Could not reach the feed URL. Please check the URL and try again.'
+          });
+        }
+        
+        if (errorMessage.includes('ENOTFOUND') || errorMessage.includes('getaddrinfo')) {
+          return res.status(400).json({
+            valid: false,
+            error: 'NOT_FOUND',
+            message: 'Could not find the server. Please check the URL.'
+          });
+        }
+        
+        if (errorMessage.includes('Non-whitespace before first tag') || 
+            errorMessage.includes('Invalid XML') ||
+            errorMessage.includes('Unexpected close tag')) {
+          return res.status(400).json({
+            valid: false,
+            error: 'NOT_RSS_FEED',
+            message: 'Could not find a valid RSS or Atom feed at this URL'
+          });
+        }
+        
+        return res.status(400).json({
           valid: false,
-          message: 'No RSS or Atom feed found at this URL'
+          error: 'NOT_RSS_FEED',
+          message: 'Could not find a valid RSS or Atom feed at this URL'
         });
       }
+      
     } catch (error) {
       console.error('Feed validation error:', error);
       res.status(500).json({
-        error: 'Validation failed',
+        valid: false,
+        error: 'VALIDATION_ERROR',
         message: 'An error occurred while validating the feed'
       });
     }
   });
   
   // POST /api/feeds/custom - Add a custom feed
+  // Requirements: 1.2, 1.3, 1.4, 1.6 - Create custom feed with validation and persistence
   app.post('/api/feeds/custom', requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = req.user!.id;
-      const { url, name, description } = req.body;
+      const { url, name, description, siteUrl, iconUrl, category } = req.body;
       
-      if (!url || !name) {
+      // Validate required fields
+      if (!url || typeof url !== 'string') {
         return res.status(400).json({
-          error: 'Validation error',
-          message: 'URL and name are required'
+          error: 'INVALID_URL',
+          message: 'Please enter a valid URL'
         });
       }
       
-      // Create a custom feed entry
-      const feedId = `custom_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+      if (!name || typeof name !== 'string') {
+        return res.status(400).json({
+          error: 'INVALID_NAME',
+          message: 'Feed name is required'
+        });
+      }
       
-      // For now, we'll simulate adding the feed
-      // In production, this would add the feed to the database
+      // Validate URL format
+      let parsedUrl: URL;
+      try {
+        parsedUrl = new URL(url);
+      } catch {
+        return res.status(400).json({
+          error: 'INVALID_URL',
+          message: 'Please enter a valid URL'
+        });
+      }
       
-      res.json({
-        feedId,
-        message: 'Custom feed added successfully'
+      // Only allow http/https protocols
+      if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+        return res.status(400).json({
+          error: 'INVALID_URL',
+          message: 'URL must use HTTP or HTTPS protocol'
+        });
+      }
+      
+      const storage = await getStorage();
+      
+      // Check if feed already exists
+      const existingFeed = await storage.getRecommendedFeedByUrl(url);
+      if (existingFeed) {
+        return res.status(409).json({
+          error: 'FEED_EXISTS',
+          message: 'This feed has already been added',
+          feedId: existingFeed.id,
+          feed: {
+            id: existingFeed.id,
+            name: existingFeed.name,
+            url: existingFeed.url,
+            description: existingFeed.description,
+            category: existingFeed.category
+          }
+        });
+      }
+      
+      // Validate the feed URL by fetching and parsing it
+      const Parser = (await import('rss-parser')).default;
+      const parser = new Parser({
+        timeout: 15000,
+        headers: {
+          'User-Agent': 'Cronkite News Aggregator/1.0 (+https://cronkite.app)',
+          'Accept': 'application/rss+xml, application/xml, text/xml, application/atom+xml'
+        }
       });
+      
+      try {
+        // Validate the feed is actually an RSS/Atom feed
+        await parser.parseURL(url);
+      } catch (parseError) {
+        const errorMessage = parseError instanceof Error ? parseError.message : 'Unknown error';
+        console.log(`❌ Custom feed validation failed for ${url}: ${errorMessage}`);
+        
+        if (errorMessage.includes('timeout') || errorMessage.includes('ETIMEDOUT')) {
+          return res.status(504).json({
+            error: 'TIMEOUT',
+            message: 'Could not reach the feed URL. Please check the URL and try again.'
+          });
+        }
+        
+        return res.status(400).json({
+          error: 'NOT_RSS_FEED',
+          message: 'Could not find a valid RSS or Atom feed at this URL'
+        });
+      }
+      
+      // Create the custom feed in the database
+      try {
+        const customFeed = await storage.createCustomFeed({
+          url,
+          name,
+          description: description || undefined,
+          siteUrl: siteUrl || undefined,
+          iconUrl: iconUrl || undefined,
+          category: category || 'Custom',
+          createdBy: userId
+        });
+        
+        console.log(`✅ Custom feed created: ${customFeed.name} (${customFeed.id}) by user ${userId}`);
+        
+        res.status(201).json({
+          feedId: customFeed.id,
+          message: 'Custom feed added successfully',
+          feed: {
+            id: customFeed.id,
+            name: customFeed.name,
+            url: customFeed.url,
+            description: customFeed.description,
+            category: customFeed.category
+          }
+        });
+        
+      } catch (dbError) {
+        const errorMessage = dbError instanceof Error ? dbError.message : 'Unknown error';
+        console.error(`❌ Database error creating custom feed: ${errorMessage}`);
+        
+        // Check for duplicate key error (race condition)
+        if (errorMessage.includes('duplicate') || errorMessage.includes('already exists')) {
+          const existingFeed = await storage.getRecommendedFeedByUrl(url);
+          if (existingFeed) {
+            return res.status(409).json({
+              error: 'FEED_EXISTS',
+              message: 'This feed has already been added',
+              feedId: existingFeed.id,
+              feed: {
+                id: existingFeed.id,
+                name: existingFeed.name,
+                url: existingFeed.url,
+                description: existingFeed.description,
+                category: existingFeed.category
+              }
+            });
+          }
+        }
+        
+        return res.status(500).json({
+          error: 'DB_ERROR',
+          message: 'An error occurred. Please try again.'
+        });
+      }
+      
     } catch (error) {
-      console.error('Add custom feed error:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Add custom feed error:', errorMessage);
       res.status(500).json({
-        error: 'Failed to add custom feed',
+        error: 'INTERNAL_ERROR',
         message: 'An error occurred while adding the custom feed'
       });
     }
