@@ -12,11 +12,23 @@
   node_bundler = "esbuild"
   external_node_modules = ["express", "pg", "pg-native"]
 
+# Scheduled function for AI background processing
+# Runs every 5 minutes to generate embeddings and clusters
+[functions."ai-scheduler"]
+  schedule = "*/5 * * * *"
+
 # API route proxying to Netlify Functions
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/api/:splat"
   status = 200
+
+# Direct access to test-clustering function (diagnostic)
+[[redirects]]
+  from = "/.netlify/functions/test-clustering"
+  to = "/.netlify/functions/test-clustering"
+  status = 200
+  force = true
 
 # SPA redirect for client-side routing (wouter)
 # This must come AFTER API redirects to avoid conflicts

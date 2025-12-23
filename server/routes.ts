@@ -75,6 +75,40 @@ export async function registerRoutes(
       memory: process.memoryUsage()
     });
   });
+
+  // AI Diagnostic Route (for debugging clustering issues)
+  app.get('/api/ai-status', async (req: Request, res: Response) => {
+    try {
+      const storage = await getStorage();
+      
+      // Check AI service availability
+      const anthropicAvailable = isClusteringAvailable();
+      const summaryAvailable = isAISummaryAvailable();
+      
+      // Get some stats
+      const recommendedFeeds = await storage.getRecommendedFeeds();
+      
+      res.json({
+        timestamp: new Date().toISOString(),
+        environment: process.env.NODE_ENV || 'development',
+        ai: {
+          anthropicConfigured: anthropicAvailable,
+          openaiConfigured: !!process.env.OPENAI_API_KEY,
+          summaryAvailable,
+          clusteringAvailable: anthropicAvailable
+        },
+        database: {
+          supabaseConfigured: !!process.env.SUPABASE_URL,
+          recommendedFeedsCount: recommendedFeeds.length
+        }
+      });
+    } catch (error) {
+      res.status(500).json({
+        error: 'Diagnostic failed',
+        message: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  });
   
   // Authentication Routes
   
@@ -2172,34 +2206,30 @@ export async function registerRoutes(
     try {
       const userId = req.user!.id;
       const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 10;
-      const useVectorClustering = req.query.vector !== 'false'; // Default to vector-based
+      const forceRefresh = req.query.refresh === 'true'; // Force regenerate clusters
+      
+      console.log(`📊 Fetching clusters for user ${userId}, limit: ${limit}, forceRefresh: ${forceRefresh}`);
       
       const storage = await getStorage();
       const userFeeds = await storage.getUserFeeds(userId);
+      
+      console.log(`📊 User has ${userFeeds.length} feeds`);
       
       if (userFeeds.length === 0) {
         return res.json({ clusters: [], message: 'No feeds to cluster' });
       }
       
-      // Try vector-based clustering first if enabled
-      // Requirements: 9.5 - Serve cached clusters on AI failure
-      if (useVectorClustering) {
+      // Try to get cached clusters first (unless force refresh)
+      if (!forceRefresh) {
         try {
-          const { createClusteringServiceManager, isClusteringServiceAvailable } = await import('./clustering-service');
-          
-          // Even if clustering service is unavailable, try to get cached clusters
+          const { createClusteringServiceManager } = await import('./clustering-service');
           const clusteringService = createClusteringServiceManager(storage);
+          const cachedClusters = await clusteringService.getUserClusters(userId, limit);
           
-          // Get user's feed IDs for filtering
-          const feedIds = userFeeds.map(f => f.id);
-          
-          // Get clusters sorted by relevance score (Requirements: 2.7)
-          // This will return cached clusters even if AI service is down
-          const vectorClusters = await clusteringService.getUserClusters(userId, limit);
-          
-          if (vectorClusters.length > 0) {
+          if (cachedClusters.length > 0) {
+            console.log(`📊 Returning ${cachedClusters.length} cached clusters`);
             return res.json({
-              clusters: vectorClusters.map(cluster => ({
+              clusters: cachedClusters.map(cluster => ({
                 id: cluster.id,
                 topic: cluster.topic,
                 summary: cluster.summary,
@@ -2210,24 +2240,20 @@ export async function registerRoutes(
                 latestTimestamp: cluster.latestTimestamp.toISOString(),
                 expiresAt: cluster.expiresAt.toISOString()
               })),
-              articlesAnalyzed: vectorClusters.reduce((sum, c) => sum + c.articleCount, 0),
+              articlesAnalyzed: cachedClusters.reduce((sum, c) => sum + c.articleCount, 0),
               generatedAt: new Date().toISOString(),
               method: 'vector',
-              cached: !isClusteringServiceAvailable() // Indicate if serving cached data
+              cached: true
             });
           }
-          
-          // If no cached clusters and service is unavailable, fall through to text-based
-          if (!isClusteringServiceAvailable()) {
-            console.warn('⚠️ Clustering service unavailable and no cached clusters, falling back to text-based');
-          }
-        } catch (vectorError) {
-          console.warn('Vector clustering failed, falling back to text-based:', vectorError);
+        } catch (cacheError) {
+          console.warn('Failed to get cached clusters:', cacheError);
         }
       }
       
-      // Fallback to text-based clustering (Requirements: 9.5)
-      // This provides graceful degradation when AI services are unavailable
+      // No cached clusters - generate on-demand using text-based method
+      console.log(`📊 Generating clusters on-demand using text-based method`);
+      
       const feedArticlePromises = userFeeds.map(async (feed) => {
         try {
           const feedArticles = await storage.getArticlesByFeedId(feed.id, 20);
@@ -2246,6 +2272,8 @@ export async function registerRoutes(
       const feedArticlesArrays = await Promise.all(feedArticlePromises);
       const allArticles = feedArticlesArrays.flat();
       
+      console.log(`📊 Found ${allArticles.length} total articles for clustering`);
+      
       // Sort by date and take most recent
       allArticles.sort((a, b) => {
         const dateA = a.published_at ? new Date(a.published_at).getTime() : 0;
@@ -2255,15 +2283,19 @@ export async function registerRoutes(
       
       const recentArticles = allArticles.slice(0, 50);
       
-      // Generate clusters using text-based method
+      console.log(`📊 Using ${recentArticles.length} recent articles for clustering`);
+      
+      // Generate clusters using text-based method (Anthropic)
       const clusters = await clusterArticles(recentArticles);
+      
+      console.log(`📊 Generated ${clusters.length} text-based clusters`);
       
       res.json({
         clusters,
         articlesAnalyzed: recentArticles.length,
         generatedAt: new Date().toISOString(),
         method: 'text',
-        fallback: true // Indicate this is fallback data
+        onDemand: true
       });
     } catch (error) {
       console.error('Clustering error:', error);
