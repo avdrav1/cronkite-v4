@@ -6,6 +6,11 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { createServer as createNetServer } from "net";
 import { setupApp, log, logError, logSuccess } from "./app-setup";
+import { 
+  initializeAIScheduler, 
+  startAIScheduler, 
+  stopAIScheduler 
+} from "./ai-background-scheduler";
 
 const app = express();
 const httpServer = createServer(app);
@@ -143,6 +148,17 @@ async function findAvailablePort(startPort: number, maxAttempts: number = 10): P
   
   logSuccess(`✅ Port ${port} is available`);
 
+  // Initialize and start AI background scheduler after storage is ready
+  // Requirements: 3.8, 3.9, 7.1, 7.2 - Background processing for embeddings and clustering
+  log("🤖 Initializing AI background scheduler...");
+  const aiSchedulerInitialized = await initializeAIScheduler();
+  if (aiSchedulerInitialized) {
+    startAIScheduler();
+    logSuccess("✅ AI background scheduler started");
+  } else {
+    log("⚠️ AI scheduler initialization failed - AI features may be limited");
+  }
+
   httpServer.listen(
     {
       port,
@@ -180,6 +196,8 @@ async function findAvailablePort(startPort: number, maxAttempts: number = 10): P
   // Handle graceful shutdown
   process.on('SIGTERM', () => {
     log('Received SIGTERM, shutting down gracefully...');
+    // Stop AI scheduler first
+    stopAIScheduler();
     httpServer.close(() => {
       log('Server closed successfully');
       process.exit(0);
@@ -188,6 +206,8 @@ async function findAvailablePort(startPort: number, maxAttempts: number = 10): P
 
   process.on('SIGINT', () => {
     log('Received SIGINT, shutting down gracefully...');
+    // Stop AI scheduler first
+    stopAIScheduler();
     httpServer.close(() => {
       log('Server closed successfully');
       process.exit(0);

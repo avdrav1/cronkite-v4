@@ -319,7 +319,35 @@ This implementation plan builds the AI-powered embeddings and clustering system 
     - Fall back to text search
     - _Requirements: 5.8, 9.5_
 
-- [x] 16. Final checkpoint - All tests pass
+- [x] 16. Background Scheduler Integration
+  - [x] 16.1 Integrate AI scheduler into server startup
+    - Import and call `initializeAIScheduler()` in server/app-setup.ts
+    - Call `startAIScheduler()` after storage initialization
+    - Call `stopAIScheduler()` on graceful shutdown (SIGTERM/SIGINT)
+    - _Requirements: 3.8, 3.9, 7.1, 7.2_
+
+  - [x] 16.2 Add API endpoints for manual AI triggers
+    - POST /api/ai/trigger-embeddings - Manual embedding queue processing
+    - POST /api/ai/trigger-clustering - Manual cluster generation
+    - GET /api/ai/scheduler-stats - Get scheduler statistics and status
+    - _Requirements: 3.5, 3.6, 7.5_
+
+  - [x] 16.3 Verify environment variables are configured
+    - Ensure OPENAI_API_KEY is set for embedding generation
+    - Ensure ANTHROPIC_API_KEY is set for cluster labeling (optional, has fallback)
+    - Add validation warnings in startup if keys are missing
+    - _Requirements: 1.1, 2.3, 9.5_
+
+  - [x] 16.4 Test end-to-end AI pipeline
+    - Verify articles are queued for embedding after feed sync
+    - Verify embeddings are generated on schedule
+    - Verify clusters are created from embedded articles
+    - Verify clusters appear in /api/clusters endpoint
+    - _Requirements: 2.5, 3.8, 3.9, 7.1, 7.2_
+
+- [x] 17. Final checkpoint - AI pipeline operational
+  - Verify scheduler is running and processing
+  - Verify trend cards appear in frontend
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes

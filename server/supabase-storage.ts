@@ -585,89 +585,136 @@ export class SupabaseStorage implements IStorage {
       return; // All feeds already subscribed
     }
     
-    // Import feed scheduler utilities for priority inheritance
-    // Requirements: 6.6 - Inherit priority from recommended_feeds
-    const { getSyncIntervalHours, calculateNextSyncAt, isValidPriority } = await import('./feed-scheduler');
-    
-    // Create user feeds from recommended feeds
-    // Copy category from recommended_feeds to folder_name for sidebar grouping
-    // Property 15: Recommended Feed Priority Inheritance
-    const userFeedsData: InsertFeed[] = newFeeds.map(recommendedFeed => {
-      // Inherit priority from recommended_feeds (Requirements: 6.6)
-      const inheritedPriority = recommendedFeed.default_priority || 'medium';
-      const priority = isValidPriority(inheritedPriority) ? inheritedPriority : 'medium';
-      
-      // Calculate initial sync schedule based on inherited priority
-      const syncIntervalHours = getSyncIntervalHours(priority);
-      const nextSyncAt = calculateNextSyncAt(priority, null);
-      
-      console.log(`📋 Subscribing to feed "${recommendedFeed.name}" with inherited priority: ${priority}`);
-      
-      return {
-        user_id: userId,
-        name: recommendedFeed.name,
-        url: recommendedFeed.url,
-        site_url: recommendedFeed.site_url,
-        description: recommendedFeed.description,
-        icon_url: recommendedFeed.icon_url,
-        folder_name: recommendedFeed.category, // Preserve category for sidebar grouping
-        status: "active" as const,
-        priority: priority as "high" | "medium" | "low",
-        // Set initial sync schedule based on priority (Requirements: 6.6)
-        sync_priority: priority,
-        sync_interval_hours: syncIntervalHours,
-        next_sync_at: nextSyncAt,
-      };
+    // Helper to create minimal feed data (only core columns that always exist)
+    const createMinimalFeedData = (recommendedFeed: any) => ({
+      user_id: userId,
+      name: recommendedFeed.name,
+      url: recommendedFeed.url,
+      site_url: recommendedFeed.site_url,
+      description: recommendedFeed.description,
+      icon_url: recommendedFeed.icon_url,
+      status: "active" as const,
+      priority: "medium" as "high" | "medium" | "low",
     });
     
-    const { error: insertError } = await this.supabase
-      .from('feeds')
-      .insert(userFeedsData);
-    
-    if (insertError) {
-      // Check if error is related to folder_name column not existing
-      if (insertError.message.includes('folder_name') || insertError.code === '42703') {
-        console.warn('⚠️ folder_name column may not exist, retrying without it...');
-        // Retry without folder_name but keep priority inheritance
-        const userFeedsDataWithoutFolder: InsertFeed[] = newFeeds.map(recommendedFeed => {
-          const inheritedPriority = recommendedFeed.default_priority || 'medium';
-          const priority = isValidPriority(inheritedPriority) ? inheritedPriority : 'medium';
-          const syncIntervalHours = getSyncIntervalHours(priority);
-          const nextSyncAt = calculateNextSyncAt(priority, null);
-          
-          return {
-            user_id: userId,
-            name: recommendedFeed.name,
-            url: recommendedFeed.url,
-            site_url: recommendedFeed.site_url,
-            description: recommendedFeed.description,
-            icon_url: recommendedFeed.icon_url,
-            status: "active" as const,
-            priority: priority as "high" | "medium" | "low",
-            sync_priority: priority,
-            sync_interval_hours: syncIntervalHours,
-            next_sync_at: nextSyncAt,
-          };
-        });
+    // Try with all columns first, then fall back progressively
+    // Attempt 1: Full data with scheduling columns and folder_name
+    try {
+      const { getSyncIntervalHours, calculateNextSyncAt, isValidPriority } = await import('./feed-scheduler');
+      
+      const fullFeedsData = newFeeds.map(recommendedFeed => {
+        const inheritedPriority = recommendedFeed.default_priority || 'medium';
+        const priority = isValidPriority(inheritedPriority) ? inheritedPriority : 'medium';
+        const syncIntervalHours = getSyncIntervalHours(priority);
+        const nextSyncAt = calculateNextSyncAt(priority, null);
         
-        const { error: retryError } = await this.supabase
-          .from('feeds')
-          .insert(userFeedsDataWithoutFolder);
-        
-        if (retryError) {
-          throw new Error(`Failed to subscribe to feeds: ${retryError.message}`);
-        }
+        return {
+          ...createMinimalFeedData(recommendedFeed),
+          folder_name: recommendedFeed.category,
+          priority: priority as "high" | "medium" | "low",
+          sync_priority: priority,
+          sync_interval_hours: syncIntervalHours,
+          next_sync_at: nextSyncAt,
+        };
+      });
+      
+      const { error: fullError } = await this.supabase
+        .from('feeds')
+        .insert(fullFeedsData);
+      
+      if (!fullError) {
+        console.log(`✅ Subscribed to ${newFeeds.length} feeds with full scheduling`);
         return;
       }
-      // Check for duplicate key violation
-      if (insertError.code === '23505') {
-        console.warn('⚠️ Some feeds already exist, this is expected');
-        return; // Duplicate key - feeds already exist
+      
+      // Check for missing column errors
+      const errorMsg = fullError.message.toLowerCase();
+      const isMissingColumn = fullError.code === '42703' || 
+        errorMsg.includes('column') || 
+        errorMsg.includes('schema cache') ||
+        errorMsg.includes('next_sync_at') ||
+        errorMsg.includes('sync_priority') ||
+        errorMsg.includes('sync_interval') ||
+        errorMsg.includes('folder_name');
+      
+      if (!isMissingColumn) {
+        // Check for duplicate key violation
+        if (fullError.code === '23505') {
+          console.warn('⚠️ Some feeds already exist, this is expected');
+          return;
+        }
+        throw new Error(`Failed to subscribe to feeds: ${fullError.message}`);
       }
-      throw new Error(`Failed to subscribe to feeds: ${insertError.message}`);
+      
+      console.warn('⚠️ Some columns missing, trying without scheduling columns...');
+      
+      // Attempt 2: Without scheduling columns but with folder_name
+      const feedsWithFolder = newFeeds.map(recommendedFeed => ({
+        ...createMinimalFeedData(recommendedFeed),
+        folder_name: recommendedFeed.category,
+      }));
+      
+      const { error: folderError } = await this.supabase
+        .from('feeds')
+        .insert(feedsWithFolder);
+      
+      if (!folderError) {
+        console.log(`✅ Subscribed to ${newFeeds.length} feeds (without scheduling)`);
+        return;
+      }
+      
+      const folderErrorMsg = folderError.message.toLowerCase();
+      const isFolderMissing = folderError.code === '42703' || 
+        folderErrorMsg.includes('folder_name') ||
+        folderErrorMsg.includes('schema cache');
+      
+      if (!isFolderMissing) {
+        if (folderError.code === '23505') {
+          console.warn('⚠️ Some feeds already exist, this is expected');
+          return;
+        }
+        throw new Error(`Failed to subscribe to feeds: ${folderError.message}`);
+      }
+      
+      console.warn('⚠️ folder_name column missing, trying minimal insert...');
+      
+      // Attempt 3: Minimal data only (core columns)
+      const minimalFeeds = newFeeds.map(createMinimalFeedData);
+      
+      const { error: minimalError } = await this.supabase
+        .from('feeds')
+        .insert(minimalFeeds);
+      
+      if (minimalError) {
+        if (minimalError.code === '23505') {
+          console.warn('⚠️ Some feeds already exist, this is expected');
+          return;
+        }
+        throw new Error(`Failed to subscribe to feeds: ${minimalError.message}`);
+      }
+      
+      console.log(`✅ Subscribed to ${newFeeds.length} feeds (minimal mode)`);
+      
+    } catch (importError) {
+      // If feed-scheduler import fails, use minimal insert
+      console.warn('⚠️ Could not import feed-scheduler, using minimal insert');
+      
+      const minimalFeeds = newFeeds.map(createMinimalFeedData);
+      
+      const { error: minimalError } = await this.supabase
+        .from('feeds')
+        .insert(minimalFeeds);
+      
+      if (minimalError) {
+        if (minimalError.code === '23505') {
+          console.warn('⚠️ Some feeds already exist, this is expected');
+          return;
+        }
+        throw new Error(`Failed to subscribe to feeds: ${minimalError.message}`);
+      }
+      
+      console.log(`✅ Subscribed to ${newFeeds.length} feeds (minimal fallback)`);
     }
-    
-    console.log(`✅ Subscribed to ${newFeeds.length} feeds with priority inheritance`);
   }
 
   async unsubscribeFromFeed(userId: string, feedId: string): Promise<void> {
@@ -942,21 +989,53 @@ export class SupabaseStorage implements IStorage {
   }
 
   async createUserArticleState(userArticle: InsertUserArticle): Promise<UserArticle> {
+    // Try with all columns first
     const { data, error } = await this.supabase
       .from('user_articles')
       .insert(userArticle)
       .select()
       .single();
     
-    if (error || !data) {
-      throw new Error(`Failed to create user article state: ${error?.message}`);
+    if (!error && data) {
+      return data as UserArticle;
     }
     
-    return data as UserArticle;
+    // Check if error is due to missing columns (engagement_signal, engagement_signal_at)
+    const errorMsg = error?.message?.toLowerCase() || '';
+    const isMissingColumn = error?.code === '42703' || 
+      errorMsg.includes('column') || 
+      errorMsg.includes('schema cache') ||
+      errorMsg.includes('engagement_signal');
+    
+    if (isMissingColumn) {
+      console.warn('⚠️ Some columns missing in user_articles, trying without engagement columns...');
+      
+      // Remove engagement columns and retry
+      const { engagement_signal, engagement_signal_at, ...minimalUserArticle } = userArticle as any;
+      
+      const { data: retryData, error: retryError } = await this.supabase
+        .from('user_articles')
+        .insert(minimalUserArticle)
+        .select()
+        .single();
+      
+      if (retryError || !retryData) {
+        throw new Error(`Failed to create user article state: ${retryError?.message}`);
+      }
+      
+      // Return with null engagement fields for compatibility
+      return {
+        ...retryData,
+        engagement_signal: null,
+        engagement_signal_at: null
+      } as UserArticle;
+    }
+    
+    throw new Error(`Failed to create user article state: ${error?.message}`);
   }
 
   async updateUserArticleState(userId: string, articleId: string, updates: Partial<UserArticle>): Promise<UserArticle> {
-    // First try to update existing record
+    // First try to update existing record with all columns
     const { data: updateData, error: updateError } = await this.supabase
       .from('user_articles')
       .update({ ...updates, updated_at: new Date().toISOString() })
@@ -969,12 +1048,57 @@ export class SupabaseStorage implements IStorage {
       return updateData as UserArticle;
     }
     
-    // If no existing record, create new one
-    return this.createUserArticleState({
-      user_id: userId,
-      article_id: articleId,
-      ...updates
-    });
+    // Check if error is due to missing columns
+    const errorMsg = updateError?.message?.toLowerCase() || '';
+    const isMissingColumn = updateError?.code === '42703' || 
+      errorMsg.includes('column') || 
+      errorMsg.includes('schema cache') ||
+      errorMsg.includes('engagement_signal');
+    
+    if (isMissingColumn) {
+      console.warn('⚠️ Some columns missing in user_articles, trying without engagement columns...');
+      
+      // Remove engagement columns and retry
+      const { engagement_signal, engagement_signal_at, ...minimalUpdates } = updates as any;
+      
+      const { data: retryData, error: retryError } = await this.supabase
+        .from('user_articles')
+        .update({ ...minimalUpdates, updated_at: new Date().toISOString() })
+        .eq('user_id', userId)
+        .eq('article_id', articleId)
+        .select()
+        .single();
+      
+      if (!retryError && retryData) {
+        return {
+          ...retryData,
+          engagement_signal: null,
+          engagement_signal_at: null
+        } as UserArticle;
+      }
+      
+      // If update still fails, try creating new record without engagement columns
+      if (retryError?.code === 'PGRST116') {
+        return this.createUserArticleState({
+          user_id: userId,
+          article_id: articleId,
+          ...minimalUpdates
+        });
+      }
+      
+      throw new Error(`Failed to update user article state: ${retryError?.message}`);
+    }
+    
+    // If no existing record (PGRST116 = no rows returned), create new one
+    if (updateError?.code === 'PGRST116') {
+      return this.createUserArticleState({
+        user_id: userId,
+        article_id: articleId,
+        ...updates
+      });
+    }
+    
+    throw new Error(`Failed to update user article state: ${updateError?.message}`);
   }
 
   // Feed Count and Limit Management (Requirements: 5.1, 5.2)

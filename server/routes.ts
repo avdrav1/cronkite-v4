@@ -2019,6 +2019,101 @@ export async function registerRoutes(
     }
   });
 
+  // POST /api/ai/trigger-embeddings - Manual embedding queue processing
+  // Requirements: 3.5, 3.6, 7.5
+  app.post('/api/ai/trigger-embeddings', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { triggerEmbeddingProcessing } = await import('./ai-background-scheduler');
+      
+      const result = await triggerEmbeddingProcessing();
+      
+      res.json({
+        success: true,
+        message: 'Embedding processing triggered',
+        result: {
+          processed: result.processed,
+          succeeded: result.succeeded,
+          failed: result.failed
+        },
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Trigger embeddings error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'TRIGGER_EMBEDDINGS_ERROR',
+        message: 'An error occurred while triggering embedding processing'
+      });
+    }
+  });
+
+  // POST /api/ai/trigger-clustering - Manual cluster generation
+  // Requirements: 3.5, 3.6, 7.5
+  app.post('/api/ai/trigger-clustering', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const { triggerClusterGeneration } = await import('./ai-background-scheduler');
+      
+      // Generate clusters for the current user
+      const result = await triggerClusterGeneration(userId);
+      
+      res.json({
+        success: true,
+        message: 'Cluster generation triggered',
+        result: {
+          clustersCreated: result.clustersCreated,
+          articlesProcessed: result.articlesProcessed
+        },
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Trigger clustering error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'TRIGGER_CLUSTERING_ERROR',
+        message: 'An error occurred while triggering cluster generation'
+      });
+    }
+  });
+
+  // GET /api/ai/scheduler-stats - Get scheduler statistics and status
+  // Requirements: 3.5, 3.6, 7.5
+  app.get('/api/ai/scheduler-stats', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { getSchedulerStats } = await import('./ai-background-scheduler');
+      
+      const stats = getSchedulerStats();
+      
+      res.json({
+        success: true,
+        scheduler: {
+          isRunning: stats.isRunning,
+          services: stats.services,
+          stats: {
+            embeddingsProcessed: stats.embeddingsProcessed,
+            embeddingsFailed: stats.embeddingsFailed,
+            clustersGenerated: stats.clustersGenerated,
+            clustersExpired: stats.clustersExpired
+          },
+          lastRuns: {
+            embedding: stats.lastEmbeddingRun?.toISOString() || null,
+            clustering: stats.lastClusteringRun?.toISOString() || null,
+            cleanup: stats.lastCleanupRun?.toISOString() || null
+          },
+          recentErrors: stats.errors
+        },
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Get scheduler stats error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'SCHEDULER_STATS_ERROR',
+        message: 'An error occurred while retrieving scheduler statistics'
+      });
+    }
+  });
+
   // GET /api/clusters - Get trending topic clusters from user's articles
   // Requirements: 2.5, 2.7, 9.5 - Vector-based clustering with relevance scores and graceful degradation
   app.get('/api/clusters', requireAuth, async (req: Request, res: Response) => {

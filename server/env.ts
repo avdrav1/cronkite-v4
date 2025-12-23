@@ -30,6 +30,8 @@ interface OptionalEnvVars {
   NETLIFY: string;
   AWS_LAMBDA_FUNCTION_NAME: string;
   VERCEL: string;
+  OPENAI_API_KEY: string;      // Required for embedding generation
+  ANTHROPIC_API_KEY: string;   // Optional - for AI cluster labeling (has fallback)
 }
 
 // Validation functions
@@ -130,6 +132,24 @@ export function validateEnvironment(): { valid: boolean; errors: string[]; warni
     }
   }
 
+  // AI API key validation (Requirements: 1.1, 2.3, 9.5)
+  // These are optional but recommended for full AI functionality
+  const openaiKey = process.env.OPENAI_API_KEY;
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  
+  if (!openaiKey) {
+    warnings.push('OPENAI_API_KEY not set - embedding generation and semantic search will be disabled');
+  } else if (!openaiKey.startsWith('sk-')) {
+    warnings.push('OPENAI_API_KEY appears to be invalid (should start with "sk-")');
+  }
+  
+  if (!anthropicKey) {
+    // This is informational, not a warning, since there's a fallback
+    console.log('ℹ️  ANTHROPIC_API_KEY not set - cluster labeling will use fallback (first article title)');
+  } else if (!anthropicKey.startsWith('sk-ant-')) {
+    warnings.push('ANTHROPIC_API_KEY appears to be invalid (should start with "sk-ant-")');
+  }
+
   // Validate numeric environment variables
   const numericVars = ['PORT', 'RSS_SYNC_INTERVAL', 'RSS_SYNC_BATCH_SIZE', 'RSS_SYNC_MAX_ARTICLES'];
   for (const varName of numericVars) {
@@ -190,4 +210,6 @@ export const env: RequiredEnvVars & Partial<OptionalEnvVars> = {
   NETLIFY: process.env.NETLIFY,
   AWS_LAMBDA_FUNCTION_NAME: process.env.AWS_LAMBDA_FUNCTION_NAME,
   VERCEL: process.env.VERCEL,
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
 };

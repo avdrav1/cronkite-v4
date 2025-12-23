@@ -140,3 +140,19 @@ This specification defines the AI-powered embeddings and topic clustering system
 4. THE System SHALL maintain a dead letter queue for permanently failed operations
 5. WHEN AI services are unavailable, THE System SHALL continue serving cached clusters and skip new generations
 6. THE System SHALL alert administrators when error rates exceed 10% over a 1-hour window
+
+### Requirement 10: Background Scheduler for AI Processing
+
+**User Story:** As a system, I want AI processing to run automatically in the background, so that embeddings and clusters are generated without manual intervention.
+
+#### Acceptance Criteria
+
+1. THE System SHALL start the AI background scheduler when the server starts
+2. THE AI_Scheduler SHALL process the embedding queue every 30 seconds
+3. THE AI_Scheduler SHALL generate clusters every 5 minutes
+4. THE AI_Scheduler SHALL clean up expired clusters every hour
+5. THE System SHALL provide API endpoints for manual triggering of embedding processing and cluster generation
+6. THE System SHALL provide an API endpoint to view scheduler statistics (processed counts, last run times, errors)
+7. THE AI_Scheduler SHALL stop gracefully when the server receives shutdown signals (SIGTERM, SIGINT)
+8. WHEN API keys are not configured, THE System SHALL log warnings but continue operating with degraded functionality
+9. THE AI_Scheduler SHALL track and report the number of embeddings processed, failed, and clusters generated
