@@ -1833,6 +1833,58 @@ export async function registerRoutes(
     }
   });
 
+  // GET /api/articles/:id - Get a single article by ID
+  app.get('/api/articles/:id', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const articleId = req.params.id;
+      
+      if (!articleId) {
+        return res.status(400).json({
+          error: 'Missing article ID',
+          message: 'Article ID is required'
+        });
+      }
+      
+      const storage = await getStorage();
+      
+      // Get the article
+      const article = await storage.getArticleById(articleId);
+      
+      if (!article) {
+        return res.status(404).json({
+          error: 'Article not found',
+          message: 'The requested article does not exist'
+        });
+      }
+      
+      // Get the feed to include feed info
+      const feed = await storage.getFeedById(article.feed_id);
+      
+      // Get user's article state
+      const userArticleState = await storage.getUserArticleState(userId, articleId);
+      
+      res.json({
+        article: {
+          ...article,
+          feed_name: feed?.name || 'Unknown Source',
+          feed_url: feed?.url || null,
+          feed_icon: feed?.icon_url || null,
+          feed_category: feed?.folder_name || 'General',
+          is_read: userArticleState?.is_read || false,
+          is_starred: userArticleState?.is_starred || false,
+          engagement_signal: userArticleState?.engagement_signal || null
+        }
+      });
+    } catch (error) {
+      console.error('Get article error:', error);
+      res.status(500).json({
+        error: 'Failed to get article',
+        message: 'An error occurred while retrieving the article'
+      });
+    }
+  });
+
   // POST /api/articles/:id/summary - Generate AI summary for an article
   app.post('/api/articles/:id/summary', requireAuth, async (req: Request, res: Response) => {
     try {

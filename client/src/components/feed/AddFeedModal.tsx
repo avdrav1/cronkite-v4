@@ -1,10 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Search, Globe, Plus, Check, Link as LinkIcon, RefreshCw, X } from "lucide-react";
+import { Search, Globe, Plus, Check, Link as LinkIcon, RefreshCw, X, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { BROWSE_FEEDS, CATEGORIES_FILTER } from "@/lib/browse-feeds";
+import { CATEGORIES_FILTER } from "@/lib/browse-feeds";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
@@ -12,6 +12,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useInvalidateFeedsQuery } from "@/hooks/useFeedsQuery";
+
+interface RecommendedFeed {
+  id: string;
+  name: string;
+  url: string;
+  description: string | null;
+  category: string;
+  is_featured: boolean;
+  country: string | null;
+  language: string;
+  tags: string[] | null;
+}
 
 interface AddFeedModalProps {
   isOpen: boolean;
@@ -27,19 +39,59 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
   const { toast } = useToast();
   const invalidateFeedsQuery = useInvalidateFeedsQuery();
 
+  // Database feeds state
+  const [allFeeds, setAllFeeds] = useState<RecommendedFeed[]>([]);
+  const [isLoadingFeeds, setIsLoadingFeeds] = useState(false);
+  const [feedsError, setFeedsError] = useState<string | null>(null);
+
   // Custom URL State
   const [customUrl, setCustomUrl] = useState("");
   const [isValidating, setIsValidating] = useState(false);
   const [isValidFeed, setIsValidFeed] = useState(false);
   const [feedDetails, setFeedDetails] = useState<{ name: string; description?: string } | null>(null);
 
-  const filteredFeeds = BROWSE_FEEDS.filter(feed => {
-    const matchesSearch = 
-      feed.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-      feed.description.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = selectedCategory === "all" || feed.category === selectedCategory;
-    return matchesSearch && matchesCategory;
-  });
+  // Fetch feeds from database when modal opens
+  useEffect(() => {
+    if (isOpen && allFeeds.length === 0) {
+      fetchRecommendedFeeds();
+    }
+  }, [isOpen]);
+
+  const fetchRecommendedFeeds = async () => {
+    try {
+      setIsLoadingFeeds(true);
+      setFeedsError(null);
+      const response = await apiRequest('GET', '/api/feeds/recommended?limit=1000');
+      const data = await response.json();
+      if (data.feeds) {
+        setAllFeeds(data.feeds);
+      }
+    } catch (error) {
+      console.error('Failed to fetch recommended feeds:', error);
+      setFeedsError('Failed to load feeds. Please try again.');
+    } finally {
+      setIsLoadingFeeds(false);
+    }
+  };
+
+  // Filter feeds based on search and category with debounced search
+  const filteredFeeds = useMemo(() => {
+    return allFeeds.filter(feed => {
+      const searchLower = searchQuery.toLowerCase();
+      const matchesSearch = !searchQuery || 
+        feed.name.toLowerCase().includes(searchLower) || 
+        (feed.description?.toLowerCase().includes(searchLower)) ||
+        (feed.tags?.some(tag => tag.toLowerCase().includes(searchLower)));
+      
+      // Map category names for filtering
+      const feedCategory = feed.category.toLowerCase();
+      const matchesCategory = selectedCategory === "all" || 
+        feedCategory === selectedCategory.toLowerCase() ||
+        feedCategory.includes(selectedCategory.toLowerCase());
+      
+      return matchesSearch && matchesCategory;
+    });
+  }, [allFeeds, searchQuery, selectedCategory]);
 
   const handleQuickAdd = async (feedId: string, feedName: string, category: string, feedUrl: string) => {
     try {
@@ -227,59 +279,104 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
 
               {/* Feed Grid */}
               <ScrollArea className="flex-1 p-4">
-                {filteredFeeds.length > 0 ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {filteredFeeds.map((feed) => {
-                      const isAdded = addedFeeds.includes(feed.id);
-                      return (
-                        <div 
-                          key={feed.id} 
-                          className={cn(
-                            "group p-4 rounded-xl border transition-all duration-200 flex flex-col gap-2",
-                            isAdded 
-                              ? "bg-muted border-transparent" 
-                              : "bg-card border-border hover:border-primary/30 hover:shadow-md hover:-translate-y-0.5"
-                          )}
-                        >
-                          <div className="flex justify-between items-start">
-                            <div>
-                              <h3 className={cn("font-bold text-base leading-tight", isAdded ? "text-muted-foreground" : "text-foreground")}>{feed.name}</h3>
-                              <div className="text-xs text-muted-foreground font-mono mt-0.5 truncate max-w-[180px]">
-                                {new URL(feed.url).hostname.replace('www.', '')}
-                              </div>
-                            </div>
-                            {isAdded ? (
-                              <div className="flex items-center gap-1 text-xs font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-1 rounded-full">
-                                <Check className="h-3 w-3" /> Added
-                              </div>
-                            ) : (
-                              <Button 
-                                size="sm" 
-                                variant="outline" 
-                                className="h-7 text-xs gap-1 hover:bg-primary hover:text-primary-foreground hover:border-primary transition-colors"
-                                onClick={() => handleQuickAdd(feed.id, feed.name, feed.category, feed.url)}
-                              >
-                                <Plus className="h-3 w-3" /> Add
-                              </Button>
-                            )}
-                          </div>
-                          
-                          <p className="text-sm text-muted-foreground line-clamp-2 leading-relaxed">
-                            {feed.description}
-                          </p>
-                          
-                          <div className="mt-auto pt-2 text-xs text-muted-foreground font-medium">
-                            ~{feed.articlesPerDay} articles/day
-                          </div>
-                        </div>
-                      );
-                    })}
+                {isLoadingFeeds ? (
+                  <div className="flex flex-col items-center justify-center h-40 text-muted-foreground">
+                    <Loader2 className="h-8 w-8 animate-spin mb-2" />
+                    <p>Loading feeds...</p>
                   </div>
+                ) : feedsError ? (
+                  <div className="flex flex-col items-center justify-center h-40 text-muted-foreground">
+                    <p className="text-red-500 mb-2">{feedsError}</p>
+                    <Button variant="outline" onClick={fetchRecommendedFeeds}>
+                      <RefreshCw className="h-4 w-4 mr-2" /> Retry
+                    </Button>
+                  </div>
+                ) : filteredFeeds.length > 0 ? (
+                  <>
+                    <div className="text-xs text-muted-foreground mb-3">
+                      Showing {filteredFeeds.length} of {allFeeds.length} feeds
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {filteredFeeds.slice(0, 50).map((feed) => {
+                        const isAdded = addedFeeds.includes(feed.id);
+                        return (
+                          <div 
+                            key={feed.id} 
+                            className={cn(
+                              "group p-4 rounded-xl border transition-all duration-200 flex flex-col gap-2",
+                              isAdded 
+                                ? "bg-muted border-transparent" 
+                                : "bg-card border-border hover:border-primary/30 hover:shadow-md hover:-translate-y-0.5"
+                            )}
+                          >
+                            <div className="flex justify-between items-start">
+                              <div className="flex-1 min-w-0">
+                                <h3 className={cn("font-bold text-base leading-tight truncate", isAdded ? "text-muted-foreground" : "text-foreground")}>{feed.name}</h3>
+                                <div className="text-xs text-muted-foreground font-mono mt-0.5 truncate">
+                                  {(() => {
+                                    try {
+                                      return new URL(feed.url).hostname.replace('www.', '');
+                                    } catch {
+                                      return feed.url;
+                                    }
+                                  })()}
+                                </div>
+                              </div>
+                              {isAdded ? (
+                                <div className="flex items-center gap-1 text-xs font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-1 rounded-full shrink-0">
+                                  <Check className="h-3 w-3" /> Added
+                                </div>
+                              ) : (
+                                <Button 
+                                  size="sm" 
+                                  variant="outline" 
+                                  className="h-7 text-xs gap-1 hover:bg-primary hover:text-primary-foreground hover:border-primary transition-colors shrink-0"
+                                  onClick={() => handleQuickAdd(feed.id, feed.name, feed.category, feed.url)}
+                                >
+                                  <Plus className="h-3 w-3" /> Add
+                                </Button>
+                              )}
+                            </div>
+                            
+                            {feed.description && (
+                              <p className="text-sm text-muted-foreground line-clamp-2 leading-relaxed">
+                                {feed.description}
+                              </p>
+                            )}
+                            
+                            <div className="mt-auto pt-2 flex items-center gap-2 flex-wrap">
+                              <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">
+                                {feed.category}
+                              </span>
+                              {feed.is_featured && (
+                                <span className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-900/20 px-2 py-0.5 rounded">
+                                  Featured
+                                </span>
+                              )}
+                              {feed.language && feed.language !== 'en' && (
+                                <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">
+                                  {feed.language.toUpperCase()}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {filteredFeeds.length > 50 && (
+                      <div className="text-center text-sm text-muted-foreground mt-4 py-2">
+                        Showing first 50 results. Use search to find more specific feeds.
+                      </div>
+                    )}
+                  </>
                 ) : (
                   <div className="flex flex-col items-center justify-center h-40 text-muted-foreground">
-                    <p>No feeds found matching your filters.</p>
+                    <p>No feeds found matching "{searchQuery}"</p>
+                    <Button variant="link" onClick={() => { setSearchQuery(""); setSelectedCategory("all"); }}>
+                      Clear filters
+                    </Button>
                     <Button variant="link" onClick={() => setActiveTab("custom")}>
-                      Try adding a custom URL instead?
+                      Or add a custom URL
                     </Button>
                   </div>
                 )}

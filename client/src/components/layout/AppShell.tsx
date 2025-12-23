@@ -31,6 +31,7 @@ import { AddFeedModal } from "@/components/feed/AddFeedModal";
 import { FeedsList } from "@/components/layout/FeedsList";
 import { TrendingClusters } from "@/components/trending/TrendingClusters";
 import { SemanticSearch } from "@/components/search/SemanticSearch";
+import { AIStatusIndicator } from "@/components/trending/AIStatusIndicator";
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -90,8 +91,8 @@ export function AppShell({ children }: AppShellProps) {
             <SemanticSearch 
               placeholder="Search articles, feeds, or topics..."
               onArticleClick={(articleId) => {
-                // Navigate to article or open article sheet
-                console.log('Search result clicked:', articleId);
+                // Navigate to home with article ID in URL to trigger article sheet
+                setLocation(`/?article=${articleId}`);
               }}
             />
           </div>
@@ -182,6 +183,9 @@ export function AppShell({ children }: AppShellProps) {
             </nav>
 
             <TrendingClusters />
+
+            {/* AI Status Indicator - Shows when clusters are being generated */}
+            <AIStatusIndicator />
 
             <FeedsList />
           </div>

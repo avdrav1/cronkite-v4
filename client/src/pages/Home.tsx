@@ -71,12 +71,13 @@ export default function Home() {
   const searchString = useSearch();
   
   // Parse URL params reactively using wouter's useSearch
-  const { sourceFilter, categoryFilter, urlFilter } = useMemo(() => {
+  const { sourceFilter, categoryFilter, urlFilter, articleIdFromUrl } = useMemo(() => {
     const params = new URLSearchParams(searchString);
     return {
       sourceFilter: params.get("source"),
       categoryFilter: params.get("category"),
-      urlFilter: params.get("filter") // "starred", "unread", or "read" from side nav
+      urlFilter: params.get("filter"), // "starred", "unread", or "read" from side nav
+      articleIdFromUrl: params.get("article") // Article ID from search result click
     };
   }, [searchString, filterKey]);
   
@@ -106,6 +107,58 @@ export default function Home() {
       window.removeEventListener('popstate', handleFilterChange);
     };
   }, []);
+
+  // Handle article ID from URL (from search results)
+  useEffect(() => {
+    if (articleIdFromUrl && articles.length > 0) {
+      const article = articles.find(a => a.id === articleIdFromUrl);
+      if (article) {
+        setSelectedArticle(article);
+        // Clear the article param from URL after opening
+        setLocation("/", { replace: true });
+      } else {
+        // Article not in current list - fetch it directly
+        const fetchArticleById = async () => {
+          try {
+            const response = await apiRequest('GET', `/api/articles/${articleIdFromUrl}`);
+            const data = await response.json();
+            if (data.article) {
+              const articleWithState: ArticleWithFeed = {
+                ...data.article,
+                id: data.article.id,
+                title: data.article.title,
+                url: data.article.url,
+                excerpt: data.article.excerpt || data.article.content?.substring(0, 200) + '...',
+                content: data.article.content,
+                author: data.article.author,
+                date: data.article.published_at || data.article.created_at,
+                published_at: data.article.published_at,
+                source: data.article.feed_name || 'Unknown Source',
+                image: data.article.image_url,
+                imageUrl: data.article.image_url,
+                readTime: Math.max(1, Math.floor((data.article.content?.length || 0) / 200)) + ' min read',
+                relevancyScore: 75,
+                tags: [],
+                isRead: data.article.is_read || false,
+                isStarred: data.article.is_starred || false,
+                engagementSignal: data.article.engagement_signal || null,
+                feed_name: data.article.feed_name,
+                feed_url: data.article.feed_url,
+                feed_icon: data.article.feed_icon,
+                feed_category: data.article.feed_category || 'General'
+              };
+              setSelectedArticle(articleWithState);
+              // Clear the article param from URL after opening
+              setLocation("/", { replace: true });
+            }
+          } catch (err) {
+            console.error('Failed to fetch article by ID:', err);
+          }
+        };
+        fetchArticleById();
+      }
+    }
+  }, [articleIdFromUrl, articles, setLocation]);
 
   // Fetch articles from API
   const fetchArticles = async () => {
