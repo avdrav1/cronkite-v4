@@ -3,7 +3,6 @@ import { Link, useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import {
-  Search,
   Settings,
   Menu,
   Plus,
@@ -14,7 +13,6 @@ import {
   LogOut
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -31,6 +29,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { AddFeedModal } from "@/components/feed/AddFeedModal";
 import { FeedsList } from "@/components/layout/FeedsList";
 import { TrendingClusters } from "@/components/trending/TrendingClusters";
+import { SemanticSearch } from "@/components/search/SemanticSearch";
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -68,13 +67,15 @@ export function AppShell({ children }: AppShellProps) {
             </span>
           </Link>
 
-          {/* Search Bar */}
-          <div className="w-full max-w-xl mx-auto px-4 relative group">
-             <Search className="absolute left-7 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
-             <Input
-               placeholder="Search articles, feeds, or topics..."
-               className="pl-10 h-11 bg-muted/50 border-transparent focus:bg-background focus:border-primary/20 transition-all rounded-full shadow-sm hover:bg-muted/80 w-full"
-             />
+          {/* Semantic Search Bar - Requirements: 5.1, 5.4, 5.6 */}
+          <div className="w-full max-w-xl mx-auto px-4">
+            <SemanticSearch 
+              placeholder="Search articles, feeds, or topics..."
+              onArticleClick={(articleId) => {
+                // Navigate to article or open article sheet
+                console.log('Search result clicked:', articleId);
+              }}
+            />
           </div>
 
           {/* Sidebar Toggle - Absolute Left */}

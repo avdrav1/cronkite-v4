@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { Folder, Rss, ChevronDown, ChevronRight, Plus, RefreshCw, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useFeedsQuery, useInvalidateFeedsQuery } from "@/hooks/useFeedsQuery";
+import { useFeedsQuery, useInvalidateFeedsQuery, useFeedCountQuery } from "@/hooks/useFeedsQuery";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Feed } from "@shared/schema";
@@ -116,6 +116,7 @@ export function groupFeedsByCategory(feeds: Feed[]): GroupedFeeds {
 
 export function FeedsList({ onFeedSelect, onCategorySelect }: FeedsListProps) {
   const { data, isLoading, error } = useFeedsQuery();
+  const { data: feedCountData } = useFeedCountQuery();
   const invalidateFeedsQuery = useInvalidateFeedsQuery();
   const [location, setLocation] = useLocation();
   const { toast } = useToast();
@@ -317,9 +318,21 @@ export function FeedsList({ onFeedSelect, onCategorySelect }: FeedsListProps) {
   return (
     <div className="space-y-4">
       <div className="px-3 flex items-center justify-between">
-        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-          Feeds
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+            Feeds
+          </span>
+          {feedCountData && (
+            <span className={cn(
+              "text-xs font-medium px-1.5 py-0.5 rounded",
+              feedCountData.isNearLimit 
+                ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" 
+                : "bg-muted text-muted-foreground"
+            )}>
+              {feedCountData.currentCount}/{feedCountData.maxAllowed}
+            </span>
+          )}
+        </div>
         {/* Sync All Button - Requirements: 2.1, 2.4 */}
         <Button
           variant="ghost"

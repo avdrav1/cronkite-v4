@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { TrendingUp, ChevronRight, Loader2, Sparkles } from "lucide-react";
+import { TrendingUp, ChevronRight, Loader2, Sparkles, Users, BarChart3 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { formatDistanceToNow } from "date-fns";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface ArticleCluster {
   id: string;
@@ -14,6 +15,8 @@ interface ArticleCluster {
   sources: string[];
   latestTimestamp: string;
   relevanceScore: number;
+  avgSimilarity?: number;
+  generationMethod?: string;
 }
 
 interface TrendingClustersProps {
@@ -80,60 +83,91 @@ export function TrendingClusters({ onClusterClick, className }: TrendingClusters
   }
 
   return (
-    <div className={cn("space-y-4", className)}>
-      <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground uppercase tracking-wider px-1">
-        <TrendingUp className="h-4 w-4" />
-        Trending Topics
-      </div>
-      
-      <div className="space-y-2">
-        <AnimatePresence>
-          {clusters.map((cluster, index) => (
-            <motion.button
-              key={cluster.id}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ delay: index * 0.1 }}
-              onClick={() => onClusterClick?.(cluster)}
-              className="w-full text-left p-3 rounded-lg bg-gradient-to-r from-primary/5 to-primary/10 hover:from-primary/10 hover:to-primary/15 border border-primary/10 hover:border-primary/20 transition-all group"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs font-bold text-primary bg-primary/10 px-1.5 py-0.5 rounded">
-                      {cluster.articleCount} articles
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {formatDistanceToNow(new Date(cluster.latestTimestamp), { addSuffix: true })}
-                    </span>
-                  </div>
-                  <h4 className="font-semibold text-sm text-foreground group-hover:text-primary transition-colors line-clamp-1">
-                    {cluster.topic}
-                  </h4>
-                  <p className="text-xs text-muted-foreground line-clamp-2 mt-1">
-                    {cluster.summary}
-                  </p>
-                  <div className="flex items-center gap-1 mt-2 flex-wrap">
-                    {cluster.sources.slice(0, 3).map((source, i) => (
-                      <span key={i} className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                        {source}
+    <TooltipProvider>
+      <div className={cn("space-y-4", className)}>
+        <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground uppercase tracking-wider px-1">
+          <TrendingUp className="h-4 w-4" />
+          Trending Topics
+        </div>
+        
+        <div className="space-y-2">
+          <AnimatePresence>
+            {clusters.map((cluster, index) => (
+              <motion.button
+                key={cluster.id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ delay: index * 0.1 }}
+                onClick={() => onClusterClick?.(cluster)}
+                className="w-full text-left p-3 rounded-lg bg-gradient-to-r from-primary/5 to-primary/10 hover:from-primary/10 hover:to-primary/15 border border-primary/10 hover:border-primary/20 transition-all group"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      <span className="text-xs font-bold text-primary bg-primary/10 px-1.5 py-0.5 rounded">
+                        {cluster.articleCount} articles
                       </span>
-                    ))}
-                    {cluster.sources.length > 3 && (
-                      <span className="text-[10px] text-muted-foreground">
-                        +{cluster.sources.length - 3} more
+                      
+                      {/* Source diversity indicator - Requirements: 2.7 */}
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded cursor-help">
+                            <Users className="h-3 w-3" />
+                            {cluster.sources.length} sources
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="text-xs">Coverage from {cluster.sources.length} different news sources</p>
+                        </TooltipContent>
+                      </Tooltip>
+                      
+                      {/* Relevance score indicator - Requirements: 2.7 */}
+                      {cluster.relevanceScore > 0 && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded cursor-help">
+                              <BarChart3 className="h-3 w-3" />
+                              {Math.round(cluster.relevanceScore)}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p className="text-xs">Relevance score: {cluster.articleCount} articles × {cluster.sources.length} sources</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                      
+                      <span className="text-xs text-muted-foreground">
+                        {formatDistanceToNow(new Date(cluster.latestTimestamp), { addSuffix: true })}
                       </span>
-                    )}
+                    </div>
+                    <h4 className="font-semibold text-sm text-foreground group-hover:text-primary transition-colors line-clamp-1">
+                      {cluster.topic}
+                    </h4>
+                    <p className="text-xs text-muted-foreground line-clamp-2 mt-1">
+                      {cluster.summary}
+                    </p>
+                    <div className="flex items-center gap-1 mt-2 flex-wrap">
+                      {cluster.sources.slice(0, 3).map((source, i) => (
+                        <span key={i} className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                          {source}
+                        </span>
+                      ))}
+                      {cluster.sources.length > 3 && (
+                        <span className="text-[10px] text-muted-foreground">
+                          +{cluster.sources.length - 3} more
+                        </span>
+                      )}
+                    </div>
                   </div>
+                  <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors shrink-0 mt-1" />
                 </div>
-                <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors shrink-0 mt-1" />
-              </div>
-            </motion.button>
-          ))}
-        </AnimatePresence>
+              </motion.button>
+            ))}
+          </AnimatePresence>
+        </div>
       </div>
-    </div>
+    </TooltipProvider>
   );
 }
 

@@ -15,7 +15,10 @@ import {
   Trash2,
   Edit2,
   Play,
-  Info
+  Info,
+  Clock,
+  Zap,
+  Timer
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,8 +28,11 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
-import { formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow, format } from "date-fns";
 import {
   Dialog,
   DialogContent,
@@ -46,6 +52,8 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
+import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 import { AddFeedModal } from "@/components/feed/AddFeedModal";
 
@@ -60,6 +68,8 @@ interface Feed {
   status: 'active' | 'paused' | 'error';
   priority: 'high' | 'medium' | 'low';
   last_fetched_at?: string;
+  next_sync_at?: string;
+  sync_interval_hours?: number;
   article_count: number;
   folder_name?: string;
   created_at: string;
@@ -73,6 +83,13 @@ interface FeedCountResponse {
   remaining: number;
   isNearLimit: boolean;
 }
+
+// Priority configuration - Requirements: 6.1, 6.3
+const PRIORITY_CONFIG = {
+  high: { label: 'High', interval: '1 hour', icon: Zap, color: 'text-red-500' },
+  medium: { label: 'Medium', interval: '24 hours', icon: Clock, color: 'text-amber-500' },
+  low: { label: 'Low', interval: '7 days', icon: Timer, color: 'text-blue-500' }
+} as const;
 
 export function FeedManagement() {
   const [feeds, setFeeds] = useState<Feed[]>([]);
@@ -215,6 +232,30 @@ export function FeedManagement() {
     }
   };
 
+  // Handle feed priority change - Requirements: 6.1, 6.2
+  const handlePriorityChange = async (feedId: string, newPriority: 'high' | 'medium' | 'low') => {
+    try {
+      await apiRequest('PUT', `/api/feeds/${feedId}/priority`, { priority: newPriority });
+      
+      const config = PRIORITY_CONFIG[newPriority];
+      toast({
+        title: "Priority Updated",
+        description: `Feed will now sync every ${config.interval}.`,
+      });
+      
+      // Refresh feeds list to show updated schedule
+      await fetchFeeds();
+    } catch (error) {
+      console.error('Failed to update priority:', error);
+      toast({
+        variant: "destructive",
+        title: "Failed to update priority",
+        description: error instanceof Error ? error.message : "An error occurred while updating feed priority.",
+        duration: 5000,
+      });
+    }
+  };
+
   // Handle feed refresh callback from AddFeedModal
   const handleFeedAdded = () => {
     fetchFeeds();
@@ -246,6 +287,18 @@ export function FeedManagement() {
       case 'error': return <AlertTriangle className="h-4 w-4 text-red-500" />;
       default: return null;
     }
+  };
+
+  // Get priority badge component - Requirements: 6.1
+  const getPriorityBadge = (priority: Feed['priority']) => {
+    const config = PRIORITY_CONFIG[priority];
+    const Icon = config.icon;
+    return (
+      <Badge variant="outline" className={cn("text-xs gap-1", config.color)}>
+        <Icon className="h-3 w-3" />
+        {config.label}
+      </Badge>
+    );
   };
 
   // Loading state
@@ -395,6 +448,7 @@ export function FeedManagement() {
               </button>
 
               {isExpanded && (
+                <TooltipProvider>
                 <div className="pl-4 space-y-3">
                   {folderFeeds.map(feed => (
                     <div 
@@ -403,10 +457,12 @@ export function FeedManagement() {
                     >
                       <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-3 mb-1">
+                          <div className="flex items-center gap-3 mb-1 flex-wrap">
                             <div className={cn("w-2 h-2 rounded-full shrink-0", getStatusColor(feed.status))} />
                             <h3 className="font-bold text-base truncate">{feed.name}</h3>
                             {getStatusIcon(feed.status)}
+                            {/* Priority Badge - Requirements: 6.1 */}
+                            {getPriorityBadge(feed.priority)}
                             {feed.status === 'error' && (
                               <span className="text-xs text-red-500 font-medium bg-red-500/10 px-2 py-0.5 rounded">
                                 Error syncing
@@ -428,15 +484,25 @@ export function FeedManagement() {
                               <RefreshCw className="h-3 w-3" />
                               Last sync: {feed.last_fetched_at ? formatDistanceToNow(new Date(feed.last_fetched_at), { addSuffix: true }) : 'Never'}
                             </div>
+                            {/* Next sync schedule - Requirements: 6.4 */}
+                            {feed.next_sync_at && feed.status === 'active' && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <div className="flex items-center gap-1.5 cursor-help">
+                                    <Clock className="h-3 w-3" />
+                                    Next: {formatDistanceToNow(new Date(feed.next_sync_at), { addSuffix: true })}
+                                  </div>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p className="text-xs">Scheduled: {format(new Date(feed.next_sync_at), 'PPp')}</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            )}
                             <div>{feed.article_count} articles</div>
                             <div className="flex items-center gap-1.5">
-                              Priority: 
-                              <span className={cn(
-                                "font-medium capitalize",
-                                feed.priority === 'high' ? "text-primary" : 
-                                feed.priority === 'low' ? "text-muted-foreground" : "text-foreground"
-                              )}>
-                                {feed.priority}
+                              Syncs every: 
+                              <span className="font-medium">
+                                {PRIORITY_CONFIG[feed.priority].interval}
                               </span>
                             </div>
                           </div>
@@ -464,6 +530,38 @@ export function FeedManagement() {
                                <DropdownMenuItem>
                                  <Edit2 className="h-4 w-4 mr-2" /> Edit
                                </DropdownMenuItem>
+                               {/* Priority submenu - Requirements: 6.1, 6.2 */}
+                               <DropdownMenuSub>
+                                 <DropdownMenuSubTrigger>
+                                   <Clock className="h-4 w-4 mr-2" /> Set Priority
+                                 </DropdownMenuSubTrigger>
+                                 <DropdownMenuSubContent>
+                                   <DropdownMenuItem 
+                                     onClick={() => handlePriorityChange(feed.id, 'high')}
+                                     className={cn(feed.priority === 'high' && "bg-primary/10")}
+                                   >
+                                     <Zap className="h-4 w-4 mr-2 text-red-500" /> 
+                                     High (hourly)
+                                     {feed.priority === 'high' && <span className="ml-auto text-primary">✓</span>}
+                                   </DropdownMenuItem>
+                                   <DropdownMenuItem 
+                                     onClick={() => handlePriorityChange(feed.id, 'medium')}
+                                     className={cn(feed.priority === 'medium' && "bg-primary/10")}
+                                   >
+                                     <Clock className="h-4 w-4 mr-2 text-amber-500" /> 
+                                     Medium (daily)
+                                     {feed.priority === 'medium' && <span className="ml-auto text-primary">✓</span>}
+                                   </DropdownMenuItem>
+                                   <DropdownMenuItem 
+                                     onClick={() => handlePriorityChange(feed.id, 'low')}
+                                     className={cn(feed.priority === 'low' && "bg-primary/10")}
+                                   >
+                                     <Timer className="h-4 w-4 mr-2 text-blue-500" /> 
+                                     Low (weekly)
+                                     {feed.priority === 'low' && <span className="ml-auto text-primary">✓</span>}
+                                   </DropdownMenuItem>
+                                 </DropdownMenuSubContent>
+                               </DropdownMenuSub>
                                {feed.status === 'paused' ? (
                                  <DropdownMenuItem 
                                    className="text-emerald-600 focus:text-emerald-600 focus:bg-emerald-50 dark:focus:bg-emerald-900/20"
@@ -490,6 +588,7 @@ export function FeedManagement() {
                     </div>
                   ))}
                 </div>
+                </TooltipProvider>
               )}
             </div>
           );

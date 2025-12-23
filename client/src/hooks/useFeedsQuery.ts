@@ -11,6 +11,16 @@ export interface UserFeedsResponse {
 }
 
 /**
+ * Response type from /api/feeds/count endpoint
+ */
+export interface FeedCountResponse {
+  currentCount: number;
+  maxAllowed: number;
+  remaining: number;
+  isNearLimit: boolean;
+}
+
+/**
  * Hook for fetching user's subscribed feeds
  * Uses TanStack Query with 5-minute stale time for caching
  * 
@@ -40,7 +50,25 @@ export function useInvalidateFeedsQuery() {
   
   return () => {
     queryClient.invalidateQueries({ queryKey: ['user-feeds'] });
+    queryClient.invalidateQueries({ queryKey: ['feed-count'] });
   };
+}
+
+/**
+ * Hook for fetching user's feed count and capacity
+ * Uses TanStack Query with 1-minute stale time for more frequent updates
+ * 
+ * Requirements: 5.1, 5.2, 5.3, 5.4
+ */
+export function useFeedCountQuery() {
+  return useQuery<FeedCountResponse>({
+    queryKey: ['feed-count'],
+    queryFn: async () => {
+      const response = await apiRequest('GET', '/api/feeds/count');
+      return response.json();
+    },
+    staleTime: 60 * 1000, // 1 minute
+  });
 }
 
 export default useFeedsQuery;

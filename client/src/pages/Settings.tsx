@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AppearanceSettings } from "@/components/settings/AppearanceSettings";
 import { FeedManagement } from "@/components/settings/FeedManagement";
+import { AIUsageSettings } from "@/components/settings/AIUsageSettings";
 import { Link, useLocation } from "wouter";
 
 const SETTINGS_TABS = [
@@ -43,7 +44,7 @@ export default function SettingsPage() {
       case 'digest':
         return <div className="p-8 text-muted-foreground">Digest settings coming soon...</div>;
       case 'ai':
-        return <div className="p-8 text-muted-foreground">AI settings coming soon...</div>;
+        return <AIUsageSettings />;
       case 'account':
         return <div className="p-8 text-muted-foreground">Account settings coming soon...</div>;
       default:

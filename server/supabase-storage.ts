@@ -18,6 +18,9 @@ import {
   type InsertUserArticle,
   type Cluster,
   type InsertCluster,
+  type InsertAIUsageLog,
+  type InsertAIUsageDaily,
+  type FeedPriority,
   MAX_FEEDS_PER_USER,
   type EngagementSignal
 } from "@shared/schema";
@@ -495,27 +498,105 @@ export class SupabaseStorage implements IStorage {
       return; // No feeds to subscribe to
     }
     
+    // Get existing user feeds to avoid duplicates
+    const { data: existingFeeds } = await this.supabase
+      .from('feeds')
+      .select('url')
+      .eq('user_id', userId);
+    
+    const existingUrls = new Set((existingFeeds || []).map(f => f.url));
+    
+    // Filter out feeds the user already has
+    const newFeeds = recommendedFeeds.filter(rf => !existingUrls.has(rf.url));
+    
+    if (newFeeds.length === 0) {
+      console.log('All requested feeds already subscribed');
+      return; // All feeds already subscribed
+    }
+    
+    // Import feed scheduler utilities for priority inheritance
+    // Requirements: 6.6 - Inherit priority from recommended_feeds
+    const { getSyncIntervalHours, calculateNextSyncAt, isValidPriority } = await import('./feed-scheduler');
+    
     // Create user feeds from recommended feeds
     // Copy category from recommended_feeds to folder_name for sidebar grouping
-    const userFeedsData: InsertFeed[] = recommendedFeeds.map(recommendedFeed => ({
-      user_id: userId,
-      name: recommendedFeed.name,
-      url: recommendedFeed.url,
-      site_url: recommendedFeed.site_url,
-      description: recommendedFeed.description,
-      icon_url: recommendedFeed.icon_url,
-      folder_name: recommendedFeed.category, // Preserve category for sidebar grouping
-      status: "active" as const,
-      priority: "medium" as const,
-    }));
+    // Property 15: Recommended Feed Priority Inheritance
+    const userFeedsData: InsertFeed[] = newFeeds.map(recommendedFeed => {
+      // Inherit priority from recommended_feeds (Requirements: 6.6)
+      const inheritedPriority = recommendedFeed.default_priority || 'medium';
+      const priority = isValidPriority(inheritedPriority) ? inheritedPriority : 'medium';
+      
+      // Calculate initial sync schedule based on inherited priority
+      const syncIntervalHours = getSyncIntervalHours(priority);
+      const nextSyncAt = calculateNextSyncAt(priority, null);
+      
+      console.log(`📋 Subscribing to feed "${recommendedFeed.name}" with inherited priority: ${priority}`);
+      
+      return {
+        user_id: userId,
+        name: recommendedFeed.name,
+        url: recommendedFeed.url,
+        site_url: recommendedFeed.site_url,
+        description: recommendedFeed.description,
+        icon_url: recommendedFeed.icon_url,
+        folder_name: recommendedFeed.category, // Preserve category for sidebar grouping
+        status: "active" as const,
+        priority: priority as "high" | "medium" | "low",
+        // Set initial sync schedule based on priority (Requirements: 6.6)
+        sync_priority: priority,
+        sync_interval_hours: syncIntervalHours,
+        next_sync_at: nextSyncAt,
+      };
+    });
     
     const { error: insertError } = await this.supabase
       .from('feeds')
       .insert(userFeedsData);
     
     if (insertError) {
+      // Check if error is related to folder_name column not existing
+      if (insertError.message.includes('folder_name') || insertError.code === '42703') {
+        console.warn('⚠️ folder_name column may not exist, retrying without it...');
+        // Retry without folder_name but keep priority inheritance
+        const userFeedsDataWithoutFolder: InsertFeed[] = newFeeds.map(recommendedFeed => {
+          const inheritedPriority = recommendedFeed.default_priority || 'medium';
+          const priority = isValidPriority(inheritedPriority) ? inheritedPriority : 'medium';
+          const syncIntervalHours = getSyncIntervalHours(priority);
+          const nextSyncAt = calculateNextSyncAt(priority, null);
+          
+          return {
+            user_id: userId,
+            name: recommendedFeed.name,
+            url: recommendedFeed.url,
+            site_url: recommendedFeed.site_url,
+            description: recommendedFeed.description,
+            icon_url: recommendedFeed.icon_url,
+            status: "active" as const,
+            priority: priority as "high" | "medium" | "low",
+            sync_priority: priority,
+            sync_interval_hours: syncIntervalHours,
+            next_sync_at: nextSyncAt,
+          };
+        });
+        
+        const { error: retryError } = await this.supabase
+          .from('feeds')
+          .insert(userFeedsDataWithoutFolder);
+        
+        if (retryError) {
+          throw new Error(`Failed to subscribe to feeds: ${retryError.message}`);
+        }
+        return;
+      }
+      // Check for duplicate key violation
+      if (insertError.code === '23505') {
+        console.warn('⚠️ Some feeds already exist, this is expected');
+        return; // Duplicate key - feeds already exist
+      }
       throw new Error(`Failed to subscribe to feeds: ${insertError.message}`);
     }
+    
+    console.log(`✅ Subscribed to ${newFeeds.length} feeds with priority inheritance`);
   }
 
   async unsubscribeFromFeed(userId: string, feedId: string): Promise<void> {
@@ -962,5 +1043,812 @@ export class SupabaseStorage implements IStorage {
     }));
     
     return result;
+  }
+
+  // ============================================================================
+  // Embedding Queue Management (Requirements: 1.2, 7.1)
+  // ============================================================================
+
+  async addToEmbeddingQueue(articleIds: string[], priority: number = 0): Promise<void> {
+    if (articleIds.length === 0) {
+      return;
+    }
+    
+    const queueItems = articleIds.map(articleId => ({
+      article_id: articleId,
+      priority,
+      attempts: 0,
+      max_attempts: 3,
+      status: 'pending',
+    }));
+    
+    // Use upsert to avoid duplicates
+    const { error } = await this.supabase
+      .from('embedding_queue')
+      .upsert(queueItems, { 
+        onConflict: 'article_id',
+        ignoreDuplicates: true 
+      });
+    
+    if (error) {
+      // If upsert fails, try insert with conflict handling
+      console.warn(`⚠️ Embedding queue upsert failed: ${error.message}, trying insert...`);
+      for (const item of queueItems) {
+        try {
+          await this.supabase
+            .from('embedding_queue')
+            .insert(item);
+        } catch (insertError) {
+          // Ignore duplicate key errors
+          console.warn(`⚠️ Could not add article ${item.article_id} to queue (may already exist)`);
+        }
+      }
+    }
+  }
+
+  async getEmbeddingQueueItems(limit: number, status?: string): Promise<Array<{
+    id: string;
+    article_id: string;
+    priority: number;
+    attempts: number;
+    max_attempts: number;
+    last_attempt_at: Date | null;
+    error_message: string | null;
+    status: string;
+    created_at: Date;
+    updated_at: Date;
+  }>> {
+    let query = this.supabase
+      .from('embedding_queue')
+      .select('*')
+      .order('priority', { ascending: false })
+      .order('created_at', { ascending: true })
+      .limit(limit);
+    
+    if (status) {
+      query = query.eq('status', status);
+    }
+    
+    const { data, error } = await query;
+    
+    if (error) {
+      throw new Error(`Failed to get embedding queue items: ${error.message}`);
+    }
+    
+    return (data || []).map((item: any) => ({
+      id: item.id,
+      article_id: item.article_id,
+      priority: item.priority,
+      attempts: item.attempts,
+      max_attempts: item.max_attempts,
+      last_attempt_at: item.last_attempt_at ? new Date(item.last_attempt_at) : null,
+      error_message: item.error_message,
+      status: item.status,
+      created_at: new Date(item.created_at),
+      updated_at: new Date(item.updated_at),
+    }));
+  }
+
+  async updateEmbeddingQueueItem(id: string, updates: Partial<{
+    priority: number;
+    attempts: number;
+    last_attempt_at: Date | null;
+    error_message: string | null;
+    status: string;
+  }>): Promise<void> {
+    const { error } = await this.supabase
+      .from('embedding_queue')
+      .update({
+        ...updates,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id);
+    
+    if (error) {
+      throw new Error(`Failed to update embedding queue item: ${error.message}`);
+    }
+  }
+
+  async removeFromEmbeddingQueue(articleId: string): Promise<void> {
+    const { error } = await this.supabase
+      .from('embedding_queue')
+      .delete()
+      .eq('article_id', articleId);
+    
+    if (error) {
+      throw new Error(`Failed to remove from embedding queue: ${error.message}`);
+    }
+  }
+
+  async getEmbeddingQueueCount(status?: string): Promise<number> {
+    let query = this.supabase
+      .from('embedding_queue')
+      .select('*', { count: 'exact', head: true });
+    
+    if (status) {
+      query = query.eq('status', status);
+    }
+    
+    const { count, error } = await query;
+    
+    if (error) {
+      throw new Error(`Failed to get embedding queue count: ${error.message}`);
+    }
+    
+    return count || 0;
+  }
+
+  // ============================================================================
+  // Article Embedding Management (Requirements: 1.4, 7.3)
+  // ============================================================================
+
+  async getArticleById(id: string): Promise<Article | undefined> {
+    const { data, error } = await this.supabase
+      .from('articles')
+      .select('*')
+      .eq('id', id)
+      .single();
+    
+    if (error || !data) {
+      return undefined;
+    }
+    
+    return data as Article;
+  }
+
+  async updateArticleEmbedding(
+    articleId: string,
+    embedding: number[],
+    contentHash: string,
+    status: 'completed' | 'failed',
+    error?: string
+  ): Promise<void> {
+    const updates: Record<string, any> = {
+      embedding_status: status,
+      content_hash: contentHash || null,
+      embedding_error: error || null,
+    };
+    
+    if (status === 'completed' && embedding.length > 0) {
+      // Store embedding as JSON string (will be converted to vector by database)
+      updates.embedding = JSON.stringify(embedding);
+      updates.embedding_generated_at = new Date().toISOString();
+    }
+    
+    const { error: updateError } = await this.supabase
+      .from('articles')
+      .update(updates)
+      .eq('id', articleId);
+    
+    if (updateError) {
+      throw new Error(`Failed to update article embedding: ${updateError.message}`);
+    }
+  }
+
+  // ============================================================================
+  // Clustering Storage Management (Requirements: 2.1, 2.2, 2.5, 2.6, 2.7)
+  // ============================================================================
+
+  async getArticlesWithEmbeddings(
+    userId?: string,
+    feedIds?: string[],
+    hoursBack: number = 48
+  ): Promise<Array<{
+    id: string;
+    title: string;
+    excerpt: string | null;
+    feedId: string;
+    feedName: string;
+    embedding: number[];
+    publishedAt: Date | null;
+    imageUrl?: string | null;
+  }>> {
+    const cutoffTime = new Date(Date.now() - hoursBack * 60 * 60 * 1000);
+    
+    // Build query for articles with embeddings
+    let query = this.supabase
+      .from('articles')
+      .select(`
+        id,
+        title,
+        excerpt,
+        feed_id,
+        embedding,
+        published_at,
+        image_url,
+        feeds!inner (
+          id,
+          name,
+          user_id
+        )
+      `)
+      .not('embedding', 'is', null)
+      .gte('published_at', cutoffTime.toISOString());
+    
+    // Filter by user's feeds if userId provided
+    if (userId) {
+      query = query.eq('feeds.user_id', userId);
+    }
+    
+    // Filter by specific feedIds if provided
+    if (feedIds && feedIds.length > 0) {
+      query = query.in('feed_id', feedIds);
+    }
+    
+    const { data, error } = await query;
+    
+    if (error) {
+      throw new Error(`Failed to get articles with embeddings: ${error.message}`);
+    }
+    
+    return (data || []).map((article: any) => {
+      // Parse embedding from JSON string or array
+      let embedding: number[];
+      try {
+        if (typeof article.embedding === 'string') {
+          embedding = JSON.parse(article.embedding);
+        } else if (Array.isArray(article.embedding)) {
+          embedding = article.embedding;
+        } else {
+          embedding = [];
+        }
+      } catch {
+        embedding = [];
+      }
+      
+      return {
+        id: article.id,
+        title: article.title,
+        excerpt: article.excerpt,
+        feedId: article.feed_id,
+        feedName: article.feeds?.name || 'Unknown Feed',
+        embedding,
+        publishedAt: article.published_at ? new Date(article.published_at) : null,
+        imageUrl: article.image_url,
+      };
+    }).filter((a: any) => a.embedding.length > 0);
+  }
+
+  async createCluster(cluster: InsertCluster): Promise<Cluster> {
+    const { data, error } = await this.supabase
+      .from('clusters')
+      .insert(cluster)
+      .select()
+      .single();
+    
+    if (error || !data) {
+      throw new Error(`Failed to create cluster: ${error?.message}`);
+    }
+    
+    return data as Cluster;
+  }
+
+  async updateCluster(id: string, updates: Partial<Cluster>): Promise<Cluster> {
+    const { data, error } = await this.supabase
+      .from('clusters')
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select()
+      .single();
+    
+    if (error || !data) {
+      throw new Error(`Failed to update cluster: ${error?.message}`);
+    }
+    
+    return data as Cluster;
+  }
+
+  async deleteCluster(id: string): Promise<void> {
+    // First, remove cluster association from articles
+    await this.supabase
+      .from('articles')
+      .update({ cluster_id: null })
+      .eq('cluster_id', id);
+    
+    // Then delete the cluster
+    const { error } = await this.supabase
+      .from('clusters')
+      .delete()
+      .eq('id', id);
+    
+    if (error) {
+      throw new Error(`Failed to delete cluster: ${error.message}`);
+    }
+  }
+
+  async getClusterById(id: string): Promise<Cluster | undefined> {
+    const { data, error } = await this.supabase
+      .from('clusters')
+      .select('*')
+      .eq('id', id)
+      .single();
+    
+    if (error || !data) {
+      return undefined;
+    }
+    
+    return data as Cluster;
+  }
+
+  async getClusters(options?: { 
+    userId?: string; 
+    includeExpired?: boolean;
+    limit?: number;
+  }): Promise<Cluster[]> {
+    let query = this.supabase
+      .from('clusters')
+      .select('*')
+      .order('relevance_score', { ascending: false, nullsFirst: false });
+    
+    // Filter expired clusters unless includeExpired is true
+    if (!options?.includeExpired) {
+      query = query.or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`);
+    }
+    
+    // Apply limit
+    if (options?.limit) {
+      query = query.limit(options.limit);
+    }
+    
+    const { data, error } = await query;
+    
+    if (error) {
+      throw new Error(`Failed to get clusters: ${error.message}`);
+    }
+    
+    return (data || []) as Cluster[];
+  }
+
+  async assignArticlesToCluster(articleIds: string[], clusterId: string): Promise<void> {
+    if (articleIds.length === 0) {
+      return;
+    }
+    
+    const { error } = await this.supabase
+      .from('articles')
+      .update({ cluster_id: clusterId })
+      .in('id', articleIds);
+    
+    if (error) {
+      throw new Error(`Failed to assign articles to cluster: ${error.message}`);
+    }
+  }
+
+  async removeArticlesFromCluster(clusterId: string): Promise<void> {
+    const { error } = await this.supabase
+      .from('articles')
+      .update({ cluster_id: null })
+      .eq('cluster_id', clusterId);
+    
+    if (error) {
+      throw new Error(`Failed to remove articles from cluster: ${error.message}`);
+    }
+  }
+
+  async deleteExpiredClusters(): Promise<number> {
+    const now = new Date().toISOString();
+    
+    // Get expired cluster IDs first
+    const { data: expiredClusters, error: selectError } = await this.supabase
+      .from('clusters')
+      .select('id')
+      .lt('expires_at', now);
+    
+    if (selectError) {
+      throw new Error(`Failed to find expired clusters: ${selectError.message}`);
+    }
+    
+    if (!expiredClusters || expiredClusters.length === 0) {
+      return 0;
+    }
+    
+    const expiredIds = expiredClusters.map(c => c.id);
+    
+    // Remove cluster associations from articles
+    await this.supabase
+      .from('articles')
+      .update({ cluster_id: null })
+      .in('cluster_id', expiredIds);
+    
+    // Delete expired clusters
+    const { error: deleteError } = await this.supabase
+      .from('clusters')
+      .delete()
+      .in('id', expiredIds);
+    
+    if (deleteError) {
+      throw new Error(`Failed to delete expired clusters: ${deleteError.message}`);
+    }
+    
+    return expiredIds.length;
+  }
+
+  // ============================================================================
+  // Feed Scheduler Management (Requirements: 3.1, 3.2, 3.3, 6.2, 6.6)
+  // ============================================================================
+
+  async getFeedById(feedId: string): Promise<Feed | undefined> {
+    const { data, error } = await this.supabase
+      .from('feeds')
+      .select('*')
+      .eq('id', feedId)
+      .single();
+    
+    if (error || !data) {
+      return undefined;
+    }
+    
+    return data as Feed;
+  }
+
+  async getAllActiveFeeds(): Promise<Feed[]> {
+    const { data, error } = await this.supabase
+      .from('feeds')
+      .select('*')
+      .eq('status', 'active')
+      .order('next_sync_at', { ascending: true, nullsFirst: true });
+    
+    if (error) {
+      throw new Error(`Failed to get active feeds: ${error.message}`);
+    }
+    
+    return (data || []) as Feed[];
+  }
+
+  async getFeedsDueForSync(limit: number = 50): Promise<Feed[]> {
+    const now = new Date().toISOString();
+    
+    const { data, error } = await this.supabase
+      .from('feeds')
+      .select('*')
+      .eq('status', 'active')
+      .or(`next_sync_at.is.null,next_sync_at.lte.${now}`)
+      .order('next_sync_at', { ascending: true, nullsFirst: true })
+      .limit(limit);
+    
+    if (error) {
+      throw new Error(`Failed to get feeds due for sync: ${error.message}`);
+    }
+    
+    return (data || []) as Feed[];
+  }
+
+  async updateFeedPriority(feedId: string, priority: FeedPriority): Promise<Feed> {
+    const { data, error } = await this.supabase
+      .from('feeds')
+      .update({
+        priority: priority,
+        sync_priority: priority,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', feedId)
+      .select()
+      .single();
+    
+    if (error || !data) {
+      throw new Error(`Failed to update feed priority: ${error?.message}`);
+    }
+    
+    return data as Feed;
+  }
+
+  async updateFeedSchedule(feedId: string, updates: {
+    sync_priority?: string;
+    next_sync_at?: Date;
+    sync_interval_hours?: number;
+    last_fetched_at?: Date;
+  }): Promise<Feed> {
+    const updateData: Record<string, any> = {
+      updated_at: new Date().toISOString(),
+    };
+    
+    if (updates.sync_priority !== undefined) {
+      updateData.sync_priority = updates.sync_priority;
+    }
+    if (updates.next_sync_at !== undefined) {
+      updateData.next_sync_at = updates.next_sync_at.toISOString();
+    }
+    if (updates.sync_interval_hours !== undefined) {
+      updateData.sync_interval_hours = updates.sync_interval_hours;
+    }
+    if (updates.last_fetched_at !== undefined) {
+      updateData.last_fetched_at = updates.last_fetched_at.toISOString();
+    }
+    
+    const { data, error } = await this.supabase
+      .from('feeds')
+      .update(updateData)
+      .eq('id', feedId)
+      .select()
+      .single();
+    
+    if (error || !data) {
+      throw new Error(`Failed to update feed schedule: ${error?.message}`);
+    }
+    
+    return data as Feed;
+  }
+
+  async getRecommendedFeedByUrl(url: string): Promise<RecommendedFeed | undefined> {
+    const { data, error } = await this.supabase
+      .from('recommended_feeds')
+      .select('*')
+      .eq('url', url)
+      .single();
+    
+    if (error || !data) {
+      return undefined;
+    }
+    
+    return data as RecommendedFeed;
+  }
+
+  async getNewArticleIds(feedId: string, since: Date): Promise<string[]> {
+    const { data, error } = await this.supabase
+      .from('articles')
+      .select('id')
+      .eq('feed_id', feedId)
+      .gte('created_at', since.toISOString());
+    
+    if (error) {
+      throw new Error(`Failed to get new article IDs: ${error.message}`);
+    }
+    
+    return (data || []).map((a: any) => a.id);
+  }
+
+  // AI Rate Limiter Storage Methods (Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6)
+  
+  async recordUsageLog(usage: InsertAIUsageLog): Promise<any> {
+    const { data, error } = await this.supabase
+      .from('ai_usage_log')
+      .insert({
+        user_id: usage.user_id || null,
+        operation: usage.operation,
+        provider: usage.provider,
+        model: usage.model || null,
+        token_count: usage.token_count || 0,
+        input_tokens: usage.input_tokens || null,
+        output_tokens: usage.output_tokens || null,
+        estimated_cost: usage.estimated_cost || null,
+        success: usage.success ?? true,
+        error_message: usage.error_message || null,
+        latency_ms: usage.latency_ms || null,
+        request_metadata: usage.request_metadata || null
+      })
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('Failed to record usage log:', error);
+      throw new Error(`Failed to record usage log: ${error.message}`);
+    }
+    
+    return data;
+  }
+
+  async getDailyUsage(userId: string, date: string): Promise<any | undefined> {
+    const { data, error } = await this.supabase
+      .from('ai_usage_daily')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('date', date)
+      .single();
+    
+    if (error && error.code !== 'PGRST116') { // PGRST116 = no rows returned
+      console.error('Failed to get daily usage:', error);
+      throw new Error(`Failed to get daily usage: ${error.message}`);
+    }
+    
+    return data || undefined;
+  }
+
+  async upsertDailyUsage(usage: {
+    user_id: string;
+    date: string;
+    embeddings_count?: number;
+    clusterings_count?: number;
+    searches_count?: number;
+    summaries_count?: number;
+    total_tokens?: number;
+    openai_tokens?: number;
+    anthropic_tokens?: number;
+    estimated_cost?: string;
+  }): Promise<any> {
+    const { data, error } = await this.supabase
+      .from('ai_usage_daily')
+      .upsert({
+        user_id: usage.user_id,
+        date: usage.date,
+        embeddings_count: usage.embeddings_count ?? 0,
+        clusterings_count: usage.clusterings_count ?? 0,
+        searches_count: usage.searches_count ?? 0,
+        summaries_count: usage.summaries_count ?? 0,
+        total_tokens: usage.total_tokens ?? 0,
+        openai_tokens: usage.openai_tokens ?? 0,
+        anthropic_tokens: usage.anthropic_tokens ?? 0,
+        estimated_cost: usage.estimated_cost ?? '0',
+        updated_at: new Date().toISOString()
+      }, {
+        onConflict: 'user_id,date'
+      })
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('Failed to upsert daily usage:', error);
+      throw new Error(`Failed to upsert daily usage: ${error.message}`);
+    }
+    
+    return data;
+  }
+
+  async incrementDailyUsage(
+    userId: string,
+    date: string,
+    operation: 'embedding' | 'clustering' | 'search' | 'summary',
+    tokenCount: number,
+    provider: 'openai' | 'anthropic',
+    cost: number
+  ): Promise<any> {
+    // First, try to get existing record
+    let existing = await this.getDailyUsage(userId, date);
+    
+    if (!existing) {
+      // Create new record with default values
+      existing = {
+        user_id: userId,
+        date,
+        embeddings_count: 0,
+        clusterings_count: 0,
+        searches_count: 0,
+        summaries_count: 0,
+        total_tokens: 0,
+        openai_tokens: 0,
+        anthropic_tokens: 0,
+        estimated_cost: '0',
+        embeddings_limit: 500,
+        clusterings_limit: 10,
+        searches_limit: 100
+      };
+    }
+    
+    // Increment the appropriate counter
+    const updates: any = {
+      user_id: userId,
+      date,
+      total_tokens: (existing.total_tokens || 0) + tokenCount,
+      estimated_cost: (parseFloat(existing.estimated_cost || '0') + cost).toFixed(6),
+      updated_at: new Date().toISOString()
+    };
+    
+    // Increment operation count
+    switch (operation) {
+      case 'embedding':
+        updates.embeddings_count = (existing.embeddings_count || 0) + 1;
+        break;
+      case 'clustering':
+        updates.clusterings_count = (existing.clusterings_count || 0) + 1;
+        break;
+      case 'search':
+        updates.searches_count = (existing.searches_count || 0) + 1;
+        break;
+      case 'summary':
+        updates.summaries_count = (existing.summaries_count || 0) + 1;
+        break;
+    }
+    
+    // Increment provider token count
+    if (provider === 'openai') {
+      updates.openai_tokens = (existing.openai_tokens || 0) + tokenCount;
+    } else {
+      updates.anthropic_tokens = (existing.anthropic_tokens || 0) + tokenCount;
+    }
+    
+    const { data, error } = await this.supabase
+      .from('ai_usage_daily')
+      .upsert(updates, { onConflict: 'user_id,date' })
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('Failed to increment daily usage:', error);
+      throw new Error(`Failed to increment daily usage: ${error.message}`);
+    }
+    
+    return data;
+  }
+
+  async getUsageStats(userId: string, days: number = 7): Promise<any[]> {
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+    
+    const { data, error } = await this.supabase
+      .from('ai_usage_daily')
+      .select('*')
+      .eq('user_id', userId)
+      .gte('date', startDate.toISOString().split('T')[0])
+      .order('date', { ascending: false });
+    
+    if (error) {
+      console.error('Failed to get usage stats:', error);
+      throw new Error(`Failed to get usage stats: ${error.message}`);
+    }
+    
+    return data || [];
+  }
+
+  async addToDeadLetterQueue(item: {
+    operation: 'embedding' | 'clustering' | 'search' | 'summary';
+    provider: 'openai' | 'anthropic';
+    userId?: string;
+    payload: unknown;
+    errorMessage: string;
+    attempts: number;
+    lastAttemptAt: Date;
+  }): Promise<void> {
+    const { error } = await this.supabase
+      .from('dead_letter_queue')
+      .insert({
+        operation: item.operation,
+        provider: item.provider,
+        user_id: item.userId || null,
+        payload: JSON.stringify(item.payload),
+        error_message: item.errorMessage,
+        attempts: item.attempts,
+        last_attempt_at: item.lastAttemptAt.toISOString()
+      });
+    
+    if (error) {
+      console.error('Failed to add to dead letter queue:', error);
+      throw new Error(`Failed to add to dead letter queue: ${error.message}`);
+    }
+  }
+
+  async getDeadLetterItems(limit: number = 100): Promise<Array<{
+    id: string;
+    operation: 'embedding' | 'clustering' | 'search' | 'summary';
+    provider: 'openai' | 'anthropic';
+    userId?: string;
+    payload: unknown;
+    errorMessage: string;
+    attempts: number;
+    createdAt: Date;
+    lastAttemptAt: Date;
+  }>> {
+    const { data, error } = await this.supabase
+      .from('dead_letter_queue')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    
+    if (error) {
+      console.error('Failed to get dead letter items:', error);
+      throw new Error(`Failed to get dead letter items: ${error.message}`);
+    }
+    
+    return (data || []).map((item: any) => ({
+      id: item.id,
+      operation: item.operation,
+      provider: item.provider,
+      userId: item.user_id,
+      payload: typeof item.payload === 'string' ? JSON.parse(item.payload) : item.payload,
+      errorMessage: item.error_message,
+      attempts: item.attempts,
+      createdAt: new Date(item.created_at),
+      lastAttemptAt: new Date(item.last_attempt_at)
+    }));
+  }
+
+  async removeFromDeadLetterQueue(id: string): Promise<void> {
+    const { error } = await this.supabase
+      .from('dead_letter_queue')
+      .delete()
+      .eq('id', id);
+    
+    if (error) {
+      console.error('Failed to remove from dead letter queue:', error);
+      throw new Error(`Failed to remove from dead letter queue: ${error.message}`);
+    }
   }
 }

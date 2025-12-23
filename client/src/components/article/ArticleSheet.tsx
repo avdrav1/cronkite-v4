@@ -16,6 +16,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { motion, AnimatePresence } from "framer-motion";
 import { useState, useEffect } from "react";
 import { apiRequest } from "@/lib/queryClient";
+import { SimilarArticles } from "./SimilarArticles";
 
 // Extended article interface for UI compatibility
 interface ArticleWithUIState extends Article {
@@ -265,6 +266,21 @@ export function ArticleSheet({ article, isOpen, onClose }: ArticleSheetProps) {
                 className="prose prose-lg dark:prose-invert max-w-none font-article text-foreground/90 leading-loose prose-headings:font-display prose-headings:font-bold prose-a:text-primary prose-img:rounded-xl"
                 dangerouslySetInnerHTML={{ __html: article.content || '' }} 
               />
+              
+              <Separator className="my-12" />
+              
+              {/* Similar Articles Section - Requirements: 4.1, 4.5 */}
+              {article.id && (
+                <div className="mb-12">
+                  <SimilarArticles 
+                    articleId={article.id} 
+                    onArticleClick={(articleId) => {
+                      // Could navigate to the similar article or open it in a new sheet
+                      console.log('Similar article clicked:', articleId);
+                    }}
+                  />
+                </div>
+              )}
               
               <Separator className="my-12" />
               

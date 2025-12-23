@@ -1,7 +1,6 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, uuid, boolean, timestamp, integer, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, text, uuid, boolean, timestamp, integer, pgEnum, decimal } from "drizzle-orm/pg-core";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
-import { z } from "zod";
 
 // Profiles table extending Supabase auth.users
 export const profiles = pgTable("profiles", {
@@ -80,6 +79,10 @@ export const feeds = pgTable("feeds", {
   icon_color: text("icon_color"),
   status: feedStatusEnum("status").notNull().default("active"),
   priority: feedPriorityEnum("priority").notNull().default("medium"),
+  // AI scheduling fields (Requirements: 3.1, 3.2, 3.3, 3.4)
+  sync_priority: text("sync_priority").notNull().default("medium"), // 'high', 'medium', 'low'
+  next_sync_at: timestamp("next_sync_at", { withTimezone: true }),
+  sync_interval_hours: integer("sync_interval_hours").notNull().default(24),
   custom_polling_interval: integer("custom_polling_interval"), // in minutes
   last_fetched_at: timestamp("last_fetched_at", { withTimezone: true }),
   etag: text("etag"),
@@ -104,6 +107,8 @@ export const recommendedFeeds = pgTable("recommended_feeds", {
   popularity_score: integer("popularity_score").notNull().default(0),
   article_frequency: text("article_frequency"), // e.g., 'daily', 'hourly', 'weekly'
   is_featured: boolean("is_featured").notNull().default(false),
+  // AI priority field (Requirements: 3.7, 6.6)
+  default_priority: text("default_priority").notNull().default("medium"), // 'high', 'medium', 'low'
   created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updated_at: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -137,6 +142,10 @@ export const clusters = pgTable("clusters", {
   timeframe_start: timestamp("timeframe_start", { withTimezone: true }),
   timeframe_end: timestamp("timeframe_end", { withTimezone: true }),
   expires_at: timestamp("expires_at", { withTimezone: true }),
+  // Vector-based clustering fields (Requirements: 2.1, 2.7)
+  avg_similarity: text("avg_similarity"), // Store as text, convert to float in application
+  relevance_score: text("relevance_score"), // article_count × source_diversity
+  generation_method: text("generation_method").default("vector"), // 'vector' or 'keyword'
   created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updated_at: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -158,6 +167,11 @@ export const articles = pgTable("articles", {
   ai_summary_generated_at: timestamp("ai_summary_generated_at", { withTimezone: true }),
   embedding: text("embedding"), // Store as text for now, will be vector in production
   cluster_id: uuid("cluster_id").references(() => clusters.id, { onDelete: "set null" }),
+  // Embedding tracking fields (Requirements: 1.4, 7.3)
+  embedding_status: text("embedding_status").notNull().default("pending"), // 'pending', 'completed', 'failed', 'skipped'
+  embedding_generated_at: timestamp("embedding_generated_at", { withTimezone: true }),
+  embedding_error: text("embedding_error"),
+  content_hash: text("content_hash"), // For change detection (Requirements: 1.5)
   created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -175,6 +189,59 @@ export const userArticles = pgTable("user_articles", {
   // Engagement signals for content recommendations (Requirements: 8.1, 8.2, 8.3, 8.4)
   engagement_signal: text("engagement_signal"), // 'positive' | 'negative' | null
   engagement_signal_at: timestamp("engagement_signal_at", { withTimezone: true }),
+  created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updated_at: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Embedding queue table for managing embedding generation (Requirements: 1.2, 7.1)
+export const embeddingQueue = pgTable("embedding_queue", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  article_id: uuid("article_id").notNull().references(() => articles.id, { onDelete: "cascade" }),
+  priority: integer("priority").notNull().default(0),
+  attempts: integer("attempts").notNull().default(0),
+  max_attempts: integer("max_attempts").notNull().default(3),
+  last_attempt_at: timestamp("last_attempt_at", { withTimezone: true }),
+  error_message: text("error_message"),
+  status: text("status").notNull().default("pending"), // 'pending', 'processing', 'completed', 'failed', 'dead_letter'
+  created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updated_at: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// AI usage log table for detailed API call tracking (Requirements: 8.1, 8.5)
+export const aiUsageLog = pgTable("ai_usage_log", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  user_id: uuid("user_id").references(() => profiles.id, { onDelete: "set null" }),
+  operation: text("operation").notNull(), // 'embedding', 'clustering', 'search', 'summary'
+  provider: text("provider").notNull(), // 'openai', 'anthropic'
+  model: text("model"),
+  token_count: integer("token_count").notNull().default(0),
+  input_tokens: integer("input_tokens"),
+  output_tokens: integer("output_tokens"),
+  estimated_cost: decimal("estimated_cost", { precision: 10, scale: 6 }).notNull().default("0"),
+  request_metadata: text("request_metadata"), // JSON string
+  success: boolean("success").notNull().default(true),
+  error_message: text("error_message"),
+  latency_ms: integer("latency_ms"),
+  created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// AI daily usage summary table (Requirements: 8.2, 8.3, 8.4, 8.6)
+export const aiUsageDaily = pgTable("ai_usage_daily", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  user_id: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+  date: text("date").notNull(), // YYYY-MM-DD format
+  embeddings_count: integer("embeddings_count").notNull().default(0),
+  clusterings_count: integer("clusterings_count").notNull().default(0),
+  searches_count: integer("searches_count").notNull().default(0),
+  summaries_count: integer("summaries_count").notNull().default(0),
+  total_tokens: integer("total_tokens").notNull().default(0),
+  openai_tokens: integer("openai_tokens").notNull().default(0),
+  anthropic_tokens: integer("anthropic_tokens").notNull().default(0),
+  estimated_cost: decimal("estimated_cost", { precision: 10, scale: 6 }).notNull().default("0"),
+  // Daily limits (configurable per user)
+  embeddings_limit: integer("embeddings_limit").notNull().default(500),
+  clusterings_limit: integer("clusterings_limit").notNull().default(10),
+  searches_limit: integer("searches_limit").notNull().default(100),
   created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updated_at: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -210,6 +277,15 @@ export const selectArticleSchema = createSelectSchema(articles);
 export const insertUserArticleSchema = createInsertSchema(userArticles);
 export const selectUserArticleSchema = createSelectSchema(userArticles);
 
+export const insertEmbeddingQueueSchema = createInsertSchema(embeddingQueue);
+export const selectEmbeddingQueueSchema = createSelectSchema(embeddingQueue);
+
+export const insertAiUsageLogSchema = createInsertSchema(aiUsageLog);
+export const selectAiUsageLogSchema = createSelectSchema(aiUsageLog);
+
+export const insertAiUsageDailySchema = createInsertSchema(aiUsageDaily);
+export const selectAiUsageDailySchema = createSelectSchema(aiUsageDaily);
+
 // Feed management constants (Requirements: 3.1)
 export const MAX_FEEDS_PER_USER = 25;
 export const FEED_LIMIT_WARNING_THRESHOLD = 20;
@@ -238,3 +314,94 @@ export type Article = typeof articles.$inferSelect;
 export type InsertArticle = typeof articles.$inferInsert;
 export type UserArticle = typeof userArticles.$inferSelect;
 export type InsertUserArticle = typeof userArticles.$inferInsert;
+
+// Embedding queue types (Requirements: 1.2, 7.1)
+export type EmbeddingQueue = typeof embeddingQueue.$inferSelect;
+export type InsertEmbeddingQueue = typeof embeddingQueue.$inferInsert;
+
+// AI usage log types (Requirements: 8.1, 8.5)
+export type AIUsageLog = typeof aiUsageLog.$inferSelect;
+export type InsertAIUsageLog = typeof aiUsageLog.$inferInsert;
+
+// AI daily usage types (Requirements: 8.2, 8.3, 8.4, 8.6)
+export type AIUsageDaily = typeof aiUsageDaily.$inferSelect;
+export type InsertAIUsageDaily = typeof aiUsageDaily.$inferInsert;
+
+// Feed priority type for type safety (Requirements: 3.1, 3.2, 3.3)
+export type FeedPriority = 'high' | 'medium' | 'low';
+
+// Embedding status type for type safety (Requirements: 7.3)
+export type EmbeddingStatus = 'pending' | 'completed' | 'failed' | 'skipped';
+
+// AI operation type for type safety (Requirements: 8.1)
+export type AIOperation = 'embedding' | 'clustering' | 'search' | 'summary';
+
+// AI provider type for type safety
+export type AIProvider = 'openai' | 'anthropic';
+
+// Priority intervals in hours (Requirements: 3.1, 3.2, 3.3)
+export const PRIORITY_INTERVALS: Record<FeedPriority, number> = {
+  high: 1,      // Every hour
+  medium: 24,   // Every day
+  low: 168      // Every week (7 * 24)
+};
+
+// Default high-priority sources (breaking news) (Requirements: 3.7)
+export const HIGH_PRIORITY_SOURCES = [
+  'nytimes.com',
+  'bbc.com',
+  'bbc.co.uk',
+  'cnn.com',
+  'reuters.com',
+  'apnews.com',
+  'washingtonpost.com',
+  'theguardian.com'
+];
+
+// AI usage limits (Requirements: 8.2, 8.3)
+export const DEFAULT_AI_LIMITS = {
+  embeddingsPerDay: 500,
+  clusteringsPerDay: 10,
+  searchesPerDay: 100
+};
+
+// Dead letter queue table for permanently failed operations (Requirements: 9.4)
+export const deadLetterQueue = pgTable("dead_letter_queue", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  operation: text("operation").notNull(), // 'embedding', 'clustering', 'search', 'summary'
+  provider: text("provider").notNull(), // 'openai', 'anthropic'
+  user_id: uuid("user_id").references(() => profiles.id, { onDelete: "set null" }),
+  payload: text("payload").notNull(), // JSON string
+  error_message: text("error_message").notNull(),
+  attempts: integer("attempts").notNull().default(0),
+  last_attempt_at: timestamp("last_attempt_at", { withTimezone: true }).notNull(),
+  created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Request queue table for rate-limited requests (Requirements: 8.4)
+export const requestQueue = pgTable("request_queue", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  user_id: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+  operation: text("operation").notNull(), // 'embedding', 'clustering', 'search', 'summary'
+  provider: text("provider").notNull(), // 'openai', 'anthropic'
+  payload: text("payload").notNull(), // JSON string
+  priority: integer("priority").notNull().default(0),
+  scheduled_for: timestamp("scheduled_for", { withTimezone: true }).notNull(),
+  created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Zod schemas for new tables
+export const insertDeadLetterQueueSchema = createInsertSchema(deadLetterQueue);
+export const selectDeadLetterQueueSchema = createSelectSchema(deadLetterQueue);
+
+export const insertRequestQueueSchema = createInsertSchema(requestQueue);
+export const selectRequestQueueSchema = createSelectSchema(requestQueue);
+
+// Dead letter queue types (Requirements: 9.4)
+export type DeadLetterQueue = typeof deadLetterQueue.$inferSelect;
+export type InsertDeadLetterQueue = typeof deadLetterQueue.$inferInsert;
+
+// Request queue types (Requirements: 8.4)
+export type RequestQueue = typeof requestQueue.$inferSelect;
+export type InsertRequestQueue = typeof requestQueue.$inferInsert;
+

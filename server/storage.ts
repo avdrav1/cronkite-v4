@@ -20,6 +20,13 @@ import {
   type InsertUserArticle,
   type Cluster,
   type InsertCluster,
+  type AIUsageLog,
+  type InsertAIUsageLog,
+  type AIUsageDaily,
+  type InsertAIUsageDaily,
+  type AIOperation,
+  type AIProvider,
+  type FeedPriority,
   MAX_FEEDS_PER_USER,
   type EngagementSignal
 } from "@shared/schema";
@@ -117,6 +124,121 @@ export interface IStorage {
     signal: 'positive' | 'negative' | null
   ): Promise<UserArticle>;
   getArticlesWithEngagement(userId: string, feedId?: string): Promise<Array<Article & { engagement?: string }>>;
+  
+  // Embedding Queue Management (Requirements: 1.2, 7.1)
+  addToEmbeddingQueue(articleIds: string[], priority?: number): Promise<void>;
+  getEmbeddingQueueItems(limit: number, status?: string): Promise<Array<{
+    id: string;
+    article_id: string;
+    priority: number;
+    attempts: number;
+    max_attempts: number;
+    last_attempt_at: Date | null;
+    error_message: string | null;
+    status: string;
+    created_at: Date;
+    updated_at: Date;
+  }>>;
+  updateEmbeddingQueueItem(id: string, updates: Partial<{
+    priority: number;
+    attempts: number;
+    last_attempt_at: Date | null;
+    error_message: string | null;
+    status: string;
+  }>): Promise<void>;
+  removeFromEmbeddingQueue(articleId: string): Promise<void>;
+  getEmbeddingQueueCount(status?: string): Promise<number>;
+  
+  // Article Embedding Management (Requirements: 1.4, 7.3)
+  getArticleById(id: string): Promise<Article | undefined>;
+  updateArticleEmbedding(
+    articleId: string,
+    embedding: number[],
+    contentHash: string,
+    status: 'completed' | 'failed',
+    error?: string
+  ): Promise<void>;
+  
+  // Clustering Storage Management (Requirements: 2.1, 2.2, 2.5, 2.6, 2.7)
+  getArticlesWithEmbeddings(
+    userId?: string,
+    feedIds?: string[],
+    hoursBack?: number
+  ): Promise<Array<{
+    id: string;
+    title: string;
+    excerpt: string | null;
+    feedId: string;
+    feedName: string;
+    embedding: number[];
+    publishedAt: Date | null;
+    imageUrl?: string | null;
+  }>>;
+  
+  createCluster(cluster: InsertCluster): Promise<Cluster>;
+  updateCluster(id: string, updates: Partial<Cluster>): Promise<Cluster>;
+  deleteCluster(id: string): Promise<void>;
+  getClusterById(id: string): Promise<Cluster | undefined>;
+  getClusters(options?: { 
+    userId?: string; 
+    includeExpired?: boolean;
+    limit?: number;
+  }): Promise<Cluster[]>;
+  
+  assignArticlesToCluster(articleIds: string[], clusterId: string): Promise<void>;
+  removeArticlesFromCluster(clusterId: string): Promise<void>;
+  deleteExpiredClusters(): Promise<number>;
+  
+  // Feed Scheduler Management (Requirements: 3.1, 3.2, 3.3, 6.2, 6.6)
+  getFeedById(feedId: string): Promise<Feed | undefined>;
+  getAllActiveFeeds(): Promise<Feed[]>;
+  getFeedsDueForSync(limit?: number): Promise<Feed[]>;
+  updateFeedPriority(feedId: string, priority: FeedPriority): Promise<Feed>;
+  updateFeedSchedule(feedId: string, updates: {
+    sync_priority?: string;
+    next_sync_at?: Date;
+    sync_interval_hours?: number;
+    last_fetched_at?: Date;
+  }): Promise<Feed>;
+  getRecommendedFeedByUrl(url: string): Promise<RecommendedFeed | undefined>;
+  getNewArticleIds(feedId: string, since: Date): Promise<string[]>;
+  
+  // AI Rate Limiter Storage (Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6)
+  recordUsageLog(usage: InsertAIUsageLog): Promise<AIUsageLog>;
+  getDailyUsage(userId: string, date: string): Promise<AIUsageDaily | undefined>;
+  upsertDailyUsage(usage: InsertAIUsageDaily): Promise<AIUsageDaily>;
+  incrementDailyUsage(
+    userId: string,
+    date: string,
+    operation: AIOperation,
+    tokenCount: number,
+    provider: AIProvider,
+    cost: number
+  ): Promise<AIUsageDaily>;
+  getUsageStats(userId: string, days?: number): Promise<AIUsageDaily[]>;
+  
+  // Dead Letter Queue (Requirements: 9.4)
+  addToDeadLetterQueue(item: {
+    operation: AIOperation;
+    provider: AIProvider;
+    userId?: string;
+    payload: unknown;
+    errorMessage: string;
+    attempts: number;
+    lastAttemptAt: Date;
+  }): Promise<void>;
+  getDeadLetterItems(limit?: number): Promise<Array<{
+    id: string;
+    operation: AIOperation;
+    provider: AIProvider;
+    userId?: string;
+    payload: unknown;
+    errorMessage: string;
+    attempts: number;
+    createdAt: Date;
+    lastAttemptAt: Date;
+  }>>;
+  removeFromDeadLetterQueue(id: string): Promise<void>;
 }
 
 export class MemStorage implements IStorage {
@@ -1654,6 +1776,690 @@ export class MemStorage implements IStorage {
       console.warn('⚠️  Feed data structure validation issues found:');
       issues.forEach(issue => console.warn(`   - ${issue}`));
     }
+  }
+
+  // ============================================================================
+  // Embedding Queue Management (Requirements: 1.2, 7.1)
+  // ============================================================================
+  
+  private embeddingQueue: Map<string, {
+    id: string;
+    article_id: string;
+    priority: number;
+    attempts: number;
+    max_attempts: number;
+    last_attempt_at: Date | null;
+    error_message: string | null;
+    status: string;
+    created_at: Date;
+    updated_at: Date;
+  }> = new Map();
+
+  async addToEmbeddingQueue(articleIds: string[], priority: number = 0): Promise<void> {
+    for (const articleId of articleIds) {
+      // Skip if already in queue
+      if (this.embeddingQueue.has(articleId)) {
+        continue;
+      }
+      
+      const queueItem = {
+        id: randomUUID(),
+        article_id: articleId,
+        priority,
+        attempts: 0,
+        max_attempts: 3,
+        last_attempt_at: null,
+        error_message: null,
+        status: 'pending',
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+      
+      this.embeddingQueue.set(articleId, queueItem);
+    }
+  }
+
+  async getEmbeddingQueueItems(limit: number, status?: string): Promise<Array<{
+    id: string;
+    article_id: string;
+    priority: number;
+    attempts: number;
+    max_attempts: number;
+    last_attempt_at: Date | null;
+    error_message: string | null;
+    status: string;
+    created_at: Date;
+    updated_at: Date;
+  }>> {
+    let items = Array.from(this.embeddingQueue.values());
+    
+    if (status) {
+      items = items.filter(item => item.status === status);
+    }
+    
+    // Sort by priority (descending) then by created_at (ascending)
+    items.sort((a, b) => {
+      if (b.priority !== a.priority) {
+        return b.priority - a.priority;
+      }
+      return a.created_at.getTime() - b.created_at.getTime();
+    });
+    
+    return items.slice(0, limit);
+  }
+
+  async updateEmbeddingQueueItem(id: string, updates: Partial<{
+    priority: number;
+    attempts: number;
+    last_attempt_at: Date | null;
+    error_message: string | null;
+    status: string;
+  }>): Promise<void> {
+    // Find item by id
+    const entries = Array.from(this.embeddingQueue.entries());
+    for (const [articleId, item] of entries) {
+      if (item.id === id) {
+        this.embeddingQueue.set(articleId, {
+          ...item,
+          ...updates,
+          updated_at: new Date(),
+        });
+        return;
+      }
+    }
+  }
+
+  async removeFromEmbeddingQueue(articleId: string): Promise<void> {
+    this.embeddingQueue.delete(articleId);
+  }
+
+  async getEmbeddingQueueCount(status?: string): Promise<number> {
+    if (!status) {
+      return this.embeddingQueue.size;
+    }
+    
+    let count = 0;
+    const values = Array.from(this.embeddingQueue.values());
+    for (const item of values) {
+      if (item.status === status) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  // ============================================================================
+  // Article Embedding Management (Requirements: 1.4, 7.3)
+  // ============================================================================
+
+  async getArticleById(id: string): Promise<Article | undefined> {
+    return this.articles.get(id);
+  }
+
+  async updateArticleEmbedding(
+    articleId: string,
+    embedding: number[],
+    contentHash: string,
+    status: 'completed' | 'failed',
+    error?: string
+  ): Promise<void> {
+    const article = this.articles.get(articleId);
+    if (!article) {
+      throw new Error(`Article with id ${articleId} not found`);
+    }
+    
+    const updatedArticle: Article = {
+      ...article,
+      embedding: embedding.length > 0 ? JSON.stringify(embedding) : null,
+      content_hash: contentHash || null,
+      embedding_status: status,
+      embedding_generated_at: status === 'completed' ? new Date() : null,
+      embedding_error: error || null,
+    };
+    
+    this.articles.set(articleId, updatedArticle);
+  }
+
+  // ============================================================================
+  // Clustering Storage Management (Requirements: 2.1, 2.2, 2.5, 2.6, 2.7)
+  // ============================================================================
+  
+  private clusters: Map<string, Cluster> = new Map();
+
+  async getArticlesWithEmbeddings(
+    userId?: string,
+    feedIds?: string[],
+    hoursBack: number = 48
+  ): Promise<Array<{
+    id: string;
+    title: string;
+    excerpt: string | null;
+    feedId: string;
+    feedName: string;
+    embedding: number[];
+    publishedAt: Date | null;
+    imageUrl?: string | null;
+  }>> {
+    const cutoffTime = new Date(Date.now() - hoursBack * 60 * 60 * 1000);
+    const result: Array<{
+      id: string;
+      title: string;
+      excerpt: string | null;
+      feedId: string;
+      feedName: string;
+      embedding: number[];
+      publishedAt: Date | null;
+      imageUrl?: string | null;
+    }> = [];
+    
+    // Get user's feeds if userId is provided
+    let userFeedIds: Set<string> | null = null;
+    if (userId) {
+      const userFeeds = this.userFeeds.get(userId) || [];
+      userFeedIds = new Set(userFeeds.map(f => f.id));
+    }
+    
+    // Filter by feedIds if provided
+    const feedIdSet = feedIds ? new Set(feedIds) : null;
+    
+    // Build feed name lookup
+    const feedNameMap = new Map<string, string>();
+    if (userId) {
+      const userFeeds = this.userFeeds.get(userId) || [];
+      userFeeds.forEach(f => feedNameMap.set(f.id, f.name));
+    }
+    
+    this.articles.forEach((article) => {
+      // Skip if no embedding
+      if (!article.embedding) {
+        return;
+      }
+      
+      // Filter by user's feeds
+      if (userFeedIds && !userFeedIds.has(article.feed_id)) {
+        return;
+      }
+      
+      // Filter by specific feedIds
+      if (feedIdSet && !feedIdSet.has(article.feed_id)) {
+        return;
+      }
+      
+      // Filter by time
+      const articleTime = article.published_at || article.fetched_at;
+      if (articleTime && articleTime < cutoffTime) {
+        return;
+      }
+      
+      // Parse embedding
+      let embedding: number[];
+      try {
+        embedding = JSON.parse(article.embedding);
+      } catch {
+        return; // Skip if embedding is invalid
+      }
+      
+      result.push({
+        id: article.id,
+        title: article.title,
+        excerpt: article.excerpt,
+        feedId: article.feed_id,
+        feedName: feedNameMap.get(article.feed_id) || 'Unknown Feed',
+        embedding,
+        publishedAt: article.published_at,
+        imageUrl: article.image_url,
+      });
+    });
+    
+    return result;
+  }
+
+  async createCluster(cluster: InsertCluster): Promise<Cluster> {
+    const id = randomUUID();
+    const newCluster: Cluster = {
+      id,
+      title: cluster.title,
+      summary: cluster.summary || null,
+      article_count: cluster.article_count || 0,
+      source_feeds: cluster.source_feeds || [],
+      timeframe_start: cluster.timeframe_start || null,
+      timeframe_end: cluster.timeframe_end || null,
+      expires_at: cluster.expires_at || null,
+      avg_similarity: cluster.avg_similarity || null,
+      relevance_score: cluster.relevance_score || null,
+      generation_method: cluster.generation_method || 'vector',
+      created_at: new Date(),
+      updated_at: new Date(),
+    };
+    
+    this.clusters.set(id, newCluster);
+    return newCluster;
+  }
+
+  async updateCluster(id: string, updates: Partial<Cluster>): Promise<Cluster> {
+    const cluster = this.clusters.get(id);
+    if (!cluster) {
+      throw new Error(`Cluster with id ${id} not found`);
+    }
+    
+    const updatedCluster: Cluster = {
+      ...cluster,
+      ...updates,
+      updated_at: new Date(),
+    };
+    
+    this.clusters.set(id, updatedCluster);
+    return updatedCluster;
+  }
+
+  async deleteCluster(id: string): Promise<void> {
+    // Remove cluster association from articles
+    this.articles.forEach((article, articleId) => {
+      if (article.cluster_id === id) {
+        this.articles.set(articleId, { ...article, cluster_id: null });
+      }
+    });
+    
+    this.clusters.delete(id);
+  }
+
+  async getClusterById(id: string): Promise<Cluster | undefined> {
+    return this.clusters.get(id);
+  }
+
+  async getClusters(options?: { 
+    userId?: string; 
+    includeExpired?: boolean;
+    limit?: number;
+  }): Promise<Cluster[]> {
+    const now = new Date();
+    let clusters = Array.from(this.clusters.values());
+    
+    // Filter expired clusters unless includeExpired is true
+    if (!options?.includeExpired) {
+      clusters = clusters.filter(c => !c.expires_at || c.expires_at > now);
+    }
+    
+    // Sort by relevance score descending
+    clusters.sort((a, b) => {
+      const scoreA = parseFloat(a.relevance_score || '0');
+      const scoreB = parseFloat(b.relevance_score || '0');
+      return scoreB - scoreA;
+    });
+    
+    // Apply limit
+    if (options?.limit) {
+      clusters = clusters.slice(0, options.limit);
+    }
+    
+    return clusters;
+  }
+
+  async assignArticlesToCluster(articleIds: string[], clusterId: string): Promise<void> {
+    for (const articleId of articleIds) {
+      const article = this.articles.get(articleId);
+      if (article) {
+        this.articles.set(articleId, { ...article, cluster_id: clusterId });
+      }
+    }
+    
+    // Update cluster article count
+    const cluster = this.clusters.get(clusterId);
+    if (cluster) {
+      this.clusters.set(clusterId, {
+        ...cluster,
+        article_count: articleIds.length,
+        updated_at: new Date(),
+      });
+    }
+  }
+
+  async removeArticlesFromCluster(clusterId: string): Promise<void> {
+    this.articles.forEach((article, articleId) => {
+      if (article.cluster_id === clusterId) {
+        this.articles.set(articleId, { ...article, cluster_id: null });
+      }
+    });
+  }
+
+  async deleteExpiredClusters(): Promise<number> {
+    const now = new Date();
+    let deletedCount = 0;
+    
+    const expiredClusterIds: string[] = [];
+    this.clusters.forEach((cluster, id) => {
+      if (cluster.expires_at && cluster.expires_at <= now) {
+        expiredClusterIds.push(id);
+      }
+    });
+    
+    for (const id of expiredClusterIds) {
+      await this.deleteCluster(id);
+      deletedCount++;
+    }
+    
+    return deletedCount;
+  }
+
+  // ============================================================================
+  // Feed Scheduler Management (Requirements: 3.1, 3.2, 3.3, 6.2, 6.6)
+  // ============================================================================
+
+  async getFeedById(feedId: string): Promise<Feed | undefined> {
+    // Search through all user feeds
+    for (const feeds of this.userFeeds.values()) {
+      const feed = feeds.find(f => f.id === feedId);
+      if (feed) {
+        return feed;
+      }
+    }
+    return undefined;
+  }
+
+  async getAllActiveFeeds(): Promise<Feed[]> {
+    const allFeeds: Feed[] = [];
+    this.userFeeds.forEach(feeds => {
+      allFeeds.push(...feeds.filter(f => f.status === 'active'));
+    });
+    return allFeeds;
+  }
+
+  async getFeedsDueForSync(limit: number = 50): Promise<Feed[]> {
+    const now = new Date();
+    const dueFeeds: Feed[] = [];
+    
+    this.userFeeds.forEach(feeds => {
+      for (const feed of feeds) {
+        if (feed.status !== 'active') continue;
+        
+        // Feed is due if next_sync_at is null or in the past
+        if (!feed.next_sync_at || new Date(feed.next_sync_at) <= now) {
+          dueFeeds.push(feed);
+        }
+      }
+    });
+    
+    // Sort by next_sync_at (null first, then oldest)
+    dueFeeds.sort((a, b) => {
+      if (!a.next_sync_at) return -1;
+      if (!b.next_sync_at) return 1;
+      return new Date(a.next_sync_at).getTime() - new Date(b.next_sync_at).getTime();
+    });
+    
+    return dueFeeds.slice(0, limit);
+  }
+
+  async updateFeedPriority(feedId: string, priority: FeedPriority): Promise<Feed> {
+    // Find and update the feed priority
+    for (const [userId, feeds] of this.userFeeds.entries()) {
+      const feedIndex = feeds.findIndex(f => f.id === feedId);
+      if (feedIndex !== -1) {
+        const feed = feeds[feedIndex];
+        const updatedFeed: Feed = {
+          ...feed,
+          priority: priority,
+          sync_priority: priority,
+          updated_at: new Date(),
+        };
+        feeds[feedIndex] = updatedFeed;
+        this.userFeeds.set(userId, feeds);
+        return updatedFeed;
+      }
+    }
+    
+    throw new Error(`Feed with id ${feedId} not found`);
+  }
+
+  async updateFeedSchedule(feedId: string, updates: {
+    sync_priority?: string;
+    next_sync_at?: Date;
+    sync_interval_hours?: number;
+    last_fetched_at?: Date;
+  }): Promise<Feed> {
+    // Find and update the feed
+    for (const [userId, feeds] of this.userFeeds.entries()) {
+      const feedIndex = feeds.findIndex(f => f.id === feedId);
+      if (feedIndex !== -1) {
+        const feed = feeds[feedIndex];
+        const updatedFeed: Feed = {
+          ...feed,
+          sync_priority: updates.sync_priority ?? feed.sync_priority,
+          next_sync_at: updates.next_sync_at ?? feed.next_sync_at,
+          sync_interval_hours: updates.sync_interval_hours ?? feed.sync_interval_hours,
+          last_fetched_at: updates.last_fetched_at ?? feed.last_fetched_at,
+          updated_at: new Date(),
+        };
+        feeds[feedIndex] = updatedFeed;
+        this.userFeeds.set(userId, feeds);
+        return updatedFeed;
+      }
+    }
+    
+    throw new Error(`Feed with id ${feedId} not found`);
+  }
+
+  async getRecommendedFeedByUrl(url: string): Promise<RecommendedFeed | undefined> {
+    return this.recommendedFeeds.find(f => f.url === url);
+  }
+
+  async getNewArticleIds(feedId: string, since: Date): Promise<string[]> {
+    const newArticleIds: string[] = [];
+    
+    this.articles.forEach((article, id) => {
+      if (article.feed_id === feedId && article.created_at && article.created_at >= since) {
+        newArticleIds.push(id);
+      }
+    });
+    
+    return newArticleIds;
+  }
+
+  // AI Rate Limiter Storage Methods (Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6)
+  private aiUsageLogs: Map<string, AIUsageLog> = new Map();
+  private aiUsageDaily: Map<string, AIUsageDaily> = new Map();
+  private deadLetterQueue: Map<string, {
+    id: string;
+    operation: AIOperation;
+    provider: AIProvider;
+    userId?: string;
+    payload: unknown;
+    errorMessage: string;
+    attempts: number;
+    createdAt: Date;
+    lastAttemptAt: Date;
+  }> = new Map();
+
+  async recordUsageLog(usage: InsertAIUsageLog): Promise<AIUsageLog> {
+    const id = randomUUID();
+    const log: AIUsageLog = {
+      id,
+      user_id: usage.user_id || null,
+      operation: usage.operation,
+      provider: usage.provider,
+      model: usage.model || null,
+      token_count: usage.token_count,
+      input_tokens: usage.input_tokens || null,
+      output_tokens: usage.output_tokens || null,
+      estimated_cost: usage.estimated_cost || null,
+      success: usage.success ?? true,
+      error_message: usage.error_message || null,
+      latency_ms: usage.latency_ms || null,
+      request_metadata: usage.request_metadata || null,
+      created_at: new Date()
+    };
+    this.aiUsageLogs.set(id, log);
+    return log;
+  }
+
+  async getDailyUsage(userId: string, date: string): Promise<AIUsageDaily | undefined> {
+    return this.aiUsageDaily.get(`${userId}-${date}`);
+  }
+
+  async upsertDailyUsage(usage: InsertAIUsageDaily): Promise<AIUsageDaily> {
+    const key = `${usage.user_id}-${usage.date}`;
+    const existing = this.aiUsageDaily.get(key);
+    
+    if (existing) {
+      const updated: AIUsageDaily = {
+        ...existing,
+        embeddings_count: usage.embeddings_count ?? existing.embeddings_count,
+        clusterings_count: usage.clusterings_count ?? existing.clusterings_count,
+        searches_count: usage.searches_count ?? existing.searches_count,
+        summaries_count: usage.summaries_count ?? existing.summaries_count,
+        total_tokens: usage.total_tokens ?? existing.total_tokens,
+        openai_tokens: usage.openai_tokens ?? existing.openai_tokens,
+        anthropic_tokens: usage.anthropic_tokens ?? existing.anthropic_tokens,
+        estimated_cost: usage.estimated_cost ?? existing.estimated_cost,
+        updated_at: new Date()
+      };
+      this.aiUsageDaily.set(key, updated);
+      return updated;
+    }
+    
+    const newUsage: AIUsageDaily = {
+      id: randomUUID(),
+      user_id: usage.user_id,
+      date: usage.date,
+      embeddings_count: usage.embeddings_count ?? 0,
+      clusterings_count: usage.clusterings_count ?? 0,
+      searches_count: usage.searches_count ?? 0,
+      summaries_count: usage.summaries_count ?? 0,
+      total_tokens: usage.total_tokens ?? 0,
+      openai_tokens: usage.openai_tokens ?? 0,
+      anthropic_tokens: usage.anthropic_tokens ?? 0,
+      estimated_cost: usage.estimated_cost ?? '0',
+      embeddings_limit: 500,
+      clusterings_limit: 10,
+      searches_limit: 100,
+      created_at: new Date(),
+      updated_at: new Date()
+    };
+    this.aiUsageDaily.set(key, newUsage);
+    return newUsage;
+  }
+
+  async incrementDailyUsage(
+    userId: string,
+    date: string,
+    operation: AIOperation,
+    tokenCount: number,
+    provider: AIProvider,
+    cost: number
+  ): Promise<AIUsageDaily> {
+    const key = `${userId}-${date}`;
+    let usage = this.aiUsageDaily.get(key);
+    
+    if (!usage) {
+      usage = {
+        id: randomUUID(),
+        user_id: userId,
+        date,
+        embeddings_count: 0,
+        clusterings_count: 0,
+        searches_count: 0,
+        summaries_count: 0,
+        total_tokens: 0,
+        openai_tokens: 0,
+        anthropic_tokens: 0,
+        estimated_cost: '0',
+        embeddings_limit: 500,
+        clusterings_limit: 10,
+        searches_limit: 100,
+        created_at: new Date(),
+        updated_at: new Date()
+      };
+    }
+    
+    // Increment operation count
+    switch (operation) {
+      case 'embedding':
+        usage.embeddings_count++;
+        break;
+      case 'clustering':
+        usage.clusterings_count++;
+        break;
+      case 'search':
+        usage.searches_count++;
+        break;
+      case 'summary':
+        usage.summaries_count++;
+        break;
+    }
+    
+    // Increment token counts
+    usage.total_tokens += tokenCount;
+    if (provider === 'openai') {
+      usage.openai_tokens += tokenCount;
+    } else {
+      usage.anthropic_tokens += tokenCount;
+    }
+    
+    // Update cost
+    const currentCost = parseFloat(usage.estimated_cost || '0');
+    usage.estimated_cost = (currentCost + cost).toFixed(6);
+    usage.updated_at = new Date();
+    
+    this.aiUsageDaily.set(key, usage);
+    return usage;
+  }
+
+  async getUsageStats(userId: string, days: number = 7): Promise<AIUsageDaily[]> {
+    const results: AIUsageDaily[] = [];
+    const today = new Date();
+    
+    for (let i = 0; i < days; i++) {
+      const date = new Date(today);
+      date.setDate(date.getDate() - i);
+      const dateStr = date.toISOString().split('T')[0];
+      const usage = this.aiUsageDaily.get(`${userId}-${dateStr}`);
+      if (usage) {
+        results.push(usage);
+      }
+    }
+    
+    return results;
+  }
+
+  async addToDeadLetterQueue(item: {
+    operation: AIOperation;
+    provider: AIProvider;
+    userId?: string;
+    payload: unknown;
+    errorMessage: string;
+    attempts: number;
+    lastAttemptAt: Date;
+  }): Promise<void> {
+    const id = randomUUID();
+    this.deadLetterQueue.set(id, {
+      id,
+      operation: item.operation,
+      provider: item.provider,
+      userId: item.userId,
+      payload: item.payload,
+      errorMessage: item.errorMessage,
+      attempts: item.attempts,
+      createdAt: new Date(),
+      lastAttemptAt: item.lastAttemptAt
+    });
+  }
+
+  async getDeadLetterItems(limit: number = 100): Promise<Array<{
+    id: string;
+    operation: AIOperation;
+    provider: AIProvider;
+    userId?: string;
+    payload: unknown;
+    errorMessage: string;
+    attempts: number;
+    createdAt: Date;
+    lastAttemptAt: Date;
+  }>> {
+    const items = Array.from(this.deadLetterQueue.values());
+    return items.slice(0, limit);
+  }
+
+  async removeFromDeadLetterQueue(id: string): Promise<void> {
+    this.deadLetterQueue.delete(id);
   }
 }
 

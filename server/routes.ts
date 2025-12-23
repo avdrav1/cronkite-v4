@@ -4,10 +4,16 @@ import passport from "passport";
 import { getStorage } from "./storage";
 import { requireAuth, requireNoAuth, createSupabaseClient } from "./auth-middleware";
 import { syncFeeds, syncFeed } from "./rss-sync";
+import { 
+  createFeedSyncIntegrationService, 
+  syncFeedsWithIntegration,
+  type FeedSyncIntegrationService 
+} from "./feed-sync-integration";
 import { FeedFilteringValidator, type FilterOptions, validateFilterOptions, filterFeedsByInterestsWithMapping } from "./feed-filtering-validation";
 import { categoryMappingService } from "@shared/category-mapping";
 import { generateArticleSummary, isAISummaryAvailable, clusterArticles, isClusteringAvailable } from "./ai-summary";
 import { requireFeedOwnership, validateFeedOwnership } from "./feed-ownership";
+import { createSimilarArticlesService } from "./similar-articles-service";
 import { 
   insertProfileSchema, 
   selectProfileSchema,
@@ -946,10 +952,11 @@ export async function registerRoutes(
         subscribed_count: feedIds.length
       });
     } catch (error) {
-      console.error('Subscribe to feeds error:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Subscribe to feeds error:', errorMessage, error);
       res.status(500).json({
         error: 'Failed to subscribe to feeds',
-        message: 'An error occurred while subscribing to feeds'
+        message: errorMessage
       });
     }
   });
@@ -1060,11 +1067,12 @@ export async function registerRoutes(
         });
       }
       
-      // Start RSS synchronization for feeds
+      // Start RSS synchronization for feeds with embedding integration
       console.log(`Starting RSS sync for ${feedsToSync.length} feeds for user ${userId}`);
       
-      // Process feeds
-      const syncPromise = syncFeeds(feedsToSync, {
+      // Process feeds with embedding and clustering integration
+      // Requirements: 3.8, 3.9, 7.1, 7.2 - Wire feed sync to embedding pipeline
+      const syncPromise = syncFeedsWithIntegration(storage, feedsToSync, {
         maxArticles: 50, // Limit articles per feed
         respectEtag: true,
         respectLastModified: true,
@@ -1075,7 +1083,8 @@ export async function registerRoutes(
       // If waitForResults is true, wait for sync to complete and return detailed results
       if (waitForResults) {
         try {
-          const results = await syncPromise;
+          const integrationResult = await syncPromise;
+          const results = integrationResult.syncResults;
           
           const successCount = results.filter(r => r.success).length;
           const failureCount = results.filter(r => !r.success).length;
@@ -1095,7 +1104,7 @@ export async function registerRoutes(
             }
           });
           
-          console.log(`RSS sync completed for user ${userId}: ${successCount} success, ${failureCount} failed, ${newArticlesCount} new articles`);
+          console.log(`RSS sync completed for user ${userId}: ${successCount} success, ${failureCount} failed, ${newArticlesCount} new articles, ${integrationResult.totalEmbeddingsQueued} embeddings queued`);
           
           return res.json({
             success: true,
@@ -1105,6 +1114,8 @@ export async function registerRoutes(
             failedSyncs: failureCount,
             newArticles: newArticlesCount,
             updatedArticles: updatedArticlesCount,
+            embeddingsQueued: integrationResult.totalEmbeddingsQueued,
+            clusteringTriggered: integrationResult.clusteringTriggered,
             errors
           });
         } catch (syncError) {
@@ -1301,6 +1312,181 @@ export async function registerRoutes(
     }
   });
 
+  // ============================================================================
+  // Feed Priority API Routes
+  // Requirements: 6.2, 6.3, 6.5 - Feed priority management
+  // ============================================================================
+
+  // PUT /api/feeds/:id/priority - Update single feed priority
+  // Requirements: 6.2, 6.3
+  app.put('/api/feeds/:id/priority', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const feedId = req.params.id;
+      const { priority } = req.body;
+      
+      if (!feedId) {
+        return res.status(400).json({
+          success: false,
+          error: 'MISSING_FEED_ID',
+          message: 'Feed ID is required'
+        });
+      }
+      
+      // Validate priority value (Requirements: 6.3)
+      if (!priority || !['high', 'medium', 'low'].includes(priority)) {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_PRIORITY',
+          message: "Priority must be 'high', 'medium', or 'low'"
+        });
+      }
+      
+      // Validate feed ownership
+      const ownershipResult = await requireFeedOwnership(userId, feedId);
+      
+      if (!ownershipResult.isValid) {
+        return res.status(ownershipResult.httpStatus).json(ownershipResult.errorResponse);
+      }
+      
+      const storage = await getStorage();
+      const { createFeedSchedulerManager } = await import('./feed-scheduler');
+      const scheduler = createFeedSchedulerManager(storage);
+      
+      // Update priority and recalculate schedule (Requirements: 6.2)
+      const updatedFeed = await scheduler.updateFeedPriority(feedId, priority);
+      
+      res.json({
+        success: true,
+        feedId: updatedFeed.id,
+        feedName: updatedFeed.name,
+        priority: updatedFeed.sync_priority,
+        nextSyncAt: updatedFeed.next_sync_at?.toISOString() || null,
+        syncIntervalHours: updatedFeed.sync_interval_hours
+      });
+      
+    } catch (error) {
+      console.error('Update feed priority error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'PRIORITY_UPDATE_ERROR',
+        message: error instanceof Error ? error.message : 'An error occurred while updating feed priority'
+      });
+    }
+  });
+
+  // PUT /api/feeds/priority - Bulk update feed priorities
+  // Requirements: 6.5
+  app.put('/api/feeds/priority', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const { feedPriorities } = req.body;
+      
+      // Validate input
+      if (!Array.isArray(feedPriorities) || feedPriorities.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_INPUT',
+          message: 'feedPriorities must be a non-empty array'
+        });
+      }
+      
+      // Validate each entry
+      for (const entry of feedPriorities) {
+        if (!entry.feedId || typeof entry.feedId !== 'string') {
+          return res.status(400).json({
+            success: false,
+            error: 'INVALID_FEED_ID',
+            message: 'Each entry must have a valid feedId'
+          });
+        }
+        if (!entry.priority || !['high', 'medium', 'low'].includes(entry.priority)) {
+          return res.status(400).json({
+            success: false,
+            error: 'INVALID_PRIORITY',
+            message: `Invalid priority for feed ${entry.feedId}. Must be 'high', 'medium', or 'low'`
+          });
+        }
+      }
+      
+      // Validate ownership for all feeds
+      const storage = await getStorage();
+      const userFeeds = await storage.getUserFeeds(userId);
+      const userFeedIds = new Set(userFeeds.map(f => f.id));
+      
+      const unauthorizedFeeds = feedPriorities.filter(fp => !userFeedIds.has(fp.feedId));
+      if (unauthorizedFeeds.length > 0) {
+        return res.status(403).json({
+          success: false,
+          error: 'UNAUTHORIZED_FEEDS',
+          message: 'You do not have access to some of the specified feeds',
+          unauthorizedFeedIds: unauthorizedFeeds.map(f => f.feedId)
+        });
+      }
+      
+      const { createFeedSchedulerManager } = await import('./feed-scheduler');
+      const scheduler = createFeedSchedulerManager(storage);
+      
+      // Bulk update priorities
+      const updatedFeeds = await scheduler.bulkUpdatePriorities(feedPriorities);
+      
+      res.json({
+        success: true,
+        updatedCount: updatedFeeds.length,
+        feeds: updatedFeeds.map(feed => ({
+          feedId: feed.id,
+          feedName: feed.name,
+          priority: feed.sync_priority,
+          nextSyncAt: feed.next_sync_at?.toISOString() || null,
+          syncIntervalHours: feed.sync_interval_hours
+        }))
+      });
+      
+    } catch (error) {
+      console.error('Bulk update feed priorities error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'BULK_PRIORITY_UPDATE_ERROR',
+        message: error instanceof Error ? error.message : 'An error occurred while updating feed priorities'
+      });
+    }
+  });
+
+  // GET /api/feeds/schedule - Get sync schedule for user's feeds
+  // Requirements: 6.4
+  app.get('/api/feeds/schedule', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      
+      const storage = await getStorage();
+      const { createFeedSchedulerManager } = await import('./feed-scheduler');
+      const scheduler = createFeedSchedulerManager(storage);
+      
+      const schedule = await scheduler.getSyncSchedule(userId);
+      
+      res.json({
+        success: true,
+        schedule: schedule.map(item => ({
+          feedId: item.feedId,
+          feedName: item.feedName,
+          priority: item.priority,
+          lastSyncAt: item.lastSyncAt?.toISOString() || null,
+          nextSyncAt: item.nextSyncAt.toISOString(),
+          syncIntervalHours: item.syncIntervalHours
+        })),
+        total: schedule.length
+      });
+      
+    } catch (error) {
+      console.error('Get feed schedule error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'SCHEDULE_ERROR',
+        message: 'An error occurred while retrieving feed schedule'
+      });
+    }
+  });
+
   // GET /api/articles - Get user's article feed
   // OPTIMIZED: Uses parallel queries instead of sequential N+1 pattern
   app.get('/api/articles', requireAuth, async (req: Request, res: Response) => {
@@ -1328,12 +1514,13 @@ export async function registerRoutes(
         try {
           const feedArticles = await storage.getArticlesByFeedId(feed.id, maxArticlesPerFeed);
           
-          // Add feed information to each article
+          // Add feed information to each article, including category (folder_name)
           return feedArticles.map(article => ({
             ...article,
             feed_name: feed.name,
             feed_url: feed.site_url || feed.url,
-            feed_icon: feed.icon_url
+            feed_icon: feed.icon_url,
+            feed_category: feed.folder_name || 'General' // Include category for filtering
           }));
         } catch (error) {
           console.error(`Failed to get articles for feed ${feed.id}:`, error);
@@ -1419,29 +1606,147 @@ export async function registerRoutes(
     }
   });
 
-  // GET /api/ai/status - Check AI service availability
-  app.get('/api/ai/status', requireAuth, async (req: Request, res: Response) => {
-    res.json({
-      available: isAISummaryAvailable(),
-      features: {
-        articleSummary: isAISummaryAvailable(),
-        topicClustering: isClusteringAvailable()
-      }
-    });
-  });
+  // ============================================================================
+  // AI Status and Usage API Routes
+  // Requirements: 7.5, 8.6 - Embedding/clustering status and usage statistics
+  // ============================================================================
 
-  // GET /api/clusters - Get trending topic clusters from user's articles
-  app.get('/api/clusters', requireAuth, async (req: Request, res: Response) => {
+  // GET /api/ai/status - Check AI service availability and embedding/clustering status
+  // Requirements: 7.5
+  app.get('/api/ai/status', requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = req.user!.id;
       
-      if (!isClusteringAvailable()) {
-        return res.status(503).json({
-          error: 'Clustering unavailable',
-          message: 'AI clustering service not configured',
-          clusters: []
-        });
+      const storage = await getStorage();
+      
+      // Get embedding queue stats
+      let embeddingStats = {
+        pending: 0,
+        processing: 0,
+        failed: 0,
+        deadLetter: 0
+      };
+      
+      try {
+        const { createEmbeddingQueueManager } = await import('./embedding-service');
+        const embeddingManager = createEmbeddingQueueManager(storage);
+        embeddingStats = await embeddingManager.getQueueStats();
+      } catch (e) {
+        // Embedding service may not be fully configured
+        console.warn('Could not get embedding stats:', e);
       }
+      
+      // Check service availability
+      const { isEmbeddingServiceAvailable } = await import('./embedding-service');
+      const { isClusteringServiceAvailable } = await import('./clustering-service');
+      
+      res.json({
+        available: isAISummaryAvailable(),
+        features: {
+          articleSummary: isAISummaryAvailable(),
+          topicClustering: isClusteringAvailable(),
+          embeddings: isEmbeddingServiceAvailable(),
+          vectorClustering: isClusteringServiceAvailable(),
+          semanticSearch: isEmbeddingServiceAvailable()
+        },
+        embedding: {
+          serviceAvailable: isEmbeddingServiceAvailable(),
+          queue: embeddingStats
+        },
+        clustering: {
+          serviceAvailable: isClusteringServiceAvailable()
+        },
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Get AI status error:', error);
+      res.status(500).json({
+        error: 'AI_STATUS_ERROR',
+        message: 'An error occurred while retrieving AI status'
+      });
+    }
+  });
+
+  // GET /api/ai/usage - Get user's AI usage statistics
+  // Requirements: 8.6
+  app.get('/api/ai/usage', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const days = req.query.days ? parseInt(req.query.days as string, 10) : 7;
+      
+      const storage = await getStorage();
+      const { createAIRateLimiter } = await import('./ai-rate-limiter');
+      const rateLimiter = createAIRateLimiter(storage);
+      
+      // Get current day usage stats
+      const usageStats = await rateLimiter.getUsageStats(userId);
+      
+      // Get historical usage if requested
+      let historicalUsage: Array<{
+        date: string;
+        embeddings: number;
+        clusterings: number;
+        searches: number;
+        totalTokens: number;
+        estimatedCost: number;
+      }> = [];
+      
+      if (days > 1) {
+        const historical = await rateLimiter.getHistoricalUsage(userId, days);
+        historicalUsage = historical.map(day => ({
+          date: day.date,
+          embeddings: day.embeddings_count,
+          clusterings: day.clusterings_count,
+          searches: day.searches_count,
+          totalTokens: day.total_tokens,
+          estimatedCost: parseFloat(day.estimated_cost?.toString() || '0')
+        }));
+      }
+      
+      res.json({
+        success: true,
+        today: {
+          embeddings: usageStats.daily.embeddings,
+          clusterings: usageStats.daily.clusterings,
+          searches: usageStats.daily.searches,
+          summaries: usageStats.daily.summaries,
+          totalTokens: usageStats.daily.totalTokens,
+          openaiTokens: usageStats.daily.openaiTokens,
+          anthropicTokens: usageStats.daily.anthropicTokens,
+          estimatedCost: usageStats.daily.estimatedCost
+        },
+        limits: {
+          embeddingsPerDay: usageStats.limits.embeddingsPerDay,
+          clusteringsPerDay: usageStats.limits.clusteringsPerDay,
+          searchesPerDay: usageStats.limits.searchesPerDay
+        },
+        remaining: {
+          embeddings: usageStats.remaining.embeddings,
+          clusterings: usageStats.remaining.clusterings,
+          searches: usageStats.remaining.searches
+        },
+        resetAt: usageStats.resetAt.toISOString(),
+        history: historicalUsage,
+        timestamp: new Date().toISOString()
+      });
+      
+    } catch (error) {
+      console.error('Get AI usage error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'AI_USAGE_ERROR',
+        message: 'An error occurred while retrieving AI usage statistics'
+      });
+    }
+  });
+
+  // GET /api/clusters - Get trending topic clusters from user's articles
+  // Requirements: 2.5, 2.7, 9.5 - Vector-based clustering with relevance scores and graceful degradation
+  app.get('/api/clusters', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 10;
+      const useVectorClustering = req.query.vector !== 'false'; // Default to vector-based
       
       const storage = await getStorage();
       const userFeeds = await storage.getUserFeeds(userId);
@@ -1450,7 +1755,53 @@ export async function registerRoutes(
         return res.json({ clusters: [], message: 'No feeds to cluster' });
       }
       
-      // Get recent articles from all feeds for clustering
+      // Try vector-based clustering first if enabled
+      // Requirements: 9.5 - Serve cached clusters on AI failure
+      if (useVectorClustering) {
+        try {
+          const { createClusteringServiceManager, isClusteringServiceAvailable } = await import('./clustering-service');
+          
+          // Even if clustering service is unavailable, try to get cached clusters
+          const clusteringService = createClusteringServiceManager(storage);
+          
+          // Get user's feed IDs for filtering
+          const feedIds = userFeeds.map(f => f.id);
+          
+          // Get clusters sorted by relevance score (Requirements: 2.7)
+          // This will return cached clusters even if AI service is down
+          const vectorClusters = await clusteringService.getUserClusters(userId, limit);
+          
+          if (vectorClusters.length > 0) {
+            return res.json({
+              clusters: vectorClusters.map(cluster => ({
+                id: cluster.id,
+                topic: cluster.topic,
+                summary: cluster.summary,
+                articleCount: cluster.articleCount,
+                sources: cluster.sources,
+                avgSimilarity: cluster.avgSimilarity,
+                relevanceScore: cluster.relevanceScore,
+                latestTimestamp: cluster.latestTimestamp.toISOString(),
+                expiresAt: cluster.expiresAt.toISOString()
+              })),
+              articlesAnalyzed: vectorClusters.reduce((sum, c) => sum + c.articleCount, 0),
+              generatedAt: new Date().toISOString(),
+              method: 'vector',
+              cached: !isClusteringServiceAvailable() // Indicate if serving cached data
+            });
+          }
+          
+          // If no cached clusters and service is unavailable, fall through to text-based
+          if (!isClusteringServiceAvailable()) {
+            console.warn('⚠️ Clustering service unavailable and no cached clusters, falling back to text-based');
+          }
+        } catch (vectorError) {
+          console.warn('Vector clustering failed, falling back to text-based:', vectorError);
+        }
+      }
+      
+      // Fallback to text-based clustering (Requirements: 9.5)
+      // This provides graceful degradation when AI services are unavailable
       const feedArticlePromises = userFeeds.map(async (feed) => {
         try {
           const feedArticles = await storage.getArticlesByFeedId(feed.id, 20);
@@ -1478,13 +1829,15 @@ export async function registerRoutes(
       
       const recentArticles = allArticles.slice(0, 50);
       
-      // Generate clusters
+      // Generate clusters using text-based method
       const clusters = await clusterArticles(recentArticles);
       
       res.json({
         clusters,
         articlesAnalyzed: recentArticles.length,
-        generatedAt: new Date().toISOString()
+        generatedAt: new Date().toISOString(),
+        method: 'text',
+        fallback: true // Indicate this is fallback data
       });
     } catch (error) {
       console.error('Clustering error:', error);
@@ -1814,9 +2167,25 @@ export async function registerRoutes(
       const storage = await getStorage();
       const starredArticles = await storage.getStarredArticles(userId, limit, offset);
       
+      // Get user's feeds to add feed information to articles
+      const userFeeds = await storage.getUserFeeds(userId);
+      const feedMap = new Map(userFeeds.map(feed => [feed.id, feed]));
+      
+      // Add feed information to each article
+      const articlesWithFeedInfo = starredArticles.map(article => {
+        const feed = feedMap.get(article.feed_id);
+        return {
+          ...article,
+          feed_name: feed?.name || 'Unknown Source',
+          feed_url: feed?.site_url || feed?.url,
+          feed_icon: feed?.icon_url,
+          feed_category: feed?.folder_name || 'General'
+        };
+      });
+      
       res.json({
-        articles: starredArticles,
-        total: starredArticles.length
+        articles: articlesWithFeedInfo,
+        total: articlesWithFeedInfo.length
       });
       
     } catch (error) {
@@ -1869,6 +2238,176 @@ export async function registerRoutes(
         success: false,
         error: 'ENGAGEMENT_SIGNAL_ERROR',
         message: 'An error occurred while updating engagement signal'
+      });
+    }
+  });
+
+  // ============================================================================
+  // Semantic Search API Routes
+  // Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8
+  // Property 13: Semantic Search Result Constraints
+  // ============================================================================
+
+  // GET /api/search - Semantic search for articles
+  // Requirements: 5.1, 5.6
+  app.get('/api/search', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const query = req.query.q as string | undefined;
+      const feedId = req.query.feedId as string | undefined;
+      const dateFrom = req.query.dateFrom as string | undefined;
+      const dateTo = req.query.dateTo as string | undefined;
+      const limit = req.query.limit as string | undefined;
+      
+      // Requirements: 5.6 - Handle empty query (return default feed)
+      if (!query || query.trim().length === 0) {
+        // Return empty result with message for empty query
+        return res.json({
+          success: true,
+          articles: [],
+          query: '',
+          totalResults: 0,
+          processingTimeMs: 0,
+          fallbackUsed: false,
+          message: 'Please provide a search query'
+        });
+      }
+      
+      const storage = await getStorage();
+      const { createSemanticSearchService } = await import('./semantic-search-service');
+      const searchService = createSemanticSearchService(storage);
+      
+      // Build search options
+      const searchOptions: {
+        userId: string;
+        maxResults?: number;
+        feedIds?: string[];
+        dateFrom?: Date;
+        dateTo?: Date;
+      } = {
+        userId,
+      };
+      
+      // Parse limit
+      if (limit) {
+        const parsedLimit = parseInt(limit, 10);
+        if (!isNaN(parsedLimit) && parsedLimit > 0) {
+          searchOptions.maxResults = Math.min(parsedLimit, 50); // Cap at 50
+        }
+      }
+      
+      // Parse feed filter
+      if (feedId) {
+        searchOptions.feedIds = [feedId];
+      }
+      
+      // Parse date filters
+      if (dateFrom) {
+        const parsedDateFrom = new Date(dateFrom);
+        if (!isNaN(parsedDateFrom.getTime())) {
+          searchOptions.dateFrom = parsedDateFrom;
+        }
+      }
+      
+      if (dateTo) {
+        const parsedDateTo = new Date(dateTo);
+        if (!isNaN(parsedDateTo.getTime())) {
+          searchOptions.dateTo = parsedDateTo;
+        }
+      }
+      
+      // Perform search
+      const result = await searchService.search(query.trim(), searchOptions);
+      
+      res.json({
+        success: true,
+        articles: result.articles.map(article => ({
+          id: article.id,
+          title: article.title,
+          excerpt: article.excerpt,
+          feedName: article.feedName,
+          feedId: article.feedId,
+          publishedAt: article.publishedAt?.toISOString() || null,
+          relevanceScore: article.relevanceScore,
+          imageUrl: article.imageUrl || null
+        })),
+        query: result.query,
+        totalResults: result.totalResults,
+        processingTimeMs: result.processingTimeMs,
+        fallbackUsed: result.fallbackUsed
+      });
+      
+    } catch (error) {
+      console.error('Semantic search error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'SEARCH_ERROR',
+        message: 'An error occurred while searching articles'
+      });
+    }
+  });
+
+  // ============================================================================
+  // Similar Articles API Routes
+  // Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6
+  // ============================================================================
+
+  // GET /api/articles/:id/similar - Get similar articles for a given article
+  // Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6
+  // Property 12: Similar Articles Search Constraints
+  app.get('/api/articles/:id/similar', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const articleId = req.params.id;
+      
+      if (!articleId) {
+        return res.status(400).json({
+          success: false,
+          error: 'MISSING_ARTICLE_ID',
+          message: 'Article ID is required'
+        });
+      }
+      
+      const storage = await getStorage();
+      const similarArticlesService = createSimilarArticlesService(storage);
+      
+      const result = await similarArticlesService.findSimilar(articleId, userId);
+      
+      // Requirements: 4.5 - Handle no-results case
+      if (result.similarArticles.length === 0) {
+        return res.json({
+          success: true,
+          articleId,
+          similarArticles: [],
+          message: result.message || 'No similar articles found',
+          fromCache: result.fromCache,
+          cacheExpiresAt: result.cacheExpiresAt?.toISOString()
+        });
+      }
+      
+      res.json({
+        success: true,
+        articleId,
+        similarArticles: result.similarArticles.map(article => ({
+          id: article.articleId,
+          title: article.title,
+          feedName: article.feedName,
+          feedId: article.feedId,
+          similarityScore: article.similarityScore,
+          publishedAt: article.publishedAt?.toISOString() || null,
+          imageUrl: article.imageUrl || null
+        })),
+        total: result.similarArticles.length,
+        fromCache: result.fromCache,
+        cacheExpiresAt: result.cacheExpiresAt?.toISOString()
+      });
+      
+    } catch (error) {
+      console.error('Get similar articles error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'SIMILAR_ARTICLES_ERROR',
+        message: 'An error occurred while finding similar articles'
       });
     }
   });

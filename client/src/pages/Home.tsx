@@ -32,6 +32,7 @@ interface ArticleWithFeed extends Article {
   feed_name?: string;
   feed_url?: string;
   feed_icon?: string;
+  feed_category?: string; // Category/folder_name for filtering
 }
 
 // Mixed feed item type (articles and trending topics)
@@ -134,7 +135,8 @@ export default function Home() {
         // Feed information
         feed_name: article.feed_name,
         feed_url: article.feed_url,
-        feed_icon: article.feed_icon
+        feed_icon: article.feed_icon,
+        feed_category: article.feed_category || 'General' // Category for filtering
       }));
       
       setArticles(articlesWithState);
@@ -193,7 +195,8 @@ export default function Home() {
           engagementSignal: article.engagement_signal || null,
           feed_name: article.feed_name,
           feed_url: article.feed_url,
-          feed_icon: article.feed_icon
+          feed_icon: article.feed_icon,
+          feed_category: article.feed_category || 'General' // Category for filtering
         }));
         setStarredArticles(starredWithState);
       }
@@ -297,13 +300,11 @@ export default function Home() {
       if (!matchesSource) return false;
     }
 
-    // 2. Category Filter (filter by feed category)
+    // 2. Category Filter (filter by feed category/folder_name)
     if (categoryFilter) {
-      // Articles don't have category directly, but we can match against feed_name patterns
-      // For now, we'll need to check if the article's feed belongs to the category
-      // This would require the API to return category info with articles
-      // For now, we'll skip category filtering at the article level
-      // TODO: Implement proper category filtering when API returns category info
+      const articleCategory = article.feed_category || 'General';
+      const matchesCategory = articleCategory.toLowerCase() === categoryFilter.toLowerCase();
+      if (!matchesCategory) return false;
     }
 
     // 3. Status Filter (only apply for non-starred filter since starred uses API)
