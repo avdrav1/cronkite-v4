@@ -19,7 +19,9 @@ import {
   type UserArticle,
   type InsertUserArticle,
   type Cluster,
-  type InsertCluster
+  type InsertCluster,
+  MAX_FEEDS_PER_USER,
+  type EngagementSignal
 } from "@shared/schema";
 import { categoryMappingService } from "@shared/category-mapping";
 import { randomUUID } from "crypto";
@@ -94,6 +96,27 @@ export interface IStorage {
   getUserArticleState(userId: string, articleId: string): Promise<UserArticle | undefined>;
   createUserArticleState(userArticle: InsertUserArticle): Promise<UserArticle>;
   updateUserArticleState(userId: string, articleId: string, updates: Partial<UserArticle>): Promise<UserArticle>;
+  
+  // Feed Count and Limit Management (Requirements: 5.1, 5.2, 3.1, 3.2, 3.3, 3.5)
+  getUserFeedCount(userId: string): Promise<number>;
+  subscribeToFeedsWithLimit(
+    userId: string, 
+    feedIds: string[], 
+    maxLimit: number
+  ): Promise<{ subscribed: string[]; rejected: string[]; reason?: string }>;
+  
+  // Article State Management - Enhanced (Requirements: 6.1, 6.2, 7.1, 7.2, 7.3)
+  markArticleRead(userId: string, articleId: string, isRead: boolean): Promise<UserArticle>;
+  markArticleStarred(userId: string, articleId: string, isStarred: boolean): Promise<UserArticle>;
+  getStarredArticles(userId: string, limit?: number, offset?: number): Promise<Article[]>;
+  
+  // Engagement Signal Management (Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6)
+  setEngagementSignal(
+    userId: string, 
+    articleId: string, 
+    signal: 'positive' | 'negative' | null
+  ): Promise<UserArticle>;
+  getArticlesWithEngagement(userId: string, feedId?: string): Promise<Array<Article & { engagement?: string }>>;
 }
 
 export class MemStorage implements IStorage {
@@ -385,6 +408,7 @@ export class MemStorage implements IStorage {
           id: randomUUID(),
           user_id: userId,
           folder_id: null,
+          folder_name: recommendedFeed.category, // Preserve category for sidebar grouping
           name: recommendedFeed.name,
           url: recommendedFeed.url,
           site_url: recommendedFeed.site_url,
@@ -637,6 +661,8 @@ export class MemStorage implements IStorage {
       starred_at: insertUserArticle.starred_at || null,
       clicked_at: insertUserArticle.clicked_at || null,
       time_spent_seconds: insertUserArticle.time_spent_seconds || null,
+      engagement_signal: insertUserArticle.engagement_signal || null,
+      engagement_signal_at: insertUserArticle.engagement_signal_at || null,
       created_at: insertUserArticle.created_at || new Date(),
       updated_at: insertUserArticle.updated_at || new Date()
     };
@@ -667,6 +693,144 @@ export class MemStorage implements IStorage {
     
     this.userArticles.set(key, updatedUserArticle);
     return updatedUserArticle;
+  }
+
+  // Feed Count and Limit Management (Requirements: 5.1, 5.2)
+  async getUserFeedCount(userId: string): Promise<number> {
+    const userFeeds = this.userFeeds.get(userId) || [];
+    return userFeeds.length;
+  }
+
+  // Subscription with Limit Checking (Requirements: 3.1, 3.2, 3.3, 3.5)
+  async subscribeToFeedsWithLimit(
+    userId: string, 
+    feedIds: string[], 
+    maxLimit: number
+  ): Promise<{ subscribed: string[]; rejected: string[]; reason?: string }> {
+    const currentCount = await this.getUserFeedCount(userId);
+    const availableSlots = maxLimit - currentCount;
+    
+    if (availableSlots <= 0) {
+      return {
+        subscribed: [],
+        rejected: feedIds,
+        reason: `Feed limit reached. You have ${currentCount}/${maxLimit} feeds. Remove some feeds to add new ones.`
+      };
+    }
+    
+    const feedsToSubscribe = feedIds.slice(0, availableSlots);
+    const rejectedFeeds = feedIds.slice(availableSlots);
+    
+    // Subscribe to the allowed feeds
+    if (feedsToSubscribe.length > 0) {
+      await this.subscribeToFeeds(userId, feedsToSubscribe);
+    }
+    
+    const result: { subscribed: string[]; rejected: string[]; reason?: string } = {
+      subscribed: feedsToSubscribe,
+      rejected: rejectedFeeds
+    };
+    
+    if (rejectedFeeds.length > 0) {
+      result.reason = `Partial subscription: ${feedsToSubscribe.length} feeds added, ${rejectedFeeds.length} rejected due to limit (${maxLimit} max).`;
+    }
+    
+    return result;
+  }
+
+  // Article State Management - Enhanced (Requirements: 6.1, 6.2)
+  async markArticleRead(userId: string, articleId: string, isRead: boolean): Promise<UserArticle> {
+    const updates: Partial<UserArticle> = {
+      is_read: isRead,
+      read_at: isRead ? new Date() : null
+    };
+    return this.updateUserArticleState(userId, articleId, updates);
+  }
+
+  // Article Starred State (Requirements: 7.1, 7.2)
+  async markArticleStarred(userId: string, articleId: string, isStarred: boolean): Promise<UserArticle> {
+    const updates: Partial<UserArticle> = {
+      is_starred: isStarred,
+      starred_at: isStarred ? new Date() : null
+    };
+    return this.updateUserArticleState(userId, articleId, updates);
+  }
+
+  // Get Starred Articles (Requirements: 7.3)
+  async getStarredArticles(userId: string, limit?: number, offset?: number): Promise<Article[]> {
+    const starredArticleIds: string[] = [];
+    
+    // Find all starred user articles for this user
+    this.userArticles.forEach((userArticle, key) => {
+      if (key.startsWith(`${userId}:`) && userArticle.is_starred) {
+        starredArticleIds.push(userArticle.article_id);
+      }
+    });
+    
+    // Get the actual articles
+    const starredArticles: Article[] = [];
+    starredArticleIds.forEach(articleId => {
+      const article = this.articles.get(articleId);
+      if (article) {
+        starredArticles.push(article);
+      }
+    });
+    
+    // Sort by starred_at timestamp (most recent first)
+    starredArticles.sort((a, b) => {
+      const userArticleA = this.userArticles.get(`${userId}:${a.id}`);
+      const userArticleB = this.userArticles.get(`${userId}:${b.id}`);
+      const timeA = userArticleA?.starred_at?.getTime() || 0;
+      const timeB = userArticleB?.starred_at?.getTime() || 0;
+      return timeB - timeA;
+    });
+    
+    // Apply pagination
+    const startIndex = offset || 0;
+    const endIndex = limit ? startIndex + limit : undefined;
+    
+    return starredArticles.slice(startIndex, endIndex);
+  }
+
+  // Engagement Signal Management (Requirements: 8.1, 8.2, 8.3, 8.4)
+  async setEngagementSignal(
+    userId: string, 
+    articleId: string, 
+    signal: EngagementSignal
+  ): Promise<UserArticle> {
+    const updates: Partial<UserArticle> = {
+      engagement_signal: signal,
+      engagement_signal_at: signal ? new Date() : null
+    };
+    return this.updateUserArticleState(userId, articleId, updates);
+  }
+
+  // Get Articles with Engagement (Requirements: 8.5, 8.6)
+  async getArticlesWithEngagement(userId: string, feedId?: string): Promise<Array<Article & { engagement?: string }>> {
+    const result: Array<Article & { engagement?: string }> = [];
+    
+    // Get all articles, optionally filtered by feedId
+    this.articles.forEach((article) => {
+      if (feedId && article.feed_id !== feedId) {
+        return;
+      }
+      
+      const userArticle = this.userArticles.get(`${userId}:${article.id}`);
+      const articleWithEngagement: Article & { engagement?: string } = {
+        ...article,
+        engagement: userArticle?.engagement_signal || undefined
+      };
+      result.push(articleWithEngagement);
+    });
+    
+    // Sort by published_at (most recent first)
+    result.sort((a, b) => {
+      const timeA = a.published_at?.getTime() || 0;
+      const timeB = b.published_at?.getTime() || 0;
+      return timeB - timeA;
+    });
+    
+    return result;
   }
 
   private initializeMockRecommendedFeeds(): void {

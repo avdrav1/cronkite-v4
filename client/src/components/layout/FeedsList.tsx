@@ -1,10 +1,12 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
-import { Folder, Rss, ChevronDown, ChevronRight, Plus } from "lucide-react";
+import { Folder, Rss, ChevronDown, ChevronRight, Plus, RefreshCw, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useFeedsQuery } from "@/hooks/useFeedsQuery";
+import { useFeedsQuery, useInvalidateFeedsQuery } from "@/hooks/useFeedsQuery";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import type { Feed } from "@shared/schema";
 
 const EXPANDED_CATEGORIES_KEY = 'cronkite-expanded-categories';
@@ -18,8 +20,28 @@ interface GroupedFeeds {
   [category: string]: Feed[];
 }
 
+// Sync state tracking
+interface SyncState {
+  isSyncing: boolean;
+  syncingFeedId: string | null;
+  isBulkSyncing: boolean;
+}
+
 /**
- * Infers a category from feed URL or name when folder is not set
+ * Gets the category for a feed, using folder_name if available, otherwise inferring from URL/name
+ */
+function getFeedCategory(feed: Feed): string {
+  // Use folder_name if it's set (copied from recommended_feeds during subscription)
+  if (feed.folder_name) {
+    return feed.folder_name;
+  }
+  
+  // Fallback to inference for feeds without folder_name (legacy feeds)
+  return inferCategoryFromFeed(feed);
+}
+
+/**
+ * Infers a category from feed URL or name when folder_name is not set
  */
 function inferCategoryFromFeed(feed: Feed): string {
   const url = feed.url?.toLowerCase() || '';
@@ -76,14 +98,14 @@ function inferCategoryFromFeed(feed: Feed): string {
 }
 
 /**
- * Groups feeds by category (inferred from URL/name patterns)
+ * Groups feeds by category (using folder_name if available, otherwise inferred from URL/name patterns)
  * Property 1: Feed Grouping Preserves All Feeds
  * Validates: Requirements 3.2
  */
 export function groupFeedsByCategory(feeds: Feed[]): GroupedFeeds {
   return feeds.reduce((acc, feed) => {
-    // Infer category from feed URL/name patterns
-    const category = inferCategoryFromFeed(feed);
+    // Use folder_name if available, otherwise infer category
+    const category = getFeedCategory(feed);
     if (!acc[category]) {
       acc[category] = [];
     }
@@ -94,7 +116,16 @@ export function groupFeedsByCategory(feeds: Feed[]): GroupedFeeds {
 
 export function FeedsList({ onFeedSelect, onCategorySelect }: FeedsListProps) {
   const { data, isLoading, error } = useFeedsQuery();
+  const invalidateFeedsQuery = useInvalidateFeedsQuery();
   const [location, setLocation] = useLocation();
+  const { toast } = useToast();
+  
+  // Sync state - Requirements: 1.4, 2.4 (show loading state during sync)
+  const [syncState, setSyncState] = useState<SyncState>({
+    isSyncing: false,
+    syncingFeedId: null,
+    isBulkSyncing: false
+  });
   
   // Initialize expanded categories from sessionStorage for session persistence
   // Requirements: 4.4 - Remember expanded/collapsed state during the session
@@ -140,6 +171,78 @@ export function FeedsList({ onFeedSelect, onCategorySelect }: FeedsListProps) {
     return groupFeedsByCategory(data.feeds);
   }, [data?.feeds]);
 
+  // Single feed sync handler - Requirements: 1.1, 1.2, 1.3, 1.4, 1.5
+  const handleSyncFeed = async (feedId: string, feedName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    
+    if (syncState.isSyncing || syncState.isBulkSyncing) return;
+    
+    setSyncState({ isSyncing: true, syncingFeedId: feedId, isBulkSyncing: false });
+    
+    try {
+      const response = await apiRequest('POST', `/api/feeds/${feedId}/sync`);
+      const result = await response.json();
+      
+      if (result.success) {
+        toast({
+          title: "Feed Synced",
+          description: `${feedName}: ${result.articlesNew} new, ${result.articlesUpdated} updated articles`,
+        });
+        // Refresh feeds data
+        invalidateFeedsQuery();
+      } else {
+        toast({
+          variant: "destructive",
+          title: "Sync Failed",
+          description: result.error || "Failed to sync feed",
+        });
+      }
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Sync Error",
+        description: error instanceof Error ? error.message : "An error occurred during sync",
+      });
+    } finally {
+      setSyncState({ isSyncing: false, syncingFeedId: null, isBulkSyncing: false });
+    }
+  };
+
+  // Bulk sync handler - Requirements: 2.1, 2.2, 2.3, 2.4, 2.5
+  const handleSyncAll = async () => {
+    if (syncState.isSyncing || syncState.isBulkSyncing) return;
+    
+    setSyncState({ isSyncing: false, syncingFeedId: null, isBulkSyncing: true });
+    
+    try {
+      const response = await apiRequest('POST', '/api/feeds/sync-all', { waitForResults: true });
+      const result = await response.json();
+      
+      if (result.success) {
+        toast({
+          title: "All Feeds Synced",
+          description: `${result.successfulSyncs}/${result.totalFeeds} feeds synced, ${result.newArticles} new articles`,
+        });
+        // Refresh feeds data
+        invalidateFeedsQuery();
+      } else {
+        toast({
+          variant: "destructive",
+          title: "Bulk Sync Failed",
+          description: result.message || "Failed to sync feeds",
+        });
+      }
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Sync Error",
+        description: error instanceof Error ? error.message : "An error occurred during bulk sync",
+      });
+    } finally {
+      setSyncState({ isSyncing: false, syncingFeedId: null, isBulkSyncing: false });
+    }
+  };
+
   const toggleCategory = (category: string) => {
     setExpandedCategories(prev => {
       const next = new Set(prev);
@@ -154,12 +257,22 @@ export function FeedsList({ onFeedSelect, onCategorySelect }: FeedsListProps) {
 
   const handleFeedClick = (feed: Feed) => {
     const feedName = feed.name;
-    setLocation(`/?source=${encodeURIComponent(feedName)}`);
+    const newUrl = `/?source=${encodeURIComponent(feedName)}`;
+    console.log('FeedsList: Navigating to', newUrl);
+    // Use wouter's setLocation which properly updates the router state
+    setLocation(newUrl);
+    // Also dispatch a custom event for components that need it
+    window.dispatchEvent(new CustomEvent('feedFilterChange', { detail: { source: feedName } }));
     onFeedSelect?.(feed.id, feedName);
   };
 
   const handleCategoryClick = (category: string) => {
-    setLocation(`/?category=${encodeURIComponent(category)}`);
+    const newUrl = `/?category=${encodeURIComponent(category)}`;
+    console.log('FeedsList: Navigating to category', newUrl);
+    // Use wouter's setLocation which properly updates the router state
+    setLocation(newUrl);
+    // Also dispatch a custom event for components that need it
+    window.dispatchEvent(new CustomEvent('feedFilterChange', { detail: { category } }));
     onCategorySelect?.(category);
   };
 
@@ -203,8 +316,26 @@ export function FeedsList({ onFeedSelect, onCategorySelect }: FeedsListProps) {
 
   return (
     <div className="space-y-4">
-      <div className="px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-        Feeds
+      <div className="px-3 flex items-center justify-between">
+        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+          Feeds
+        </span>
+        {/* Sync All Button - Requirements: 2.1, 2.4 */}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
+          onClick={handleSyncAll}
+          disabled={syncState.isBulkSyncing || syncState.isSyncing}
+          title="Sync all feeds"
+        >
+          {syncState.isBulkSyncing ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <RefreshCw className="h-3 w-3" />
+          )}
+          <span className="ml-1">Sync All</span>
+        </Button>
       </div>
       <div className="space-y-1">
         {categories.map(category => (
@@ -218,6 +349,9 @@ export function FeedsList({ onFeedSelect, onCategorySelect }: FeedsListProps) {
             onToggle={() => toggleCategory(category)}
             onCategoryClick={() => handleCategoryClick(category)}
             onFeedClick={handleFeedClick}
+            onSyncFeed={handleSyncFeed}
+            syncingFeedId={syncState.syncingFeedId}
+            isSyncing={syncState.isSyncing || syncState.isBulkSyncing}
           />
         ))}
       </div>
@@ -234,6 +368,9 @@ interface CategoryFolderProps {
   onToggle: () => void;
   onCategoryClick: () => void;
   onFeedClick: (feed: Feed) => void;
+  onSyncFeed: (feedId: string, feedName: string, e: React.MouseEvent) => void;
+  syncingFeedId: string | null;
+  isSyncing: boolean;
 }
 
 function CategoryFolder({
@@ -245,36 +382,52 @@ function CategoryFolder({
   onToggle,
   onCategoryClick,
   onFeedClick,
+  onSyncFeed,
+  syncingFeedId,
+  isSyncing,
 }: CategoryFolderProps) {
+  const handleToggle = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    console.log('Toggle category:', label);
+    onToggle();
+  };
+
+  const handleCategoryClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    console.log('Category clicked:', label);
+    onCategoryClick();
+  };
+
   return (
     <div className="space-y-1">
       <div className="flex items-center">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-9 w-9 p-0"
-          onClick={onToggle}
+        <button
+          type="button"
+          className="h-9 w-9 p-0 flex items-center justify-center hover:bg-muted/50 rounded-md"
+          onClick={handleToggle}
         >
           {isExpanded ? (
             <ChevronDown className="h-4 w-4 text-muted-foreground" />
           ) : (
             <ChevronRight className="h-4 w-4 text-muted-foreground" />
           )}
-        </Button>
-        <Button
-          variant="ghost"
+        </button>
+        <button
+          type="button"
           className={cn(
-            "flex-1 justify-start gap-2 px-2 h-9 text-sm font-medium",
+            "flex-1 flex items-center justify-start gap-2 px-2 h-9 text-sm font-medium rounded-md",
             isActive
               ? "bg-sidebar-accent text-sidebar-accent-foreground"
-              : "text-muted-foreground hover:text-foreground"
+              : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
           )}
-          onClick={onCategoryClick}
+          onClick={handleCategoryClick}
         >
           <Folder className="h-4 w-4 text-muted-foreground/70" />
           <span className="flex-1 text-left">{label}</span>
           <span className="text-xs text-muted-foreground/50">{feeds.length}</span>
-        </Button>
+        </button>
       </div>
       {isExpanded && (
         <div className="pl-4 space-y-1 border-l border-border/50 ml-5">
@@ -284,6 +437,9 @@ function CategoryFolder({
               feed={feed}
               isActive={activeFeedName === feed.name}
               onClick={() => onFeedClick(feed)}
+              onSync={(e) => onSyncFeed(feed.id, feed.name, e)}
+              isSyncing={syncingFeedId === feed.id}
+              isDisabled={isSyncing}
             />
           ))}
         </div>
@@ -296,41 +452,70 @@ interface FeedItemProps {
   feed: Feed;
   isActive: boolean;
   onClick: () => void;
+  onSync: (e: React.MouseEvent) => void;
+  isSyncing: boolean;
+  isDisabled: boolean;
 }
 
-function FeedItem({ feed, isActive, onClick }: FeedItemProps) {
+function FeedItem({ feed, isActive, onClick, onSync, isSyncing, isDisabled }: FeedItemProps) {
+  const handleClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    console.log('FeedItem clicked:', feed.name);
+    onClick();
+  };
+
   return (
-    <Button
-      variant="ghost"
-      onClick={onClick}
-      className={cn(
-        "w-full justify-start gap-2 px-3 h-8 text-sm transition-colors",
-        isActive
-          ? "bg-sidebar-accent text-sidebar-accent-foreground"
-          : "text-muted-foreground hover:text-primary"
-      )}
-    >
-      {feed.icon_url ? (
-        <img
-          src={feed.icon_url}
-          alt=""
-          className="h-4 w-4 rounded-sm object-cover"
-          onError={(e) => {
-            // Fallback to dot indicator if icon fails to load
-            e.currentTarget.style.display = 'none';
-            e.currentTarget.nextElementSibling?.classList.remove('hidden');
-          }}
-        />
-      ) : null}
-      <div className={cn(
-        "h-1.5 w-1.5 rounded-full bg-primary/40",
-        feed.icon_url && "hidden"
-      )} />
-      <span className="flex-1 text-left truncate">{feed.name}</span>
-      {feed.article_count > 0 && (
-        <span className="text-xs text-muted-foreground/50">{feed.article_count}</span>
-      )}
-    </Button>
+    <div className="group flex items-center">
+      <button
+        type="button"
+        onClick={handleClick}
+        className={cn(
+          "flex-1 flex items-center justify-start gap-2 px-3 h-8 text-sm transition-colors rounded-md",
+          isActive
+            ? "bg-sidebar-accent text-sidebar-accent-foreground"
+            : "text-muted-foreground hover:text-primary hover:bg-muted/50"
+        )}
+      >
+        {feed.icon_url ? (
+          <img
+            src={feed.icon_url}
+            alt=""
+            className="h-4 w-4 rounded-sm object-cover"
+            onError={(e) => {
+              // Fallback to dot indicator if icon fails to load
+              e.currentTarget.style.display = 'none';
+              e.currentTarget.nextElementSibling?.classList.remove('hidden');
+            }}
+          />
+        ) : null}
+        <div className={cn(
+          "h-1.5 w-1.5 rounded-full bg-primary/40",
+          feed.icon_url && "hidden"
+        )} />
+        <span className="flex-1 text-left truncate">{feed.name}</span>
+      </button>
+      {/* Sync button - Requirements: 1.4 (show loading state during sync) */}
+      <button
+        type="button"
+        onClick={onSync}
+        disabled={isDisabled}
+        className={cn(
+          "h-6 w-6 flex items-center justify-center rounded-md transition-opacity",
+          "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+          "opacity-0 group-hover:opacity-100",
+          isSyncing && "opacity-100",
+          isDisabled && !isSyncing && "cursor-not-allowed"
+        )}
+        title="Sync this feed"
+      >
+        {isSyncing ? (
+          <Loader2 className="h-3 w-3 animate-spin" />
+        ) : (
+          <RefreshCw className="h-3 w-3" />
+        )}
+      </button>
+    </div>
   );
 }
 

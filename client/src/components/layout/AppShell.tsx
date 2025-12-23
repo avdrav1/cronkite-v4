@@ -30,6 +30,7 @@ import { useAuth } from "@/contexts/AuthContext";
 
 import { AddFeedModal } from "@/components/feed/AddFeedModal";
 import { FeedsList } from "@/components/layout/FeedsList";
+import { TrendingClusters } from "@/components/trending/TrendingClusters";
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -52,9 +53,9 @@ export function AppShell({ children }: AppShellProps) {
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col font-sans">
+    <div className="h-screen bg-background text-foreground flex flex-col font-sans overflow-hidden">
       {/* Header */}
-      <header className="border-b border-border bg-background/80 backdrop-blur-md sticky top-0 z-50">
+      <header className="border-b border-border bg-background/80 backdrop-blur-md shrink-0 z-50">
         <div className="flex flex-col items-center justify-center py-6 gap-6 relative">
           
           {/* Logo */}
@@ -135,35 +136,43 @@ export function AppShell({ children }: AppShellProps) {
         {/* Sidebar - Desktop */}
         <aside
           className={cn(
-            "hidden md:flex flex-col border-r border-border bg-sidebar w-64 transition-all duration-300 ease-out p-4 gap-6 overflow-y-auto",
-            !isSidebarOpen && "w-0 p-0 overflow-hidden opacity-0 border-none"
+            "hidden md:flex flex-col border-r border-border bg-sidebar w-64 shrink-0 transition-all duration-300 ease-out overflow-hidden",
+            !isSidebarOpen && "w-0 border-none"
           )}
         >
-          <Button 
-            className="w-full justify-start gap-2 shadow-sm font-medium" 
-            size="lg"
-            onClick={() => setIsAddFeedOpen(true)}
-          >
-            <Plus className="h-4 w-4" /> Add New Feed
-          </Button>
+          {/* Sidebar inner container with its own scroll */}
+          <div className={cn(
+            "flex flex-col p-4 gap-6 h-full overflow-y-auto",
+            !isSidebarOpen && "p-0 opacity-0"
+          )}>
+            <Button 
+              className="w-full justify-start gap-2 shadow-sm font-medium shrink-0" 
+              size="lg"
+              onClick={() => setIsAddFeedOpen(true)}
+            >
+              <Plus className="h-4 w-4" /> Add New Feed
+            </Button>
 
-          <nav className="flex flex-col gap-1">
-            <NavItem icon={LayoutGrid} label="All Articles" active={location === "/" && !window.location.search} />
-            <NavItem icon={Clock} label="Unread" />
-            <NavItem icon={Star} label="Starred" />
-            <Link href="/onboarding" className="w-full">
-              <NavItem icon={Sparkles} label="Discover" />
-            </Link>
-            <Link href="/settings" className="w-full">
-              <NavItem icon={Settings} label="Settings" />
-            </Link>
-          </nav>
+            <nav className="flex flex-col gap-1 shrink-0">
+              <NavItem icon={LayoutGrid} label="All Articles" active={location === "/" && !window.location.search} />
+              <NavItem icon={Clock} label="Unread" />
+              <NavItem icon={Star} label="Starred" />
+              <Link href="/onboarding" className="w-full">
+                <NavItem icon={Sparkles} label="Discover" />
+              </Link>
+              <Link href="/settings" className="w-full">
+                <NavItem icon={Settings} label="Settings" />
+              </Link>
+            </nav>
 
-          <FeedsList />
+            <TrendingClusters />
+
+            <FeedsList />
+          </div>
         </aside>
 
         {/* Main Content */}
-        <main className="flex-1 overflow-y-auto relative bg-background/50">
+        <main className="flex-1 overflow-y-auto bg-background/50">
           <div className="max-w-[1600px] mx-auto p-4 md:p-8">
             {children}
           </div>

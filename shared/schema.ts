@@ -71,6 +71,7 @@ export const feeds = pgTable("feeds", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   user_id: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
   folder_id: uuid("folder_id").references(() => folders.id, { onDelete: "set null" }),
+  folder_name: text("folder_name"), // Category name copied from recommended_feeds during subscription
   name: text("name").notNull(),
   url: text("url").notNull(),
   site_url: text("site_url"),
@@ -160,7 +161,7 @@ export const articles = pgTable("articles", {
   created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-// User articles table for reading state
+// User articles table for reading state and engagement signals
 export const userArticles = pgTable("user_articles", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   user_id: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
@@ -171,6 +172,9 @@ export const userArticles = pgTable("user_articles", {
   starred_at: timestamp("starred_at", { withTimezone: true }),
   clicked_at: timestamp("clicked_at", { withTimezone: true }),
   time_spent_seconds: integer("time_spent_seconds"),
+  // Engagement signals for content recommendations (Requirements: 8.1, 8.2, 8.3, 8.4)
+  engagement_signal: text("engagement_signal"), // 'positive' | 'negative' | null
+  engagement_signal_at: timestamp("engagement_signal_at", { withTimezone: true }),
   created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updated_at: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -205,6 +209,13 @@ export const selectArticleSchema = createSelectSchema(articles);
 
 export const insertUserArticleSchema = createInsertSchema(userArticles);
 export const selectUserArticleSchema = createSelectSchema(userArticles);
+
+// Feed management constants (Requirements: 3.1)
+export const MAX_FEEDS_PER_USER = 25;
+export const FEED_LIMIT_WARNING_THRESHOLD = 20;
+
+// Engagement signal type for type safety
+export type EngagementSignal = 'positive' | 'negative' | null;
 
 // Type exports
 export type Profile = typeof profiles.$inferSelect;

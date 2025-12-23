@@ -14,7 +14,8 @@ import {
   RefreshCw,
   Trash2,
   Edit2,
-  Play
+  Play,
+  Info
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,6 +44,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Progress } from "@/components/ui/progress";
 
 import { AddFeedModal } from "@/components/feed/AddFeedModal";
 
@@ -63,6 +66,14 @@ interface Feed {
   updated_at: string;
 }
 
+// Feed count response - Requirements: 5.1, 5.2, 5.3, 5.4
+interface FeedCountResponse {
+  currentCount: number;
+  maxAllowed: number;
+  remaining: number;
+  isNearLimit: boolean;
+}
+
 export function FeedManagement() {
   const [feeds, setFeeds] = useState<Feed[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -72,6 +83,20 @@ export function FeedManagement() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const { toast } = useToast();
   const invalidateFeedsQuery = useInvalidateFeedsQuery();
+  
+  // Feed count state - Requirements: 5.1, 5.2, 5.3, 5.4
+  const [feedCount, setFeedCount] = useState<FeedCountResponse | null>(null);
+
+  // Fetch feed count from API - Requirements: 5.1, 5.2, 5.3, 5.4
+  const fetchFeedCount = async () => {
+    try {
+      const response = await apiRequest('GET', '/api/feeds/count');
+      const data = await response.json();
+      setFeedCount(data);
+    } catch (error) {
+      console.error('Failed to fetch feed count:', error);
+    }
+  };
 
   // Fetch user's feeds from API
   const fetchFeeds = async () => {
@@ -119,6 +144,7 @@ export function FeedManagement() {
   // Load feeds on component mount
   useEffect(() => {
     fetchFeeds();
+    fetchFeedCount();
   }, []);
 
   // Filter feeds based on search
@@ -164,6 +190,8 @@ export function FeedManagement() {
             title: "Feed Removed",
             description: "Feed has been removed from your subscriptions.",
           });
+          // Refresh feed count after deletion
+          await fetchFeedCount();
           break;
         case 'retry':
           await apiRequest('POST', '/api/feeds/sync', { feedIds: [feedId] });
@@ -190,6 +218,7 @@ export function FeedManagement() {
   // Handle feed refresh callback from AddFeedModal
   const handleFeedAdded = () => {
     fetchFeeds();
+    fetchFeedCount();
     setIsAddModalOpen(false);
   };
 
@@ -276,11 +305,56 @@ export function FeedManagement() {
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
-            <Button className="gap-2 bg-primary hover:bg-primary/90" onClick={() => setIsAddModalOpen(true)}>
+            <Button 
+              className="gap-2 bg-primary hover:bg-primary/90" 
+              onClick={() => setIsAddModalOpen(true)}
+              disabled={feedCount?.remaining === 0}
+            >
               <Plus className="h-4 w-4" /> Add Feed
             </Button>
           </div>
         </div>
+
+        {/* Feed Count Display - Requirements: 5.3, 5.4 */}
+        {feedCount && (
+          <div className="mb-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm text-muted-foreground">
+                Feed Subscriptions: {feedCount.currentCount} / {feedCount.maxAllowed}
+              </span>
+              <span className="text-sm text-muted-foreground">
+                {feedCount.remaining} remaining
+              </span>
+            </div>
+            <Progress 
+              value={(feedCount.currentCount / feedCount.maxAllowed) * 100} 
+              className={cn(
+                "h-2",
+                feedCount.isNearLimit && "bg-amber-100 dark:bg-amber-900/20"
+              )}
+            />
+            {/* Near Limit Warning - Requirements: 5.4 */}
+            {feedCount.isNearLimit && (
+              <Alert className="mt-3 border-amber-200 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-900/10">
+                <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                <AlertDescription className="text-amber-700 dark:text-amber-300">
+                  You're approaching the feed limit ({feedCount.currentCount}/{feedCount.maxAllowed}). 
+                  Consider removing unused feeds to make room for new subscriptions.
+                </AlertDescription>
+              </Alert>
+            )}
+            {/* At Limit Warning */}
+            {feedCount.remaining === 0 && (
+              <Alert className="mt-3 border-red-200 bg-red-50 dark:border-red-900/50 dark:bg-red-900/10">
+                <AlertTriangle className="h-4 w-4 text-red-600 dark:text-red-400" />
+                <AlertDescription className="text-red-700 dark:text-red-300">
+                  You've reached the maximum feed limit ({feedCount.maxAllowed} feeds). 
+                  Remove existing feeds to add new ones.
+                </AlertDescription>
+              </Alert>
+            )}
+          </div>
+        )}
 
         <div className="flex items-center gap-6 text-sm text-muted-foreground">
           <div className="font-medium text-foreground">{feeds.length} feeds total</div>

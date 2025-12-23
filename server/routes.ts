@@ -6,7 +6,8 @@ import { requireAuth, requireNoAuth, createSupabaseClient } from "./auth-middlew
 import { syncFeeds, syncFeed } from "./rss-sync";
 import { FeedFilteringValidator, type FilterOptions, validateFilterOptions, filterFeedsByInterestsWithMapping } from "./feed-filtering-validation";
 import { categoryMappingService } from "@shared/category-mapping";
-import { generateArticleSummary, isAISummaryAvailable } from "./ai-summary";
+import { generateArticleSummary, isAISummaryAvailable, clusterArticles, isClusteringAvailable } from "./ai-summary";
+import { requireFeedOwnership, validateFeedOwnership } from "./feed-ownership";
 import { 
   insertProfileSchema, 
   selectProfileSchema,
@@ -870,6 +871,7 @@ export async function registerRoutes(
   });
   
   // POST /api/feeds/subscribe - Subscribe to feeds (bulk subscription)
+  // Updated with feed limit enforcement (Requirements: 3.1, 3.2, 3.3)
   app.post('/api/feeds/subscribe', requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = req.user!.id;
@@ -892,6 +894,45 @@ export async function registerRoutes(
       }
       
       const storage = await getStorage();
+      
+      // Check feed limit before subscribing (Requirements: 3.1, 3.2, 3.3, 3.5)
+      const currentCount = await storage.getUserFeedCount(userId);
+      const maxAllowed = 25; // MAX_FEEDS_PER_USER
+      const availableSlots = maxAllowed - currentCount;
+      
+      if (availableSlots <= 0) {
+        return res.status(400).json({
+          error: 'FEED_LIMIT_EXCEEDED',
+          message: `Cannot subscribe: you have ${currentCount}/${maxAllowed} feeds. Remove some feeds to add new ones.`,
+          currentCount,
+          maxAllowed,
+          subscribed_count: 0,
+          rejected_count: feedIds.length
+        });
+      }
+      
+      // If requesting more feeds than available slots, use subscribeToFeedsWithLimit
+      if (feedIds.length > availableSlots) {
+        const result = await storage.subscribeToFeedsWithLimit(userId, feedIds, maxAllowed);
+        
+        // Mark onboarding as completed after successful feed subscription
+        const user = req.user!;
+        if (!user.onboarding_completed && result.subscribed.length > 0) {
+          await storage.updateUser(userId, { onboarding_completed: true });
+        }
+        
+        return res.status(result.rejected.length > 0 ? 207 : 200).json({
+          message: result.reason || 'Feeds subscribed with limit enforcement',
+          subscribed_count: result.subscribed.length,
+          rejected_count: result.rejected.length,
+          subscribed: result.subscribed,
+          rejected: result.rejected,
+          currentCount: currentCount + result.subscribed.length,
+          maxAllowed
+        });
+      }
+      
+      // Normal subscription (within limits)
       await storage.subscribeToFeeds(userId, feedIds);
       
       // Mark onboarding as completed after successful feed subscription
@@ -914,6 +955,7 @@ export async function registerRoutes(
   });
   
   // DELETE /api/feeds/unsubscribe/:id - Unsubscribe from a feed
+  // Requirements: 4.1, 4.2, 4.3, 4.4, 4.5 - Feed deletion with ownership validation
   app.delete('/api/feeds/unsubscribe/:id', requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = req.user!.id;
@@ -926,15 +968,28 @@ export async function registerRoutes(
         });
       }
       
+      // Validate feed ownership (Requirements: 4.4)
+      const ownershipResult = await requireFeedOwnership(userId, feedId);
+      
+      if (!ownershipResult.isValid) {
+        return res.status(ownershipResult.httpStatus).json(ownershipResult.errorResponse);
+      }
+      
       const storage = await getStorage();
       await storage.unsubscribeFromFeed(userId, feedId);
       
+      // Get updated feed count (Requirements: 4.5)
+      const newFeedCount = await storage.getUserFeedCount(userId);
+      
       res.json({
-        message: 'Successfully unsubscribed from feed'
+        success: true,
+        message: 'Successfully unsubscribed from feed',
+        newFeedCount
       });
     } catch (error) {
       console.error('Unsubscribe from feed error:', error);
       res.status(500).json({
+        success: false,
         error: 'Failed to unsubscribe from feed',
         message: 'An error occurred while unsubscribing from feed'
       });
@@ -1185,6 +1240,7 @@ export async function registerRoutes(
   });
   
   // PUT /api/feeds/:id - Update feed settings
+  // Requirements: 4.4 - Feed ownership validation
   app.put('/api/feeds/:id', requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = req.user!.id;
@@ -1198,11 +1254,19 @@ export async function registerRoutes(
         });
       }
       
+      // Validate feed ownership (Requirements: 4.4)
+      const ownershipResult = await requireFeedOwnership(userId, feedId);
+      
+      if (!ownershipResult.isValid) {
+        return res.status(ownershipResult.httpStatus).json(ownershipResult.errorResponse);
+      }
+      
       // Update feed settings
       // For now, we'll simulate the update
       // In production, this would update the feed in the database
       
       res.json({
+        success: true,
         message: 'Feed updated successfully',
         feedId,
         updates: { status, priority, folder_name }
@@ -1210,6 +1274,7 @@ export async function registerRoutes(
     } catch (error) {
       console.error('Update feed error:', error);
       res.status(500).json({
+        success: false,
         error: 'Failed to update feed',
         message: 'An error occurred while updating the feed'
       });
@@ -1241,7 +1306,8 @@ export async function registerRoutes(
   app.get('/api/articles', requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = req.user!.id;
-      const limit = parseInt(req.query.limit as string) || 50;
+      // No artificial limit - frontend handles date-based pagination (7-day chunks)
+      const maxArticlesPerFeed = 200; // Reasonable per-feed limit to prevent memory issues
       
       const storage = await getStorage();
       
@@ -1258,10 +1324,9 @@ export async function registerRoutes(
       }
       
       // OPTIMIZATION: Fetch articles from all feeds in parallel instead of sequentially
-      const articlesPerFeed = Math.ceil(limit / userFeeds.length);
       const feedArticlePromises = userFeeds.map(async (feed) => {
         try {
-          const feedArticles = await storage.getArticlesByFeedId(feed.id, articlesPerFeed);
+          const feedArticles = await storage.getArticlesByFeedId(feed.id, maxArticlesPerFeed);
           
           // Add feed information to each article
           return feedArticles.map(article => ({
@@ -1287,12 +1352,10 @@ export async function registerRoutes(
         return dateB - dateA;
       });
       
-      // Limit results
-      const limitedArticles = allArticles.slice(0, limit);
-      
+      // Return all articles - frontend handles date-based pagination (7-day chunks)
       res.json({
-        articles: limitedArticles,
-        total: limitedArticles.length,
+        articles: allArticles,
+        total: allArticles.length,
         feeds_count: userFeeds.length
       });
     } catch (error) {
@@ -1319,16 +1382,19 @@ export async function registerRoutes(
 
       // Check if AI is available
       if (!isAISummaryAvailable()) {
+        console.log('AI summary unavailable - ANTHROPIC_API_KEY not set');
         return res.status(503).json({
           error: 'AI service unavailable',
-          message: 'OpenAI API key not configured',
+          message: 'Anthropic API key not configured',
           fallback: true
         });
       }
 
+      console.log('Generating AI summary for article:', title.substring(0, 50));
       const summary = await generateArticleSummary(title, content || '', excerpt);
 
       if (!summary) {
+        console.log('AI summary returned null');
         return res.status(500).json({
           error: 'Summary generation failed',
           message: 'Could not generate summary for this article',
@@ -1336,6 +1402,7 @@ export async function registerRoutes(
         });
       }
 
+      console.log('AI summary generated successfully:', summary.points.length, 'points');
       res.json({
         articleId,
         summary: summary.points,
@@ -1358,9 +1425,452 @@ export async function registerRoutes(
       available: isAISummaryAvailable(),
       features: {
         articleSummary: isAISummaryAvailable(),
-        topicClustering: false // Future feature
+        topicClustering: isClusteringAvailable()
       }
     });
+  });
+
+  // GET /api/clusters - Get trending topic clusters from user's articles
+  app.get('/api/clusters', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      
+      if (!isClusteringAvailable()) {
+        return res.status(503).json({
+          error: 'Clustering unavailable',
+          message: 'AI clustering service not configured',
+          clusters: []
+        });
+      }
+      
+      const storage = await getStorage();
+      const userFeeds = await storage.getUserFeeds(userId);
+      
+      if (userFeeds.length === 0) {
+        return res.json({ clusters: [], message: 'No feeds to cluster' });
+      }
+      
+      // Get recent articles from all feeds for clustering
+      const feedArticlePromises = userFeeds.map(async (feed) => {
+        try {
+          const feedArticles = await storage.getArticlesByFeedId(feed.id, 20);
+          return feedArticles.map(article => ({
+            id: article.id,
+            title: article.title,
+            excerpt: article.excerpt || '',
+            source: feed.name,
+            published_at: article.published_at ? article.published_at.toISOString() : undefined
+          }));
+        } catch {
+          return [];
+        }
+      });
+      
+      const feedArticlesArrays = await Promise.all(feedArticlePromises);
+      const allArticles = feedArticlesArrays.flat();
+      
+      // Sort by date and take most recent
+      allArticles.sort((a, b) => {
+        const dateA = a.published_at ? new Date(a.published_at).getTime() : 0;
+        const dateB = b.published_at ? new Date(b.published_at).getTime() : 0;
+        return dateB - dateA;
+      });
+      
+      const recentArticles = allArticles.slice(0, 50);
+      
+      // Generate clusters
+      const clusters = await clusterArticles(recentArticles);
+      
+      res.json({
+        clusters,
+        articlesAnalyzed: recentArticles.length,
+        generatedAt: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Clustering error:', error);
+      res.status(500).json({
+        error: 'Clustering failed',
+        message: 'An error occurred while generating topic clusters',
+        clusters: []
+      });
+    }
+  });
+
+  // ============================================================================
+  // Feed Management Controls API Routes
+  // Requirements: 1.x (Single Feed Sync), 2.x (Bulk Sync), 3.x (Feed Limits),
+  //               5.x (Feed Count), 6.x (Read State), 7.x (Starred State),
+  //               8.x (Engagement Signals)
+  // ============================================================================
+
+  // POST /api/feeds/:feedId/sync - Sync a single feed
+  // Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 4.4 (ownership validation)
+  app.post('/api/feeds/:feedId/sync', requireAuth, async (req: Request, res: Response) => {
+    const startTime = Date.now();
+    
+    try {
+      const userId = req.user!.id;
+      const feedId = req.params.feedId;
+      
+      if (!feedId) {
+        return res.status(400).json({
+          success: false,
+          error: 'MISSING_FEED_ID',
+          message: 'Feed ID is required'
+        });
+      }
+      
+      // Validate feed ownership using helper (Requirements: 4.4)
+      const ownershipResult = await requireFeedOwnership(userId, feedId);
+      
+      if (!ownershipResult.isValid) {
+        return res.status(ownershipResult.httpStatus).json(ownershipResult.errorResponse);
+      }
+      
+      const feed = ownershipResult.feed!;
+      
+      console.log(`🔄 Starting single feed sync for: ${feed.name} (${feedId})`);
+      
+      // Perform the sync
+      const result = await syncFeed(feed, {
+        maxArticles: 50,
+        respectEtag: true,
+        respectLastModified: true
+      });
+      
+      const syncDurationMs = Date.now() - startTime;
+      
+      if (!result.success) {
+        console.log(`❌ Single feed sync failed for: ${feed.name} - ${result.error}`);
+        return res.status(500).json({
+          success: false,
+          feedId: feed.id,
+          feedName: feed.name,
+          articlesFound: 0,
+          articlesNew: 0,
+          articlesUpdated: 0,
+          error: result.error || 'Feed sync failed',
+          syncDurationMs
+        });
+      }
+      
+      console.log(`✅ Single feed sync completed for: ${feed.name} - ${result.articlesNew} new, ${result.articlesUpdated} updated`);
+      
+      res.json({
+        success: true,
+        feedId: feed.id,
+        feedName: feed.name,
+        articlesFound: result.articlesFound,
+        articlesNew: result.articlesNew,
+        articlesUpdated: result.articlesUpdated,
+        syncDurationMs
+      });
+      
+    } catch (error) {
+      const syncDurationMs = Date.now() - startTime;
+      console.error('Single feed sync error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'SYNC_ERROR',
+        message: error instanceof Error ? error.message : 'An error occurred during feed synchronization',
+        syncDurationMs
+      });
+    }
+  });
+
+  // POST /api/feeds/sync-all - Sync all user feeds (bulk sync)
+  // Requirements: 2.1, 2.2, 2.3, 2.4, 2.5
+  app.post('/api/feeds/sync-all', requireAuth, async (req: Request, res: Response) => {
+    const startTime = Date.now();
+    
+    try {
+      const userId = req.user!.id;
+      const { waitForResults = true } = req.body;
+      
+      const storage = await getStorage();
+      const userFeeds = await storage.getUserFeeds(userId);
+      
+      if (userFeeds.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'NO_FEEDS',
+          message: 'No feeds to sync',
+          totalFeeds: 0,
+          successfulSyncs: 0,
+          failedSyncs: 0,
+          newArticles: 0,
+          updatedArticles: 0,
+          errors: []
+        });
+      }
+      
+      console.log(`🔄 Starting bulk sync for ${userFeeds.length} feeds for user ${userId}`);
+      
+      // Process feeds in batches (Requirements: 2.2)
+      const syncPromise = syncFeeds(userFeeds, {
+        maxArticles: 50,
+        respectEtag: true,
+        respectLastModified: true,
+        batchSize: 3,
+        delayMs: 2000
+      });
+      
+      if (waitForResults) {
+        const results = await syncPromise;
+        
+        const successCount = results.filter(r => r.success).length;
+        const failureCount = results.filter(r => !r.success).length;
+        const newArticlesCount = results.reduce((sum, r) => sum + r.articlesNew, 0);
+        const updatedArticlesCount = results.reduce((sum, r) => sum + r.articlesUpdated, 0);
+        
+        // Build errors array (Requirements: 2.5)
+        const errors: Array<{ feedId: string; feedName: string; error: string }> = [];
+        results.forEach((result, index) => {
+          if (!result.success && result.error) {
+            const feed = userFeeds[index];
+            errors.push({
+              feedId: feed.id,
+              feedName: feed.name,
+              error: result.error
+            });
+          }
+        });
+        
+        const syncDurationMs = Date.now() - startTime;
+        
+        console.log(`✅ Bulk sync completed: ${successCount}/${userFeeds.length} success, ${newArticlesCount} new articles`);
+        
+        return res.json({
+          success: true,
+          totalFeeds: userFeeds.length,
+          successfulSyncs: successCount,
+          failedSyncs: failureCount,
+          newArticles: newArticlesCount,
+          updatedArticles: updatedArticlesCount,
+          errors,
+          syncDurationMs
+        });
+      }
+      
+      // Background sync - don't wait for results
+      syncPromise.catch(error => {
+        console.error('Background bulk sync error:', error);
+      });
+      
+      res.json({
+        success: true,
+        message: 'Bulk synchronization started',
+        totalFeeds: userFeeds.length,
+        successfulSyncs: 0,
+        failedSyncs: 0,
+        newArticles: 0,
+        updatedArticles: 0,
+        errors: []
+      });
+      
+    } catch (error) {
+      const syncDurationMs = Date.now() - startTime;
+      console.error('Bulk sync error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'BULK_SYNC_ERROR',
+        message: error instanceof Error ? error.message : 'An error occurred during bulk synchronization',
+        totalFeeds: 0,
+        successfulSyncs: 0,
+        failedSyncs: 0,
+        newArticles: 0,
+        updatedArticles: 0,
+        errors: [],
+        syncDurationMs
+      });
+    }
+  });
+
+  // GET /api/feeds/count - Get user's feed count and capacity
+  // Requirements: 5.1, 5.2, 5.3, 5.4
+  app.get('/api/feeds/count', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      
+      const storage = await getStorage();
+      const currentCount = await storage.getUserFeedCount(userId);
+      
+      const maxAllowed = 25; // MAX_FEEDS_PER_USER
+      const remaining = maxAllowed - currentCount;
+      const isNearLimit = currentCount >= 20; // FEED_LIMIT_WARNING_THRESHOLD
+      
+      res.json({
+        currentCount,
+        maxAllowed,
+        remaining,
+        isNearLimit
+      });
+      
+    } catch (error) {
+      console.error('Get feed count error:', error);
+      res.status(500).json({
+        error: 'FEED_COUNT_ERROR',
+        message: 'An error occurred while retrieving feed count'
+      });
+    }
+  });
+
+  // PUT /api/articles/:articleId/read - Mark article as read/unread
+  // Requirements: 6.1, 6.2
+  app.put('/api/articles/:articleId/read', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const articleId = req.params.articleId;
+      const { isRead } = req.body;
+      
+      if (!articleId) {
+        return res.status(400).json({
+          success: false,
+          error: 'MISSING_ARTICLE_ID',
+          message: 'Article ID is required'
+        });
+      }
+      
+      if (typeof isRead !== 'boolean') {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_READ_STATE',
+          message: 'isRead must be a boolean value'
+        });
+      }
+      
+      const storage = await getStorage();
+      const userArticle = await storage.markArticleRead(userId, articleId, isRead);
+      
+      res.json({
+        success: true,
+        articleId,
+        isRead: userArticle.is_read,
+        readAt: userArticle.read_at ? userArticle.read_at.toISOString() : null
+      });
+      
+    } catch (error) {
+      console.error('Mark article read error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'READ_STATE_ERROR',
+        message: 'An error occurred while updating read state'
+      });
+    }
+  });
+
+  // PUT /api/articles/:articleId/star - Star/unstar article
+  // Requirements: 7.1, 7.2
+  app.put('/api/articles/:articleId/star', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const articleId = req.params.articleId;
+      const { isStarred } = req.body;
+      
+      if (!articleId) {
+        return res.status(400).json({
+          success: false,
+          error: 'MISSING_ARTICLE_ID',
+          message: 'Article ID is required'
+        });
+      }
+      
+      if (typeof isStarred !== 'boolean') {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_STARRED_STATE',
+          message: 'isStarred must be a boolean value'
+        });
+      }
+      
+      const storage = await getStorage();
+      const userArticle = await storage.markArticleStarred(userId, articleId, isStarred);
+      
+      res.json({
+        success: true,
+        articleId,
+        isStarred: userArticle.is_starred,
+        starredAt: userArticle.starred_at ? userArticle.starred_at.toISOString() : null
+      });
+      
+    } catch (error) {
+      console.error('Mark article starred error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'STARRED_STATE_ERROR',
+        message: 'An error occurred while updating starred state'
+      });
+    }
+  });
+
+  // GET /api/articles/starred - Get all starred articles
+  // Requirements: 7.3
+  app.get('/api/articles/starred', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : undefined;
+      
+      const storage = await getStorage();
+      const starredArticles = await storage.getStarredArticles(userId, limit, offset);
+      
+      res.json({
+        articles: starredArticles,
+        total: starredArticles.length
+      });
+      
+    } catch (error) {
+      console.error('Get starred articles error:', error);
+      res.status(500).json({
+        error: 'STARRED_ARTICLES_ERROR',
+        message: 'An error occurred while retrieving starred articles'
+      });
+    }
+  });
+
+  // PUT /api/articles/:articleId/engagement - Set engagement signal
+  // Requirements: 8.1, 8.2, 8.3, 8.4
+  app.put('/api/articles/:articleId/engagement', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const articleId = req.params.articleId;
+      const { signal } = req.body;
+      
+      if (!articleId) {
+        return res.status(400).json({
+          success: false,
+          error: 'MISSING_ARTICLE_ID',
+          message: 'Article ID is required'
+        });
+      }
+      
+      // Validate signal value
+      if (signal !== 'positive' && signal !== 'negative' && signal !== null) {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_SIGNAL',
+          message: "Engagement signal must be 'positive', 'negative', or null"
+        });
+      }
+      
+      const storage = await getStorage();
+      const userArticle = await storage.setEngagementSignal(userId, articleId, signal);
+      
+      res.json({
+        success: true,
+        articleId,
+        signal: userArticle.engagement_signal,
+        signalAt: userArticle.engagement_signal_at ? userArticle.engagement_signal_at.toISOString() : null
+      });
+      
+    } catch (error) {
+      console.error('Set engagement signal error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'ENGAGEMENT_SIGNAL_ERROR',
+        message: 'An error occurred while updating engagement signal'
+      });
+    }
   });
 
   return httpServer;

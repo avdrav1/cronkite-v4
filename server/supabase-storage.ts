@@ -17,7 +17,9 @@ import {
   type UserArticle,
   type InsertUserArticle,
   type Cluster,
-  type InsertCluster
+  type InsertCluster,
+  MAX_FEEDS_PER_USER,
+  type EngagementSignal
 } from "@shared/schema";
 import { categoryMappingService } from "@shared/category-mapping";
 import { type IStorage } from "./storage";
@@ -494,8 +496,7 @@ export class SupabaseStorage implements IStorage {
     }
     
     // Create user feeds from recommended feeds
-    // Note: The feeds table uses folder_id (UUID reference) not folder_name
-    // Category information is stored in recommended_feeds, not in user feeds
+    // Copy category from recommended_feeds to folder_name for sidebar grouping
     const userFeedsData: InsertFeed[] = recommendedFeeds.map(recommendedFeed => ({
       user_id: userId,
       name: recommendedFeed.name,
@@ -503,6 +504,7 @@ export class SupabaseStorage implements IStorage {
       site_url: recommendedFeed.site_url,
       description: recommendedFeed.description,
       icon_url: recommendedFeed.icon_url,
+      folder_name: recommendedFeed.category, // Preserve category for sidebar grouping
       status: "active" as const,
       priority: "medium" as const,
     }));
@@ -794,5 +796,171 @@ export class SupabaseStorage implements IStorage {
       article_id: articleId,
       ...updates
     });
+  }
+
+  // Feed Count and Limit Management (Requirements: 5.1, 5.2)
+  async getUserFeedCount(userId: string): Promise<number> {
+    const { count, error } = await this.supabase
+      .from('feeds')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId);
+    
+    if (error) {
+      throw new Error(`Failed to get user feed count: ${error.message}`);
+    }
+    
+    return count || 0;
+  }
+
+  // Subscription with Limit Checking (Requirements: 3.1, 3.2, 3.3, 3.5)
+  async subscribeToFeedsWithLimit(
+    userId: string, 
+    feedIds: string[], 
+    maxLimit: number
+  ): Promise<{ subscribed: string[]; rejected: string[]; reason?: string }> {
+    const currentCount = await this.getUserFeedCount(userId);
+    const availableSlots = maxLimit - currentCount;
+    
+    if (availableSlots <= 0) {
+      return {
+        subscribed: [],
+        rejected: feedIds,
+        reason: `Feed limit reached. You have ${currentCount}/${maxLimit} feeds. Remove some feeds to add new ones.`
+      };
+    }
+    
+    const feedsToSubscribe = feedIds.slice(0, availableSlots);
+    const rejectedFeeds = feedIds.slice(availableSlots);
+    
+    // Subscribe to the allowed feeds
+    if (feedsToSubscribe.length > 0) {
+      await this.subscribeToFeeds(userId, feedsToSubscribe);
+    }
+    
+    const result: { subscribed: string[]; rejected: string[]; reason?: string } = {
+      subscribed: feedsToSubscribe,
+      rejected: rejectedFeeds
+    };
+    
+    if (rejectedFeeds.length > 0) {
+      result.reason = `Partial subscription: ${feedsToSubscribe.length} feeds added, ${rejectedFeeds.length} rejected due to limit (${maxLimit} max).`;
+    }
+    
+    return result;
+  }
+
+  // Article State Management - Enhanced (Requirements: 6.1, 6.2)
+  async markArticleRead(userId: string, articleId: string, isRead: boolean): Promise<UserArticle> {
+    const updates: Partial<UserArticle> = {
+      is_read: isRead,
+      read_at: isRead ? new Date() : null
+    };
+    return this.updateUserArticleState(userId, articleId, updates);
+  }
+
+  // Article Starred State (Requirements: 7.1, 7.2)
+  async markArticleStarred(userId: string, articleId: string, isStarred: boolean): Promise<UserArticle> {
+    const updates: Partial<UserArticle> = {
+      is_starred: isStarred,
+      starred_at: isStarred ? new Date() : null
+    };
+    return this.updateUserArticleState(userId, articleId, updates);
+  }
+
+  // Get Starred Articles (Requirements: 7.3)
+  async getStarredArticles(userId: string, limit?: number, offset?: number): Promise<Article[]> {
+    let query = this.supabase
+      .from('user_articles')
+      .select(`
+        article_id,
+        starred_at,
+        articles (*)
+      `)
+      .eq('user_id', userId)
+      .eq('is_starred', true)
+      .order('starred_at', { ascending: false });
+    
+    if (limit) {
+      query = query.limit(limit);
+    }
+    
+    if (offset) {
+      query = query.range(offset, offset + (limit || 10) - 1);
+    }
+    
+    const { data, error } = await query;
+    
+    if (error) {
+      throw new Error(`Failed to get starred articles: ${error.message}`);
+    }
+    
+    // Extract articles from the joined data
+    const articles: Article[] = (data || [])
+      .map((item: any) => item.articles)
+      .filter((article: any) => article !== null) as Article[];
+    
+    return articles;
+  }
+
+  // Engagement Signal Management (Requirements: 8.1, 8.2, 8.3, 8.4)
+  async setEngagementSignal(
+    userId: string, 
+    articleId: string, 
+    signal: EngagementSignal
+  ): Promise<UserArticle> {
+    const updates: Partial<UserArticle> = {
+      engagement_signal: signal,
+      engagement_signal_at: signal ? new Date() : null
+    };
+    return this.updateUserArticleState(userId, articleId, updates);
+  }
+
+  // Get Articles with Engagement (Requirements: 8.5, 8.6)
+  async getArticlesWithEngagement(userId: string, feedId?: string): Promise<Array<Article & { engagement?: string }>> {
+    // Build the query for articles
+    let articlesQuery = this.supabase
+      .from('articles')
+      .select('*')
+      .order('published_at', { ascending: false });
+    
+    if (feedId) {
+      articlesQuery = articlesQuery.eq('feed_id', feedId);
+    }
+    
+    const { data: articles, error: articlesError } = await articlesQuery;
+    
+    if (articlesError) {
+      throw new Error(`Failed to get articles: ${articlesError.message}`);
+    }
+    
+    if (!articles || articles.length === 0) {
+      return [];
+    }
+    
+    // Get user article states for engagement signals
+    const articleIds = articles.map(a => a.id);
+    const { data: userArticles, error: userArticlesError } = await this.supabase
+      .from('user_articles')
+      .select('article_id, engagement_signal')
+      .eq('user_id', userId)
+      .in('article_id', articleIds);
+    
+    if (userArticlesError) {
+      throw new Error(`Failed to get user article states: ${userArticlesError.message}`);
+    }
+    
+    // Create a map of article_id to engagement_signal
+    const engagementMap = new Map<string, string | null>();
+    (userArticles || []).forEach((ua: any) => {
+      engagementMap.set(ua.article_id, ua.engagement_signal);
+    });
+    
+    // Combine articles with engagement signals
+    const result: Array<Article & { engagement?: string }> = articles.map((article: any) => ({
+      ...article,
+      engagement: engagementMap.get(article.id) || undefined
+    }));
+    
+    return result;
   }
 }

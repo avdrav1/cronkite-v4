@@ -185,3 +185,98 @@ describe('Feed Management API Endpoints', () => {
     });
   });
 });
+
+describe('Feed Management Controls API Endpoints', () => {
+  let app: Express;
+  let server: any;
+
+  beforeAll(async () => {
+    app = express();
+    app.use(express.json());
+    app.use(sessionConfig);
+    app.use(passport.initialize());
+    app.use(passport.session());
+    
+    const httpServer = createServer(app);
+    server = await registerRoutes(httpServer, app);
+  });
+
+  afterAll(() => {
+    if (server) {
+      server.close();
+    }
+  });
+
+  describe('POST /api/feeds/:feedId/sync - Single Feed Sync', () => {
+    it('should require authentication', async () => {
+      const response = await request(app)
+        .post('/api/feeds/test-feed-id/sync');
+
+      expect(response.status).toBe(401);
+      expect(response.body.error).toBe('Authentication required');
+    });
+  });
+
+  describe('POST /api/feeds/sync-all - Bulk Feed Sync', () => {
+    it('should require authentication', async () => {
+      const response = await request(app)
+        .post('/api/feeds/sync-all');
+
+      expect(response.status).toBe(401);
+      expect(response.body.error).toBe('Authentication required');
+    });
+  });
+
+  describe('GET /api/feeds/count - Feed Count', () => {
+    it('should require authentication', async () => {
+      const response = await request(app)
+        .get('/api/feeds/count');
+
+      expect(response.status).toBe(401);
+      expect(response.body.error).toBe('Authentication required');
+    });
+  });
+
+  describe('PUT /api/articles/:articleId/read - Article Read State', () => {
+    it('should require authentication', async () => {
+      const response = await request(app)
+        .put('/api/articles/test-article-id/read')
+        .send({ isRead: true });
+
+      expect(response.status).toBe(401);
+      expect(response.body.error).toBe('Authentication required');
+    });
+  });
+
+  describe('PUT /api/articles/:articleId/star - Article Star State', () => {
+    it('should require authentication', async () => {
+      const response = await request(app)
+        .put('/api/articles/test-article-id/star')
+        .send({ isStarred: true });
+
+      expect(response.status).toBe(401);
+      expect(response.body.error).toBe('Authentication required');
+    });
+  });
+
+  describe('GET /api/articles/starred - Starred Articles', () => {
+    it('should require authentication', async () => {
+      const response = await request(app)
+        .get('/api/articles/starred');
+
+      expect(response.status).toBe(401);
+      expect(response.body.error).toBe('Authentication required');
+    });
+  });
+
+  describe('PUT /api/articles/:articleId/engagement - Engagement Signal', () => {
+    it('should require authentication', async () => {
+      const response = await request(app)
+        .put('/api/articles/test-article-id/engagement')
+        .send({ signal: 'positive' });
+
+      expect(response.status).toBe(401);
+      expect(response.body.error).toBe('Authentication required');
+    });
+  });
+});

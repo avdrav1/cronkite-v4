@@ -3,9 +3,10 @@ import { useLocation } from "wouter";
 import { AppShell } from "@/components/layout/AppShell";
 import { MasonryGrid } from "@/components/feed/MasonryGrid";
 import { ArticleCard } from "@/components/feed/ArticleCard";
+import { TrendingTopicCard, type TrendingCluster } from "@/components/feed/TrendingTopicCard";
+import { TrendingClusterSheet } from "@/components/trending/TrendingClusterSheet";
 import { ArticleSheet } from "@/components/article/ArticleSheet";
-import { motion } from "framer-motion";
-import { SlidersHorizontal, RefreshCw, AlertCircle, Loader2 } from "lucide-react";
+import { RefreshCw, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
@@ -19,6 +20,7 @@ interface ArticleWithFeed extends Article {
   isRead?: boolean;
   isStarred?: boolean;
   relevancyScore?: number;
+  engagementSignal?: 'positive' | 'negative' | null;
   
   // Computed/display fields
   source?: string; // Feed name for display
@@ -32,14 +34,14 @@ interface ArticleWithFeed extends Article {
   feed_icon?: string;
 }
 
-// Mixed feed item type (just articles for now)
+// Mixed feed item type (articles and trending topics)
 interface FeedItem {
-  type: 'article';
-  data: ArticleWithFeed;
+  type: 'article' | 'trending';
+  data: ArticleWithFeed | TrendingCluster;
   id: string;
 }
 
-import { subDays, isAfter, isBefore, parseISO, formatDistanceToNow, differenceInDays } from "date-fns";
+import { subDays, isAfter, isBefore, parseISO, differenceInDays } from "date-fns";
 import { ArrowDown } from "lucide-react";
 
 const CURRENT_DATE = new Date();
@@ -47,38 +49,47 @@ const CHUNK_SIZE_DAYS = 7;
 
 export default function Home() {
   const [selectedArticle, setSelectedArticle] = useState<ArticleWithFeed | null>(null);
+  const [selectedCluster, setSelectedCluster] = useState<TrendingCluster | null>(null);
   const [activeFilter, setActiveFilter] = useState("all");
   const [historyDepth, setHistoryDepth] = useState(CHUNK_SIZE_DAYS);
   
   // Real data state
   const [articles, setArticles] = useState<ArticleWithFeed[]>([]);
+  const [starredArticles, setStarredArticles] = useState<ArticleWithFeed[]>([]);
+  const [clusters, setClusters] = useState<TrendingCluster[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingStarred, setIsLoadingStarred] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [feedsCount, setFeedsCount] = useState(0);
   
   // Track URL search params for filtering
-  const [searchParams, setSearchParams] = useState(() => new URLSearchParams(window.location.search));
+  const [filterKey, setFilterKey] = useState(0); // Force re-render key
   
   // Use wouter's useLocation for reactivity when URL changes
   const [location] = useLocation();
   
-  // Update search params when location changes
-  useEffect(() => {
-    setSearchParams(new URLSearchParams(window.location.search));
-  }, [location]);
-  
-  // Also listen for popstate events (browser back/forward)
-  useEffect(() => {
-    const handlePopState = () => {
-      setSearchParams(new URLSearchParams(window.location.search));
+  // Parse URL params - recalculate when location changes
+  const { sourceFilter, categoryFilter } = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    return {
+      sourceFilter: params.get("source"),
+      categoryFilter: params.get("category")
     };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
+  }, [location, filterKey]);
   
-  // Get source and category filters from URL params
-  const sourceFilter = searchParams.get("source");
-  const categoryFilter = searchParams.get("category");
+  // Listen for custom filter change events from FeedsList
+  useEffect(() => {
+    const handleFilterChange = () => {
+      console.log('Home: Filter change detected');
+      setFilterKey(k => k + 1); // Force re-parse of URL params
+    };
+    window.addEventListener('feedFilterChange', handleFilterChange);
+    window.addEventListener('popstate', handleFilterChange);
+    return () => {
+      window.removeEventListener('feedFilterChange', handleFilterChange);
+      window.removeEventListener('popstate', handleFilterChange);
+    };
+  }, []);
 
   // Fetch articles from API
   const fetchArticles = async () => {
@@ -86,8 +97,13 @@ export default function Home() {
       setIsLoading(true);
       setError(null);
       
-      const response = await apiRequest('GET', '/api/articles?limit=100');
-      const data = await response.json();
+      // Fetch articles and clusters in parallel
+      const [articlesResponse, clustersResponse] = await Promise.all([
+        apiRequest('GET', '/api/articles'),
+        apiRequest('GET', '/api/clusters').catch(() => null) // Don't fail if clusters unavailable
+      ]);
+      
+      const data = await articlesResponse.json();
       
       if (!data.articles) {
         throw new Error('No articles data received');
@@ -114,6 +130,7 @@ export default function Home() {
         // UI state
         isRead: article.is_read || false,
         isStarred: article.is_starred || false,
+        engagementSignal: article.engagement_signal || null,
         // Feed information
         feed_name: article.feed_name,
         feed_url: article.feed_url,
@@ -122,6 +139,18 @@ export default function Home() {
       
       setArticles(articlesWithState);
       setFeedsCount(data.feeds_count || 0);
+      
+      // Process clusters if available
+      if (clustersResponse) {
+        try {
+          const clustersData = await clustersResponse.json();
+          if (clustersData.clusters) {
+            setClusters(clustersData.clusters);
+          }
+        } catch (e) {
+          console.log('Clusters not available:', e);
+        }
+      }
     } catch (error) {
       console.error('Failed to fetch articles:', error);
       setError(error instanceof Error ? error.message : 'Failed to load articles');
@@ -135,13 +164,86 @@ export default function Home() {
     fetchArticles();
   }, []);
 
-  // Create feed with just articles
-  const createMixedFeed = (articles: ArticleWithFeed[]): FeedItem[] => {
-    return articles.map(article => ({
-      type: 'article',
+  // Fetch starred articles from API - Requirements: 7.3
+  const fetchStarredArticles = async () => {
+    try {
+      setIsLoadingStarred(true);
+      const response = await apiRequest('GET', '/api/articles/starred');
+      const data = await response.json();
+      
+      if (data.articles) {
+        const starredWithState: ArticleWithFeed[] = data.articles.map((article: any) => ({
+          ...article,
+          id: article.id,
+          title: article.title,
+          url: article.url,
+          excerpt: article.excerpt || article.content?.substring(0, 200) + '...',
+          content: article.content,
+          author: article.author,
+          date: article.published_at || article.created_at,
+          published_at: article.published_at,
+          source: article.feed_name || 'Unknown Source',
+          image: article.image_url,
+          imageUrl: article.image_url,
+          readTime: Math.max(1, Math.floor((article.content?.length || 0) / 200)) + ' min read',
+          relevancyScore: 75,
+          tags: [],
+          isRead: article.is_read || false,
+          isStarred: true, // These are starred articles
+          engagementSignal: article.engagement_signal || null,
+          feed_name: article.feed_name,
+          feed_url: article.feed_url,
+          feed_icon: article.feed_icon
+        }));
+        setStarredArticles(starredWithState);
+      }
+    } catch (error) {
+      console.error('Failed to fetch starred articles:', error);
+    } finally {
+      setIsLoadingStarred(false);
+    }
+  };
+
+  // Fetch starred articles when filter changes to "saved"
+  useEffect(() => {
+    if (activeFilter === "saved") {
+      fetchStarredArticles();
+    }
+  }, [activeFilter]);
+
+  // Create feed with articles and interspersed trending topics
+  const createMixedFeed = (articles: ArticleWithFeed[], clusters: TrendingCluster[]): FeedItem[] => {
+    const articleItems: FeedItem[] = articles.map(article => ({
+      type: 'article' as const,
       data: article,
       id: article.id
     }));
+    
+    // If no clusters or filtering by source/category, just return articles
+    if (clusters.length === 0 || sourceFilter || categoryFilter) {
+      return articleItems;
+    }
+    
+    // Intersperse trending topic cards every 4-6 articles
+    const result: FeedItem[] = [];
+    let clusterIndex = 0;
+    const insertInterval = 5; // Insert a trending card every 5 articles
+    
+    articleItems.forEach((item, index) => {
+      result.push(item);
+      
+      // Insert a trending topic card after every `insertInterval` articles
+      if ((index + 1) % insertInterval === 0 && clusterIndex < clusters.length) {
+        result.push({
+          type: 'trending' as const,
+          data: clusters[clusterIndex],
+          id: `trending-${clusters[clusterIndex].id}`
+        });
+        clusterIndex++;
+      }
+    });
+    
+    return result;
   };
 
   // Actions
@@ -170,10 +272,21 @@ export default function Home() {
   };
 
   // Create feed
-  const mixedFeed = createMixedFeed(articles);
+  // Use starred articles from API when filter is "saved" - Requirements: 7.3
+  const articlesToUse = activeFilter === "saved" ? starredArticles : articles;
+  const mixedFeed = createMixedFeed(articlesToUse, clusters);
 
   // Base filtering (Source + Category + Status)
   const baseFilteredFeed = mixedFeed.filter((item) => {
+    // Trending items pass through unless we're filtering by source/category
+    if (item.type === 'trending') {
+      // Hide trending cards when filtering by specific source or category
+      if (sourceFilter || categoryFilter) return false;
+      // Hide trending cards when filtering by status
+      if (activeFilter !== "all") return false;
+      return true;
+    }
+    
     const article = item.data as ArticleWithFeed;
     
     // 1. Source Filter (specific feed name) - EXACT match
@@ -193,15 +306,18 @@ export default function Home() {
       // TODO: Implement proper category filtering when API returns category info
     }
 
-    // 3. Status Filter
+    // 3. Status Filter (only apply for non-starred filter since starred uses API)
     if (activeFilter === "unread" && article.isRead) return false;
-    if (activeFilter === "saved" && !article.isStarred) return false;
+    // Note: "saved" filter now uses starredArticles from API, so no client-side filter needed
     
     return true;
   });
 
   // Calculate visible feed based on history depth
   const visibleFeed = baseFilteredFeed.filter((item) => {
+    // Trending items always pass through
+    if (item.type === 'trending') return true;
+    
     const article = item.data as ArticleWithFeed;
     if (!article.date) return true; // Show articles without dates
     
@@ -215,6 +331,9 @@ export default function Home() {
   const nextChunkEndDate = subDays(CURRENT_DATE, historyDepth);
   
   const nextChunkCount = baseFilteredFeed.filter((item) => {
+    // Don't count trending items
+    if (item.type === 'trending') return false;
+    
     const article = item.data as ArticleWithFeed;
     if (!article.date) return false;
     const articleDate = parseISO(article.date);
@@ -226,7 +345,7 @@ export default function Home() {
   };
 
   // Loading state - Requirement 2.6
-  if (isLoading) {
+  if (isLoading || (activeFilter === "saved" && isLoadingStarred)) {
     return (
       <AppShell>
         <div className="flex flex-col gap-8 mb-20">
@@ -355,6 +474,23 @@ export default function Home() {
         {/* Masonry Feed */}
         <MasonryGrid>
           {visibleFeed.map((item, index) => {
+            if (item.type === 'trending') {
+              const cluster = item.data as TrendingCluster;
+              // Alternate between different card variants for visual variety
+              const variantIndex = visibleFeed.filter((i, idx) => i.type === 'trending' && idx < index).length;
+              const variants: Array<"compact" | "expanded" | "summary"> = ["summary", "expanded", "compact"];
+              const variant = variants[variantIndex % variants.length];
+              
+              return (
+                <TrendingTopicCard
+                  key={item.id}
+                  cluster={cluster}
+                  variant={variant}
+                  onClick={(c) => setSelectedCluster(c)}
+                />
+              );
+            }
+            
             const article = item.data as ArticleWithFeed;
             return (
               <ArticleCard
@@ -400,6 +536,21 @@ export default function Home() {
         article={selectedArticle as any} // Type assertion for compatibility
         isOpen={!!selectedArticle}
         onClose={() => setSelectedArticle(null)}
+      />
+
+      {/* Trending Cluster Sheet */}
+      <TrendingClusterSheet
+        cluster={selectedCluster}
+        isOpen={!!selectedCluster}
+        onClose={() => setSelectedCluster(null)}
+        onArticleClick={(articleId) => {
+          // Find the article and open it
+          const article = articles.find(a => a.id === articleId);
+          if (article) {
+            setSelectedCluster(null);
+            setSelectedArticle(article);
+          }
+        }}
       />
     </AppShell>
   );
