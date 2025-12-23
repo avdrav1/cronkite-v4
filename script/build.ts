@@ -128,6 +128,48 @@ async function buildAll() {
     logLevel: "info",
   });
 
+  // Build the AI scheduler scheduled function
+  console.log("⚡ Building AI scheduler (Netlify Scheduled Function)...");
+  if (existsSync("netlify/functions/ai-scheduler.ts")) {
+    await esbuild({
+      entryPoints: ["netlify/functions/ai-scheduler.ts"],
+      platform: "node",
+      bundle: true,
+      format: "cjs",
+      outfile: "dist/functions/ai-scheduler.js",
+      define: {
+        "process.env.NODE_ENV": '"production"',
+      },
+      minify: true,
+      external: externals,
+      logLevel: "info",
+    });
+    console.log("✅ AI scheduler function built");
+  } else {
+    console.log("⚠️ AI scheduler function not found, skipping");
+  }
+
+  // Build the test-clustering diagnostic function
+  console.log("⚡ Building test-clustering (Netlify Diagnostic Function)...");
+  if (existsSync("netlify/functions/test-clustering.ts")) {
+    await esbuild({
+      entryPoints: ["netlify/functions/test-clustering.ts"],
+      platform: "node",
+      bundle: true,
+      format: "cjs",
+      outfile: "dist/functions/test-clustering.js",
+      define: {
+        "process.env.NODE_ENV": '"production"',
+      },
+      minify: true,
+      external: externals,
+      logLevel: "info",
+    });
+    console.log("✅ Test-clustering function built");
+  } else {
+    console.log("⚠️ Test-clustering function not found, skipping");
+  }
+
   // Copy necessary files for production
   console.log("📋 Copying production files...");
   
