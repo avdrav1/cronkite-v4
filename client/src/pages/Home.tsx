@@ -6,7 +6,7 @@ import { ArticleCard } from "@/components/feed/ArticleCard";
 import { TrendingTopicCard, type TrendingCluster } from "@/components/feed/TrendingTopicCard";
 import { TrendingClusterSheet } from "@/components/trending/TrendingClusterSheet";
 import { ArticleSheet } from "@/components/article/ArticleSheet";
-import { RefreshCw, AlertCircle, Star } from "lucide-react";
+import { RefreshCw, AlertCircle, Star, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
@@ -34,8 +34,7 @@ interface ArticleWithFeed extends Article {
   feed_icon?: string;
   feed_category?: string; // Category/folder_name for filtering
   
-  // Cluster information for visual grouping
-  cluster_id?: string | null;
+  // Cluster information for visual grouping (cluster_id inherited from Article)
   clusterTopic?: string;
   clusterColor?: string;
 }
@@ -76,9 +75,11 @@ export default function Home() {
   // Real data state
   const [articles, setArticles] = useState<ArticleWithFeed[]>([]);
   const [starredArticles, setStarredArticles] = useState<ArticleWithFeed[]>([]);
+  const [readArticles, setReadArticles] = useState<ArticleWithFeed[]>([]);
   const [clusters, setClusters] = useState<TrendingCluster[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingStarred, setIsLoadingStarred] = useState(false);
+  const [isLoadingRead, setIsLoadingRead] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [feedsCount, setFeedsCount] = useState(0);
   
@@ -206,11 +207,12 @@ export default function Home() {
       // Log read state statistics
       const readCount = data.articles.filter((a: any) => a.is_read).length;
       const starredCount = data.articles.filter((a: any) => a.is_starred).length;
-      console.log('📖 Articles loaded:', {
+      console.log('📖 Articles loaded from API:', {
         total: data.articles.length,
         readCount,
         starredCount,
-        sampleReadStates: data.articles.slice(0, 5).map((a: any) => ({ 
+        readArticleIds: data.articles.filter((a: any) => a.is_read).map((a: any) => a.id?.substring(0, 8)),
+        sampleReadStates: data.articles.slice(0, 10).map((a: any) => ({ 
           id: a.id?.substring(0, 8), 
           is_read: a.is_read 
         }))
@@ -376,6 +378,79 @@ export default function Home() {
     }
   }, [activeFilter]);
 
+  // Fetch read articles from API - Requirements: 6.1, 6.2
+  const fetchReadArticles = async () => {
+    try {
+      setIsLoadingRead(true);
+      setReadArticles([]); // Clear previous read articles
+      console.log('📖 Fetching read articles...');
+      
+      // Use apiFetch instead of apiRequest to handle errors gracefully
+      const response = await apiFetch('GET', '/api/articles/read');
+      
+      console.log('📖 Read articles response status:', response.status);
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('📖 Read articles API error:', response.status, errorText);
+        return;
+      }
+      
+      const data = await response.json();
+      
+      console.log('📖 Read articles API response:', {
+        hasArticles: !!data.articles,
+        count: data.articles?.length || 0,
+        total: data.total,
+        firstArticle: data.articles?.[0]?.title?.substring(0, 50)
+      });
+      
+      if (data.articles && data.articles.length > 0) {
+        const readWithState: ArticleWithFeed[] = data.articles.map((article: any) => ({
+          ...article,
+          id: article.id,
+          title: article.title,
+          url: article.url,
+          excerpt: article.excerpt || article.content?.substring(0, 200) + '...',
+          content: article.content,
+          author: article.author,
+          date: article.published_at || article.created_at,
+          published_at: article.published_at,
+          source: article.feed_name || 'Unknown Source',
+          image: article.image_url,
+          imageUrl: article.image_url,
+          readTime: Math.max(1, Math.floor((article.content?.length || 0) / 200)) + ' min read',
+          relevancyScore: 75,
+          tags: [],
+          isRead: true, // These are read articles
+          isStarred: article.is_starred || false,
+          engagementSignal: article.engagement_signal || null,
+          feed_name: article.feed_name,
+          feed_url: article.feed_url,
+          feed_icon: article.feed_icon,
+          feed_category: article.feed_category || 'General' // Category for filtering
+        }));
+        setReadArticles(readWithState);
+        console.log('📖 Set read articles state:', readWithState.length, 'articles');
+      } else {
+        console.log('📖 No read articles in response');
+        setReadArticles([]);
+      }
+    } catch (error) {
+      console.error('Failed to fetch read articles:', error);
+      setReadArticles([]);
+    } finally {
+      setIsLoadingRead(false);
+    }
+  };
+
+  // Fetch read articles when filter changes to "read"
+  useEffect(() => {
+    if (activeFilter === "read") {
+      fetchReadArticles();
+    }
+  }, [activeFilter]);
+
   // Create feed with articles and interspersed trending topics
   const createMixedFeed = (articles: ArticleWithFeed[], clusters: TrendingCluster[]): FeedItem[] => {
     console.log('🔄 createMixedFeed called:', { articlesCount: articles.length, clustersCount: clusters.length });
@@ -434,6 +509,13 @@ export default function Home() {
       // Refetch starred articles to get accurate list
       fetchStarredArticles();
     }
+    // Also update read articles list if we're viewing it
+    setReadArticles(prev => prev.map(article => {
+      if (article.id === id) {
+        return { ...article, isStarred };
+      }
+      return article;
+    }));
   };
 
   // Called after ArticleCard successfully updates engagement signal via API
@@ -451,6 +533,13 @@ export default function Home() {
       }
       return article;
     }));
+    // Also update read articles if viewing that filter
+    setReadArticles(prev => prev.map(article => {
+      if (article.id === id) {
+        return { ...article, engagementSignal: signal };
+      }
+      return article;
+    }));
   };
 
   const handleArticleClick = async (article: ArticleWithFeed) => {
@@ -463,6 +552,15 @@ export default function Home() {
       }
       return item;
     }));
+    
+    // Also add to readArticles if not already there (for immediate "Read" tab update)
+    setReadArticles(prev => {
+      const exists = prev.some(a => a.id === article.id);
+      if (!exists) {
+        return [{ ...article, isRead: true }, ...prev];
+      }
+      return prev;
+    });
     
     // Persist read state to database
     try {
@@ -522,13 +620,33 @@ export default function Home() {
     });
   }, [starredArticles, clusterMap]);
 
-  // Use starred articles from API when filter is "saved" - Requirements: 7.3
-  const articlesToUse = activeFilter === "saved" ? enrichedStarredArticles : enrichedArticles;
+  const enrichedReadArticles = useMemo(() => {
+    return readArticles.map(article => {
+      if (article.cluster_id && clusterMap.has(article.cluster_id)) {
+        const clusterInfo = clusterMap.get(article.cluster_id)!;
+        return {
+          ...article,
+          clusterTopic: clusterInfo.topic,
+          clusterColor: clusterInfo.color
+        };
+      }
+      return article;
+    });
+  }, [readArticles, clusterMap]);
+
+  // Use starred/read articles from API when filter is "saved"/"read" - Requirements: 6.1, 6.2, 7.3
+  const articlesToUse = activeFilter === "saved" 
+    ? enrichedStarredArticles 
+    : activeFilter === "read" 
+      ? enrichedReadArticles 
+      : enrichedArticles;
   console.log('📋 Creating feed:', {
     activeFilter,
     articlesToUseCount: articlesToUse.length,
     isUsingStarred: activeFilter === "saved",
-    starredArticlesCount: starredArticles.length
+    isUsingRead: activeFilter === "read",
+    starredArticlesCount: starredArticles.length,
+    readArticlesCount: readArticles.length
   });
   const mixedFeed = createMixedFeed(articlesToUse, clusters);
 
@@ -566,10 +684,9 @@ export default function Home() {
       if (!matchesCategory) return false;
     }
 
-    // 3. Status Filter (only apply for non-starred filter since starred uses API)
+    // 3. Status Filter (only apply for unread filter since starred/read use API)
     if (activeFilter === "unread" && article.isRead) return false;
-    if (activeFilter === "read" && !article.isRead) return false;
-    // Note: "saved" filter now uses starredArticles from API, so no client-side filter needed
+    // Note: "saved" and "read" filters now use API data, so no client-side filter needed
     
     return true;
   });
@@ -579,8 +696,8 @@ export default function Home() {
     // Trending items always pass through
     if (item.type === 'trending') return true;
     
-    // Starred articles bypass date filtering - show all starred regardless of date
-    if (activeFilter === "saved") return true;
+    // Starred and read articles bypass date filtering - show all regardless of date
+    if (activeFilter === "saved" || activeFilter === "read") return true;
     
     const article = item.data as ArticleWithFeed;
     if (!article.date) return true; // Show articles without dates
@@ -589,30 +706,6 @@ export default function Home() {
     const cutoffDate = subDays(CURRENT_DATE, historyDepth);
     return isAfter(articleDate, cutoffDate);
   });
-
-  // Debug logging for starred articles
-  if (activeFilter === "saved") {
-    console.log('⭐ Starred filter debug:', {
-      starredArticlesCount: starredArticles.length,
-      articlesToUseCount: articlesToUse.length,
-      mixedFeedCount: mixedFeed.length,
-      baseFilteredFeedCount: baseFilteredFeed.length,
-      visibleFeedCount: visibleFeed.length,
-      historyDepth,
-      currentDate: CURRENT_DATE.toISOString(),
-      cutoffDate: subDays(CURRENT_DATE, historyDepth).toISOString()
-    });
-    
-    // Log first article date if available
-    if (starredArticles.length > 0) {
-      const firstArticle = starredArticles[0];
-      console.log('⭐ First starred article:', {
-        title: firstArticle.title?.substring(0, 50),
-        date: firstArticle.date,
-        published_at: firstArticle.published_at
-      });
-    }
-  }
 
   // Calculate next chunk stats
   const nextChunkStartDate = subDays(CURRENT_DATE, historyDepth + CHUNK_SIZE_DAYS);
@@ -633,7 +726,7 @@ export default function Home() {
   };
 
   // Loading state - Requirement 2.6
-  if (isLoading || (activeFilter === "saved" && isLoadingStarred)) {
+  if (isLoading || (activeFilter === "saved" && isLoadingStarred) || (activeFilter === "read" && isLoadingRead)) {
     return (
       <AppShell>
         <div className="flex flex-col gap-8 mb-20">
@@ -791,6 +884,14 @@ export default function Home() {
             <h3 className="text-lg font-medium mb-2">No starred articles yet</h3>
             <p className="text-muted-foreground max-w-md">
               Star articles you want to save for later by clicking the star icon on any article card.
+            </p>
+          </div>
+        ) : visibleFeed.length === 0 && activeFilter === "read" ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <CheckCircle className="h-12 w-12 text-muted-foreground/50 mb-4" />
+            <h3 className="text-lg font-medium mb-2">No read articles yet</h3>
+            <p className="text-muted-foreground max-w-md">
+              Articles you've opened will appear here. Click on any article to mark it as read.
             </p>
           </div>
         ) : visibleFeed.length === 0 ? (

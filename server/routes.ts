@@ -2005,6 +2005,60 @@ export async function registerRoutes(
     }
   });
 
+  // GET /api/articles/read - Get all read articles
+  // Requirements: 6.1, 6.2
+  // NOTE: This route MUST be defined BEFORE /api/articles/:id to prevent "read" being treated as an ID
+  app.get('/api/articles/read', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : undefined;
+      
+      console.log('📖 GET /api/articles/read called:', { userId, limit, offset });
+      
+      const storage = await getStorage();
+      console.log('📖 Storage type:', storage.constructor.name);
+      
+      const readArticles = await storage.getReadArticles(userId, limit, offset);
+      console.log('📖 getReadArticles returned:', readArticles.length, 'articles');
+      
+      // Get user's feeds to add feed information to articles
+      const userFeeds = await storage.getUserFeeds(userId);
+      const feedMap = new Map(userFeeds.map(feed => [feed.id, feed]));
+      console.log('📖 User has', userFeeds.length, 'feeds');
+      
+      // Add feed information to each article
+      const articlesWithFeedInfo = readArticles.map(article => {
+        const feed = feedMap.get(article.feed_id);
+        return {
+          ...article,
+          feed_name: feed?.name || 'Unknown Source',
+          feed_url: feed?.site_url || feed?.url,
+          feed_icon: feed?.icon_url,
+          feed_category: feed?.folder_name || 'General'
+        };
+      });
+      
+      console.log('📖 Returning', articlesWithFeedInfo.length, 'read articles');
+      
+      res.json({
+        articles: articlesWithFeedInfo,
+        total: articlesWithFeedInfo.length
+      });
+      
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Get read articles error:', {
+        message: errorMessage,
+        userId: req.user?.id
+      });
+      res.status(500).json({
+        error: 'READ_ARTICLES_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
   // GET /api/articles/:id - Get a single article by ID
   app.get('/api/articles/:id', requireAuth, async (req: Request, res: Response) => {
     try {

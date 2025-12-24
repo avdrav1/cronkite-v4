@@ -1308,6 +1308,62 @@ export class SupabaseStorage implements IStorage {
     return articles;
   }
 
+  // Get Read Articles (Requirements: 6.1, 6.2)
+  async getReadArticles(userId: string, limit?: number, offset?: number): Promise<Array<Article & { is_read?: boolean; is_starred?: boolean; engagement_signal?: string | null }>> {
+    console.log('📖 SupabaseStorage.getReadArticles called:', { userId, limit, offset });
+    
+    // Select all article columns EXCEPT embedding to reduce response size
+    // Also include user article state fields
+    let query = this.supabase
+      .from('user_articles')
+      .select(`
+        article_id,
+        is_read,
+        is_starred,
+        read_at,
+        engagement_signal,
+        articles (
+          id, feed_id, guid, title, url, author, excerpt, content, image_url,
+          published_at, fetched_at, ai_summary, ai_summary_generated_at, cluster_id,
+          embedding_status, embedding_generated_at, embedding_error, content_hash, created_at
+        )
+      `)
+      .eq('user_id', userId)
+      .eq('is_read', true)
+      .order('read_at', { ascending: false });
+    
+    if (limit) {
+      query = query.limit(limit);
+    }
+    
+    if (offset) {
+      query = query.range(offset, offset + (limit || 10) - 1);
+    }
+    
+    const { data, error } = await query;
+    
+    if (error) {
+      console.error('📖 getReadArticles error:', error.message);
+      throw new Error(`Failed to get read articles: ${error.message}`);
+    }
+    
+    console.log('📖 getReadArticles raw data:', data?.length || 0, 'records');
+    
+    // Extract articles from the joined data and include user state
+    const articles = (data || [])
+      .map((item: any) => ({
+        ...item.articles,
+        is_read: item.is_read || true, // These are read articles
+        is_starred: item.is_starred || false,
+        engagement_signal: item.engagement_signal || null
+      }))
+      .filter((article: any) => article !== null && article.id);
+    
+    console.log('📖 getReadArticles returning:', articles.length, 'articles');
+    
+    return articles;
+  }
+
   // Engagement Signal Management (Requirements: 8.1, 8.2, 8.3, 8.4)
   async setEngagementSignal(
     userId: string, 

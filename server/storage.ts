@@ -129,6 +129,7 @@ export interface IStorage {
   markArticleRead(userId: string, articleId: string, isRead: boolean): Promise<UserArticle>;
   markArticleStarred(userId: string, articleId: string, isStarred: boolean): Promise<UserArticle>;
   getStarredArticles(userId: string, limit?: number, offset?: number): Promise<Article[]>;
+  getReadArticles(userId: string, limit?: number, offset?: number): Promise<Article[]>;
   
   // Engagement Signal Management (Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6)
   setEngagementSignal(
@@ -990,6 +991,42 @@ export class MemStorage implements IStorage {
     const endIndex = limit ? startIndex + limit : undefined;
     
     return starredArticles.slice(startIndex, endIndex);
+  }
+
+  // Get Read Articles (Requirements: 6.1, 6.2)
+  async getReadArticles(userId: string, limit?: number, offset?: number): Promise<Article[]> {
+    const readArticleIds: string[] = [];
+    
+    // Find all read user articles for this user
+    this.userArticles.forEach((userArticle, key) => {
+      if (key.startsWith(`${userId}:`) && userArticle.is_read) {
+        readArticleIds.push(userArticle.article_id);
+      }
+    });
+    
+    // Get the actual articles
+    const readArticles: Article[] = [];
+    readArticleIds.forEach(articleId => {
+      const article = this.articles.get(articleId);
+      if (article) {
+        readArticles.push(article);
+      }
+    });
+    
+    // Sort by read_at timestamp (most recent first)
+    readArticles.sort((a, b) => {
+      const userArticleA = this.userArticles.get(`${userId}:${a.id}`);
+      const userArticleB = this.userArticles.get(`${userId}:${b.id}`);
+      const timeA = userArticleA?.read_at?.getTime() || 0;
+      const timeB = userArticleB?.read_at?.getTime() || 0;
+      return timeB - timeA;
+    });
+    
+    // Apply pagination
+    const startIndex = offset || 0;
+    const endIndex = limit ? startIndex + limit : undefined;
+    
+    return readArticles.slice(startIndex, endIndex);
   }
 
   // Engagement Signal Management (Requirements: 8.1, 8.2, 8.3, 8.4)
