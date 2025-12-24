@@ -34,43 +34,32 @@ export const handler: Handler = async (event: HandlerEvent, context: HandlerCont
       message: clusteringAvailable ? "Anthropic API key is configured" : "Anthropic API key is NOT configured"
     };
     
-    // Test 3: Get storage and fetch articles
-    console.log("📊 Fetching articles from database...");
+    // Test 3: Get storage and fetch articles with embeddings directly
+    console.log("📊 Fetching articles with embeddings from database...");
     const storage = await getStorage();
     
-    // Get a sample of recent articles
-    const sampleArticles: Array<{ id: string; title: string; excerpt?: string; source: string; published_at?: string }> = [];
+    // Get articles with embeddings (no userId filter to get all articles)
+    const articlesWithEmbeddings = await storage.getArticlesWithEmbeddings(
+      undefined, // no userId - get all
+      undefined, // no feedIds filter
+      168 // 7 days back
+    );
     
-    // We need to get articles through feeds since we don't have a direct method
-    // Let's use a workaround - get recommended feeds and their articles
-    try {
-      const recommendedFeeds = await storage.getRecommendedFeeds();
-      console.log(`📊 Found ${recommendedFeeds.length} recommended feeds`);
-      
-      // Get articles from first few feeds
-      for (const feed of recommendedFeeds.slice(0, 5)) {
-        try {
-          const feedArticles = await storage.getArticlesByFeedId(feed.id, 10);
-          for (const article of feedArticles) {
-            sampleArticles.push({
-              id: article.id,
-              title: article.title,
-              excerpt: article.excerpt || '',
-              source: feed.name,
-              published_at: article.published_at?.toISOString()
-            });
-          }
-        } catch (e) {
-          // Feed might not have articles
-        }
-      }
-    } catch (e) {
-      console.log("⚠️ Could not fetch from recommended feeds, trying direct query...");
-    }
+    console.log(`📊 Found ${articlesWithEmbeddings.length} articles with embeddings`);
+    
+    // Convert to the format expected by clusterArticles
+    const sampleArticles = articlesWithEmbeddings.slice(0, 50).map(a => ({
+      id: a.id,
+      title: a.title,
+      excerpt: a.excerpt || '',
+      source: a.feedName,
+      published_at: a.publishedAt?.toISOString()
+    }));
     
     results.tests.articleFetch = {
       success: sampleArticles.length > 0,
-      articleCount: sampleArticles.length,
+      articleCount: articlesWithEmbeddings.length,
+      sampleCount: sampleArticles.length,
       sampleTitles: sampleArticles.slice(0, 3).map(a => a.title)
     };
     
@@ -78,7 +67,7 @@ export const handler: Handler = async (event: HandlerEvent, context: HandlerCont
     if (sampleArticles.length >= 3 && clusteringAvailable) {
       console.log("🤖 Testing text-based clustering...");
       try {
-        const clusters = await clusterArticles(sampleArticles.slice(0, 20));
+        const clusters = await clusterArticles(sampleArticles);
         results.tests.clustering = {
           success: true,
           clustersCreated: clusters.length,

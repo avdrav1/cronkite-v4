@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { TrendingUp, ChevronRight, Loader2, Sparkles, Users, BarChart3 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { apiRequest } from "@/lib/queryClient";
+import { apiFetch } from "@/lib/queryClient";
 import { formatDistanceToNow } from "date-fns";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -34,14 +34,42 @@ export function TrendingClusters({ onClusterClick, className }: TrendingClusters
       try {
         setIsLoading(true);
         setError(null);
-        const response = await apiRequest('GET', '/api/clusters');
+        console.log('🔍 TrendingClusters: Fetching clusters...');
+        const response = await apiFetch('GET', '/api/clusters');
+        
+        console.log('🔍 TrendingClusters: Response status:', response.status);
+        
+        if (!response.ok) {
+          if (response.status === 401) {
+            console.log('🔍 TrendingClusters: Auth required - user may need to re-login');
+            setError('Please log in to see trending topics');
+          } else {
+            console.error('🔍 TrendingClusters: API error:', response.status);
+            setError('Unable to load trending topics');
+          }
+          setClusters([]);
+          return;
+        }
+        
         const data = await response.json();
         
-        if (data.clusters) {
+        console.log('🔍 TrendingClusters: API response:', {
+          hasClusters: !!data.clusters,
+          clusterCount: data.clusters?.length || 0,
+          method: data.method,
+          cached: data.cached,
+          message: data.message
+        });
+        
+        if (data.clusters && data.clusters.length > 0) {
           setClusters(data.clusters);
+          console.log('✅ TrendingClusters: Loaded', data.clusters.length, 'clusters');
+        } else {
+          console.log('ℹ️ TrendingClusters: No clusters returned from API');
+          setClusters([]);
         }
       } catch (err) {
-        console.error('Failed to fetch clusters:', err);
+        console.error('❌ TrendingClusters: Failed to fetch clusters:', err);
         setError('Unable to load trending topics');
       } finally {
         setIsLoading(false);
@@ -75,8 +103,13 @@ export function TrendingClusters({ onClusterClick, className }: TrendingClusters
         </div>
         <div className="text-center py-6 text-muted-foreground text-sm">
           <Sparkles className="h-8 w-8 mx-auto mb-2 opacity-50" />
-          <p>{error || "No trending topics found yet"}</p>
-          <p className="text-xs mt-1">Check back when more articles are available</p>
+          <p>{error || "No trending topics yet"}</p>
+          <p className="text-xs mt-1 opacity-75">
+            {error 
+              ? "Check AI status below for details"
+              : "Topics appear when multiple sources cover the same story"
+            }
+          </p>
         </div>
       </div>
     );

@@ -22,7 +22,7 @@ interface ArticleCardProps {
   article: ArticleWithUIState;
   onClick: (article: ArticleWithUIState) => void;
   onRemove?: (id: string) => void;
-  onStar?: (id: string) => void;
+  onStar?: (id: string, isStarred: boolean) => void;
   onReadChange?: (id: string, isRead: boolean) => void;
   onEngagementChange?: (id: string, signal: 'positive' | 'negative' | null) => void;
 }
@@ -85,7 +85,8 @@ export function ArticleCard({ article, onClick, onRemove, onStar, onReadChange, 
     
     try {
       await apiRequest('PUT', `/api/articles/${article.id}/star`, { isStarred: newStarredState });
-      onStar?.(article.id);
+      // Pass the new state to parent so it can update its state correctly
+      onStar?.(article.id, newStarredState);
     } catch (error) {
       console.error('Failed to update starred state:', error);
       setLocalIsStarred(!newStarredState); // Revert on error
@@ -229,33 +230,36 @@ export function ArticleCard({ article, onClick, onRemove, onStar, onReadChange, 
         
         {/* Action Buttons Row - Requirements: 3.1, 3.2, 3.3 - Separated groups with justify-between */}
         <div className="flex items-center justify-between pt-1">
-          {/* Left Group: Engagement Buttons - Requirements: 3.2, 3.6, 3.7 - Always visible */}
-          <div className="flex items-center gap-0.5">
+          {/* Left Group: More Like This? Engagement Buttons - Requirements: 3.2, 3.6, 3.7 - Always visible */}
+          <div className="flex items-center gap-1">
+            <span className="text-xs text-muted-foreground mr-1 hidden sm:inline">More like this?</span>
             <button 
               onClick={(e) => handleEngagement(e, 'positive')}
               disabled={isUpdating}
               className={cn(
-                "p-1.5 rounded-full transition-colors",
+                "flex items-center gap-1 px-2 py-1 rounded-full text-xs transition-colors",
                 localEngagement === 'positive'
-                  ? "text-green-500 bg-green-500/10"
-                  : "text-muted-foreground hover:text-green-500 hover:bg-muted"
+                  ? "text-green-600 bg-green-500/15 font-medium"
+                  : "text-muted-foreground hover:text-green-600 hover:bg-green-500/10"
               )}
-              title="More like this"
+              title="Yes, more like this"
             >
               <ThumbsUp className={cn("h-3.5 w-3.5", localEngagement === 'positive' && "fill-green-500")} />
+              <span className="hidden sm:inline">Yes</span>
             </button>
             <button 
               onClick={(e) => handleEngagement(e, 'negative')}
               disabled={isUpdating}
               className={cn(
-                "p-1.5 rounded-full transition-colors",
+                "flex items-center gap-1 px-2 py-1 rounded-full text-xs transition-colors",
                 localEngagement === 'negative'
-                  ? "text-red-500 bg-red-500/10"
-                  : "text-muted-foreground hover:text-red-500 hover:bg-muted"
+                  ? "text-red-600 bg-red-500/15 font-medium"
+                  : "text-muted-foreground hover:text-red-600 hover:bg-red-500/10"
               )}
-              title="Less like this"
+              title="No, less like this"
             >
               <ThumbsDown className={cn("h-3.5 w-3.5", localEngagement === 'negative' && "fill-red-500")} />
+              <span className="hidden sm:inline">No</span>
             </button>
           </div>
           

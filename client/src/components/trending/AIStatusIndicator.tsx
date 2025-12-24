@@ -44,7 +44,20 @@ export function AIStatusIndicator({ className, compact = false }: AIStatusIndica
       const response = await apiRequest('GET', '/api/ai/scheduler-stats');
       const data = await response.json();
       if (data.scheduler) {
-        setStats(data.scheduler);
+        // Map the API response to our expected format
+        const scheduler = data.scheduler;
+        setStats({
+          isRunning: scheduler.isRunning,
+          services: scheduler.services,
+          embeddingsProcessed: scheduler.stats?.embeddingsProcessed || 0,
+          embeddingsFailed: scheduler.stats?.embeddingsFailed || 0,
+          clustersGenerated: scheduler.stats?.clustersGenerated || 0,
+          clustersExpired: scheduler.stats?.clustersExpired || 0,
+          lastEmbeddingRun: scheduler.lastRuns?.embedding || null,
+          lastClusteringRun: scheduler.lastRuns?.clustering || null,
+          lastCleanupRun: scheduler.lastRuns?.cleanup || null,
+          errors: scheduler.recentErrors || []
+        });
         setError(null);
       }
     } catch (err) {
@@ -93,7 +106,7 @@ export function AIStatusIndicator({ className, compact = false }: AIStatusIndica
     if (!hasEmbeddings && !hasClustering) {
       return { icon: AlertCircle, color: "text-amber-500", label: "API Keys Missing" };
     }
-    if (stats.errors.length > 0) {
+    if (stats.errors?.length > 0) {
       return { icon: AlertCircle, color: "text-amber-500", label: "Some Errors" };
     }
     return { icon: CheckCircle, color: "text-emerald-500", label: "AI Active" };
@@ -224,7 +237,7 @@ export function AIStatusIndicator({ className, compact = false }: AIStatusIndica
 
         {/* Errors */}
         <AnimatePresence>
-          {stats.errors.length > 0 && (
+          {stats.errors?.length > 0 && (
             <motion.div
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: "auto" }}

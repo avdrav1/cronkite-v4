@@ -926,9 +926,17 @@ export class SupabaseStorage implements IStorage {
   }
 
   async getArticlesByFeedId(feedId: string, limit?: number): Promise<Article[]> {
+    // Select all columns EXCEPT embedding to reduce response size
+    // Embedding vectors are 1536-dimensional floats (~6KB each) and not needed for article display
+    const articleColumnsWithoutEmbedding = `
+      id, feed_id, guid, title, url, author, excerpt, content, image_url,
+      published_at, fetched_at, ai_summary, ai_summary_generated_at, cluster_id,
+      embedding_status, embedding_generated_at, embedding_error, content_hash, created_at
+    `;
+    
     let query = this.supabase
       .from('articles')
-      .select('*')
+      .select(articleColumnsWithoutEmbedding)
       .eq('feed_id', feedId)
       .order('published_at', { ascending: false });
     
@@ -1171,13 +1179,22 @@ export class SupabaseStorage implements IStorage {
   }
 
   // Get Starred Articles (Requirements: 7.3)
-  async getStarredArticles(userId: string, limit?: number, offset?: number): Promise<Article[]> {
+  async getStarredArticles(userId: string, limit?: number, offset?: number): Promise<Array<Article & { is_read?: boolean; is_starred?: boolean; engagement_signal?: string | null }>> {
+    // Select all article columns EXCEPT embedding to reduce response size
+    // Also include user article state fields
     let query = this.supabase
       .from('user_articles')
       .select(`
         article_id,
+        is_read,
+        is_starred,
         starred_at,
-        articles (*)
+        engagement_signal,
+        articles (
+          id, feed_id, guid, title, url, author, excerpt, content, image_url,
+          published_at, fetched_at, ai_summary, ai_summary_generated_at, cluster_id,
+          embedding_status, embedding_generated_at, embedding_error, content_hash, created_at
+        )
       `)
       .eq('user_id', userId)
       .eq('is_starred', true)
@@ -1197,10 +1214,15 @@ export class SupabaseStorage implements IStorage {
       throw new Error(`Failed to get starred articles: ${error.message}`);
     }
     
-    // Extract articles from the joined data
-    const articles: Article[] = (data || [])
-      .map((item: any) => item.articles)
-      .filter((article: any) => article !== null) as Article[];
+    // Extract articles from the joined data and include user state
+    const articles = (data || [])
+      .map((item: any) => ({
+        ...item.articles,
+        is_read: item.is_read || false,
+        is_starred: item.is_starred || true, // These are starred articles
+        engagement_signal: item.engagement_signal || null
+      }))
+      .filter((article: any) => article !== null && article.id);
     
     return articles;
   }
@@ -1220,10 +1242,17 @@ export class SupabaseStorage implements IStorage {
 
   // Get Articles with Engagement (Requirements: 8.5, 8.6)
   async getArticlesWithEngagement(userId: string, feedId?: string): Promise<Array<Article & { engagement?: string }>> {
+    // Select all columns EXCEPT embedding to reduce response size
+    const articleColumnsWithoutEmbedding = `
+      id, feed_id, guid, title, url, author, excerpt, content, image_url,
+      published_at, fetched_at, ai_summary, ai_summary_generated_at, cluster_id,
+      embedding_status, embedding_generated_at, embedding_error, content_hash, created_at
+    `;
+    
     // Build the query for articles
     let articlesQuery = this.supabase
       .from('articles')
-      .select('*')
+      .select(articleColumnsWithoutEmbedding)
       .order('published_at', { ascending: false });
     
     if (feedId) {
@@ -1405,9 +1434,17 @@ export class SupabaseStorage implements IStorage {
   // ============================================================================
 
   async getArticleById(id: string): Promise<Article | undefined> {
+    // Select all columns EXCEPT embedding to reduce response size
+    // Embedding vectors are 1536-dimensional floats (~6KB each) and not needed for article display
+    const articleColumnsWithoutEmbedding = `
+      id, feed_id, guid, title, url, author, excerpt, content, image_url,
+      published_at, fetched_at, ai_summary, ai_summary_generated_at, cluster_id,
+      embedding_status, embedding_generated_at, embedding_error, content_hash, created_at
+    `;
+    
     const { data, error } = await this.supabase
       .from('articles')
-      .select('*')
+      .select(articleColumnsWithoutEmbedding)
       .eq('id', id)
       .single();
     
@@ -1597,28 +1634,60 @@ export class SupabaseStorage implements IStorage {
     includeExpired?: boolean;
     limit?: number;
   }): Promise<Cluster[]> {
-    let query = this.supabase
-      .from('clusters')
-      .select('*')
-      .order('relevance_score', { ascending: false, nullsFirst: false });
-    
-    // Filter expired clusters unless includeExpired is true
-    if (!options?.includeExpired) {
-      query = query.or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`);
+    try {
+      console.log(`📊 getClusters called with options:`, JSON.stringify(options));
+      console.log(`📊 Supabase client available: ${!!this.supabase}`);
+      
+      // Try ordering by relevance_score first (may not exist in older schemas)
+      let query = this.supabase
+        .from('clusters')
+        .select('*');
+      
+      // Filter expired clusters unless includeExpired is true
+      if (!options?.includeExpired) {
+        const now = new Date().toISOString();
+        console.log(`📊 Filtering clusters with expires_at > ${now}`);
+        query = query.or(`expires_at.is.null,expires_at.gt.${now}`);
+      }
+      
+      // Apply limit
+      if (options?.limit) {
+        query = query.limit(options.limit);
+      }
+      
+      // Try to order by relevance_score, fall back to created_at if column doesn't exist
+      query = query.order('created_at', { ascending: false });
+      
+      console.log(`📊 Executing getClusters query...`);
+      const { data, error } = await query;
+      
+      if (error) {
+        console.error('📊 getClusters error:', error.message, 'code:', error.code);
+        // If the error is about missing column, return empty array
+        if (error.message.includes('column') || error.message.includes('does not exist')) {
+          console.warn('⚠️ Clusters table may be missing columns - returning empty array');
+          return [];
+        }
+        throw new Error(`Failed to get clusters: ${error.message}`);
+      }
+      
+      console.log(`📊 getClusters found ${data?.length || 0} clusters`);
+      if (data && data.length > 0) {
+        console.log(`📊 First cluster: ${data[0].title}`);
+      }
+      
+      // Sort by relevance_score in memory if the column exists
+      const clusters = (data || []) as Cluster[];
+      return clusters.sort((a, b) => {
+        const scoreA = parseFloat(a.relevance_score || '0');
+        const scoreB = parseFloat(b.relevance_score || '0');
+        return scoreB - scoreA;
+      });
+    } catch (error) {
+      console.error('📊 getClusters exception:', error instanceof Error ? error.message : error);
+      console.error('📊 getClusters stack:', error instanceof Error ? error.stack : 'no stack');
+      return [];
     }
-    
-    // Apply limit
-    if (options?.limit) {
-      query = query.limit(options.limit);
-    }
-    
-    const { data, error } = await query;
-    
-    if (error) {
-      throw new Error(`Failed to get clusters: ${error.message}`);
-    }
-    
-    return (data || []) as Cluster[];
   }
 
   async assignArticlesToCluster(articleIds: string[], clusterId: string): Promise<void> {

@@ -117,7 +117,15 @@ export async function clusterArticles(
 ): Promise<ArticleCluster[]> {
   const client = getAnthropicClient();
   
-  if (!client || articles.length < 3) {
+  console.log(`🔍 clusterArticles called with ${articles.length} articles, client available: ${!!client}`);
+  
+  if (!client) {
+    console.log('⚠️ Anthropic client not available for clustering');
+    return [];
+  }
+  
+  if (articles.length < 3) {
+    console.log(`⚠️ Not enough articles for clustering (need 3+, have ${articles.length})`);
     return [];
   }
 
@@ -144,6 +152,7 @@ TOPIC: [topic name] | SUMMARY: [one sentence] | ARTICLES: [comma-separated indic
 Only output the clusters, nothing else.`;
 
   try {
+    console.log('🤖 Calling Anthropic API for clustering...');
     const response = await client.messages.create({
       model: 'claude-3-haiku-20240307',
       max_tokens: 800,
@@ -156,10 +165,13 @@ Only output the clusters, nothing else.`;
     });
 
     const responseText = response.content[0].type === 'text' ? response.content[0].text : '';
+    console.log(`🤖 Anthropic response received, length: ${responseText.length}`);
     
     // Parse clusters
     const clusters: ArticleCluster[] = [];
     const lines = responseText.split('\n').filter(l => l.includes('TOPIC:'));
+    
+    console.log(`🔍 Found ${lines.length} potential cluster lines`);
     
     for (const line of lines) {
       const topicMatch = line.match(/TOPIC:\s*([^|]+)/);
@@ -195,14 +207,18 @@ Only output the clusters, nothing else.`;
             latestTimestamp: latestDate,
             relevanceScore: clusterArticles.length * uniqueSources.length // Simple relevance score
           });
+          
+          console.log(`✅ Created cluster: "${topic}" with ${clusterArticles.length} articles from ${uniqueSources.length} sources`);
         }
       }
     }
     
+    console.log(`📊 Total clusters created: ${clusters.length}`);
+    
     // Sort by relevance score
     return clusters.sort((a, b) => b.relevanceScore - a.relevanceScore).slice(0, 5);
   } catch (error) {
-    console.error('Clustering error:', error);
+    console.error('❌ Clustering error:', error);
     return [];
   }
 }

@@ -23,6 +23,11 @@ async function getServerlessHandler() {
     
     await setupApp(app);
     
+    // Note: AI background scheduler is NOT started in serverless environment
+    // because serverless functions don't persist between requests.
+    // Clustering will use on-demand text-based fallback instead.
+    console.log('ℹ️ AI background scheduler disabled in serverless mode - using on-demand clustering');
+    
     // Create serverless handler
     serverlessHandler = serverless(app, {
       // Strip the /.netlify/functions/api prefix

@@ -6,12 +6,12 @@ import { ArticleCard } from "@/components/feed/ArticleCard";
 import { TrendingTopicCard, type TrendingCluster } from "@/components/feed/TrendingTopicCard";
 import { TrendingClusterSheet } from "@/components/trending/TrendingClusterSheet";
 import { ArticleSheet } from "@/components/article/ArticleSheet";
-import { RefreshCw, AlertCircle } from "lucide-react";
+import { RefreshCw, AlertCircle, Star } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, apiFetch } from "@/lib/queryClient";
 import { type Article } from "@shared/schema";
 
 // Extended article type with feed information and UI state
@@ -167,9 +167,10 @@ export default function Home() {
       setError(null);
       
       // Fetch articles and clusters in parallel
+      // Use apiFetch for clusters to handle auth errors gracefully
       const [articlesResponse, clustersResponse] = await Promise.all([
         apiRequest('GET', '/api/articles'),
-        apiRequest('GET', '/api/clusters').catch(() => null) // Don't fail if clusters unavailable
+        apiFetch('GET', '/api/clusters') // Use apiFetch to not throw on 401
       ]);
       
       const data = await articlesResponse.json();
@@ -213,22 +214,43 @@ export default function Home() {
       // Process clusters if available - use real data only, no mock fallback
       if (clustersResponse) {
         try {
-          const clustersData = await clustersResponse.json();
-          if (clustersData.clusters && clustersData.clusters.length > 0) {
-            setClusters(clustersData.clusters);
-            console.log(`✅ Loaded ${clustersData.clusters.length} trending clusters from API`);
-          } else {
-            // No clusters available - this is fine, just don't show trending cards
-            console.log('ℹ️ No trending clusters available from API');
+          // Check if response is OK before parsing
+          if (!clustersResponse.ok) {
+            console.log('⚠️ Clusters API returned non-OK status:', clustersResponse.status);
+            const errorText = await clustersResponse.text();
+            console.log('⚠️ Clusters API error response:', errorText);
+            if (clustersResponse.status === 401) {
+              console.log('ℹ️ Clusters require authentication - user may need to re-login');
+            }
             setClusters([]);
+          } else {
+            const clustersData = await clustersResponse.json();
+            console.log('📊 Clusters API response:', {
+              status: clustersResponse.status,
+              hasClusters: !!clustersData.clusters,
+              clusterCount: clustersData.clusters?.length || 0,
+              method: clustersData.method,
+              cached: clustersData.cached,
+              message: clustersData.message,
+              error: clustersData.error
+            });
+            
+            if (clustersData.clusters && clustersData.clusters.length > 0) {
+              setClusters(clustersData.clusters);
+              console.log(`✅ Loaded ${clustersData.clusters.length} trending clusters from API`);
+            } else {
+              // No clusters available - this is fine, just don't show trending cards
+              console.log('ℹ️ No trending clusters available from API:', clustersData.message || 'No message');
+              setClusters([]);
+            }
           }
         } catch (e) {
-          console.log('ℹ️ Clusters not available:', e);
+          console.error('❌ Clusters parsing error:', e);
           setClusters([]);
         }
       } else {
-        // No clusters response at all
-        console.log('ℹ️ Clusters API not available');
+        // No clusters response at all (API call failed)
+        console.log('⚠️ Clusters API call failed or returned null');
         setClusters([]);
       }
     } catch (error) {
@@ -248,10 +270,30 @@ export default function Home() {
   const fetchStarredArticles = async () => {
     try {
       setIsLoadingStarred(true);
-      const response = await apiRequest('GET', '/api/articles/starred');
+      setStarredArticles([]); // Clear previous starred articles
+      console.log('⭐ Fetching starred articles...');
+      
+      // Use apiFetch instead of apiRequest to handle errors gracefully
+      const response = await apiFetch('GET', '/api/articles/starred');
+      
+      console.log('⭐ Starred articles response status:', response.status);
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('⭐ Starred articles API error:', response.status, errorText);
+        return;
+      }
+      
       const data = await response.json();
       
-      if (data.articles) {
+      console.log('⭐ Starred articles API response:', {
+        hasArticles: !!data.articles,
+        count: data.articles?.length || 0,
+        total: data.total,
+        firstArticle: data.articles?.[0]?.title?.substring(0, 50)
+      });
+      
+      if (data.articles && data.articles.length > 0) {
         const starredWithState: ArticleWithFeed[] = data.articles.map((article: any) => ({
           ...article,
           id: article.id,
@@ -277,9 +319,14 @@ export default function Home() {
           feed_category: article.feed_category || 'General' // Category for filtering
         }));
         setStarredArticles(starredWithState);
+        console.log('⭐ Set starred articles state:', starredWithState.length, 'articles');
+      } else {
+        console.log('⭐ No starred articles in response');
+        setStarredArticles([]);
       }
     } catch (error) {
       console.error('Failed to fetch starred articles:', error);
+      setStarredArticles([]);
     } finally {
       setIsLoadingStarred(false);
     }
@@ -332,29 +379,68 @@ export default function Home() {
     setArticles(prev => prev.filter(article => article.id !== id));
   };
 
-  const handleToggleStar = (id: string) => {
+  // Called after ArticleCard successfully updates star state via API
+  const handleStarChange = (id: string, isStarred: boolean) => {
+    // Update main articles list with the actual new state (not toggling)
     setArticles(prev => prev.map(article => {
       if (article.id === id) {
-        return { ...article, isStarred: !article.isStarred };
+        return { ...article, isStarred };
+      }
+      return article;
+    }));
+    // Also update starred articles list if we're viewing it
+    if (activeFilter === "saved") {
+      // Refetch starred articles to get accurate list
+      fetchStarredArticles();
+    }
+  };
+
+  // Called after ArticleCard successfully updates engagement signal via API
+  const handleEngagementChange = (id: string, signal: 'positive' | 'negative' | null) => {
+    setArticles(prev => prev.map(article => {
+      if (article.id === id) {
+        return { ...article, engagementSignal: signal };
+      }
+      return article;
+    }));
+    // Also update starred articles if viewing that filter
+    setStarredArticles(prev => prev.map(article => {
+      if (article.id === id) {
+        return { ...article, engagementSignal: signal };
       }
       return article;
     }));
   };
 
-  const handleArticleClick = (article: ArticleWithFeed) => {
+  const handleArticleClick = async (article: ArticleWithFeed) => {
     setSelectedArticle(article);
-    // Mark as read
+    
+    // Mark as read locally first for immediate UI feedback
     setArticles(prev => prev.map(item => {
       if (item.id === article.id) {
         return { ...item, isRead: true };
       }
       return item;
     }));
+    
+    // Persist read state to database
+    try {
+      await apiRequest('PUT', `/api/articles/${article.id}/read`, { isRead: true });
+    } catch (error) {
+      console.error('Failed to mark article as read:', error);
+      // Don't revert UI state - the article was opened, so it's effectively "read"
+    }
   };
 
   // Create feed
   // Use starred articles from API when filter is "saved" - Requirements: 7.3
   const articlesToUse = activeFilter === "saved" ? starredArticles : articles;
+  console.log('📋 Creating feed:', {
+    activeFilter,
+    articlesToUseCount: articlesToUse.length,
+    isUsingStarred: activeFilter === "saved",
+    starredArticlesCount: starredArticles.length
+  });
   const mixedFeed = createMixedFeed(articlesToUse, clusters);
 
   // Base filtering (Source + Category + Status)
@@ -398,6 +484,9 @@ export default function Home() {
     // Trending items always pass through
     if (item.type === 'trending') return true;
     
+    // Starred articles bypass date filtering - show all starred regardless of date
+    if (activeFilter === "saved") return true;
+    
     const article = item.data as ArticleWithFeed;
     if (!article.date) return true; // Show articles without dates
     
@@ -405,6 +494,30 @@ export default function Home() {
     const cutoffDate = subDays(CURRENT_DATE, historyDepth);
     return isAfter(articleDate, cutoffDate);
   });
+
+  // Debug logging for starred articles
+  if (activeFilter === "saved") {
+    console.log('⭐ Starred filter debug:', {
+      starredArticlesCount: starredArticles.length,
+      articlesToUseCount: articlesToUse.length,
+      mixedFeedCount: mixedFeed.length,
+      baseFilteredFeedCount: baseFilteredFeed.length,
+      visibleFeedCount: visibleFeed.length,
+      historyDepth,
+      currentDate: CURRENT_DATE.toISOString(),
+      cutoffDate: subDays(CURRENT_DATE, historyDepth).toISOString()
+    });
+    
+    // Log first article date if available
+    if (starredArticles.length > 0) {
+      const firstArticle = starredArticles[0];
+      console.log('⭐ First starred article:', {
+        title: firstArticle.title?.substring(0, 50),
+        date: firstArticle.date,
+        published_at: firstArticle.published_at
+      });
+    }
+  }
 
   // Calculate next chunk stats
   const nextChunkStartDate = subDays(CURRENT_DATE, historyDepth + CHUNK_SIZE_DAYS);
@@ -569,7 +682,24 @@ export default function Home() {
         </div>
 
         {/* Masonry Feed */}
-        <MasonryGrid>
+        {visibleFeed.length === 0 && activeFilter === "saved" ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <Star className="h-12 w-12 text-muted-foreground/50 mb-4" />
+            <h3 className="text-lg font-medium mb-2">No starred articles yet</h3>
+            <p className="text-muted-foreground max-w-md">
+              Star articles you want to save for later by clicking the star icon on any article card.
+            </p>
+          </div>
+        ) : visibleFeed.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <AlertCircle className="h-12 w-12 text-muted-foreground/50 mb-4" />
+            <h3 className="text-lg font-medium mb-2">No articles found</h3>
+            <p className="text-muted-foreground max-w-md">
+              Try adjusting your filters or check back later for new content.
+            </p>
+          </div>
+        ) : (
+          <MasonryGrid>
           {visibleFeed.map((item, index) => {
             if (item.type === 'trending') {
               const cluster = item.data as TrendingCluster;
@@ -595,11 +725,13 @@ export default function Home() {
                 article={article as any} // Type assertion for compatibility
                 onClick={(a) => handleArticleClick(a as ArticleWithFeed)}
                 onRemove={handleRemoveArticle}
-                onStar={handleToggleStar}
+                onStar={handleStarChange}
+                onEngagementChange={handleEngagementChange}
               />
             );
           })}
         </MasonryGrid>
+        )}
 
         {/* Load More Button */}
         <div className="flex flex-col items-center justify-center py-8 gap-3">

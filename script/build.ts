@@ -170,6 +170,69 @@ async function buildAll() {
     console.log("⚠️ Test-clustering function not found, skipping");
   }
 
+  // Build the test-embedding diagnostic function
+  console.log("⚡ Building test-embedding (Netlify Diagnostic Function)...");
+  if (existsSync("netlify/functions/test-embedding.ts")) {
+    await esbuild({
+      entryPoints: ["netlify/functions/test-embedding.ts"],
+      platform: "node",
+      bundle: true,
+      format: "cjs",
+      outfile: "dist/functions/test-embedding.js",
+      define: {
+        "process.env.NODE_ENV": '"production"',
+      },
+      minify: true,
+      external: externals,
+      logLevel: "info",
+    });
+    console.log("✅ Test-embedding function built");
+  } else {
+    console.log("⚠️ Test-embedding function not found, skipping");
+  }
+
+  // Build the test-minimal diagnostic function
+  console.log("⚡ Building test-minimal (Netlify Diagnostic Function)...");
+  if (existsSync("netlify/functions/test-minimal.ts")) {
+    await esbuild({
+      entryPoints: ["netlify/functions/test-minimal.ts"],
+      platform: "node",
+      bundle: true,
+      format: "cjs",
+      outfile: "dist/functions/test-minimal.js",
+      define: {
+        "process.env.NODE_ENV": '"production"',
+      },
+      minify: true,
+      external: externals,
+      logLevel: "info",
+    });
+    console.log("✅ Test-minimal function built");
+  } else {
+    console.log("⚠️ Test-minimal function not found, skipping");
+  }
+
+  // Build the test-generate-clusters diagnostic function
+  console.log("⚡ Building test-generate-clusters (Netlify Diagnostic Function)...");
+  if (existsSync("netlify/functions/test-generate-clusters.ts")) {
+    await esbuild({
+      entryPoints: ["netlify/functions/test-generate-clusters.ts"],
+      platform: "node",
+      bundle: true,
+      format: "cjs",
+      outfile: "dist/functions/test-generate-clusters.js",
+      define: {
+        "process.env.NODE_ENV": '"production"',
+      },
+      minify: true,
+      external: externals,
+      logLevel: "info",
+    });
+    console.log("✅ Test-generate-clusters function built");
+  } else {
+    console.log("⚠️ Test-generate-clusters function not found, skipping");
+  }
+
   // Copy necessary files for production
   console.log("📋 Copying production files...");
   

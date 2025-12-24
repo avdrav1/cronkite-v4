@@ -109,6 +109,41 @@ export async function registerRoutes(
       });
     }
   });
+
+  // Test endpoint for clusters (no auth required for debugging)
+  app.get('/api/test-clusters', async (req: Request, res: Response) => {
+    try {
+      const storage = await getStorage();
+      console.log('📊 Test clusters endpoint called');
+      
+      const clusters = await storage.getClusters({
+        userId: undefined,
+        includeExpired: false,
+        limit: 10
+      });
+      
+      console.log(`📊 Test clusters returned ${clusters.length} clusters`);
+      
+      res.json({
+        success: true,
+        clusterCount: clusters.length,
+        clusters: clusters.map(c => ({
+          id: c.id,
+          title: c.title,
+          articleCount: c.article_count,
+          expiresAt: c.expires_at
+        })),
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('📊 Test clusters error:', error);
+      res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined
+      });
+    }
+  });
   
   // Authentication Routes
   
@@ -1867,6 +1902,52 @@ export async function registerRoutes(
     }
   });
 
+  // GET /api/articles/starred - Get all starred articles
+  // Requirements: 7.3
+  // NOTE: This route MUST be defined BEFORE /api/articles/:id to prevent "starred" being treated as an ID
+  app.get('/api/articles/starred', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : undefined;
+      
+      const storage = await getStorage();
+      const starredArticles = await storage.getStarredArticles(userId, limit, offset);
+      
+      // Get user's feeds to add feed information to articles
+      const userFeeds = await storage.getUserFeeds(userId);
+      const feedMap = new Map(userFeeds.map(feed => [feed.id, feed]));
+      
+      // Add feed information to each article
+      const articlesWithFeedInfo = starredArticles.map(article => {
+        const feed = feedMap.get(article.feed_id);
+        return {
+          ...article,
+          feed_name: feed?.name || 'Unknown Source',
+          feed_url: feed?.site_url || feed?.url,
+          feed_icon: feed?.icon_url,
+          feed_category: feed?.folder_name || 'General'
+        };
+      });
+      
+      res.json({
+        articles: articlesWithFeedInfo,
+        total: articlesWithFeedInfo.length
+      });
+      
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Get starred articles error:', {
+        message: errorMessage,
+        userId: req.user?.id
+      });
+      res.status(500).json({
+        error: 'STARRED_ARTICLES_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
   // GET /api/articles/:id - Get a single article by ID
   app.get('/api/articles/:id', requireAuth, async (req: Request, res: Response) => {
     try {
@@ -2200,8 +2281,9 @@ export async function registerRoutes(
     }
   });
 
-  // GET /api/clusters - Get trending topic clusters from user's articles
+  // GET /api/clusters - Get trending topic clusters
   // Requirements: 2.5, 2.7, 9.5 - Vector-based clustering with relevance scores and graceful degradation
+  // Note: Clusters are global (not user-specific), but we still require auth for access control
   app.get('/api/clusters', requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = req.user!.id;
@@ -2211,24 +2293,57 @@ export async function registerRoutes(
       console.log(`📊 Fetching clusters for user ${userId}, limit: ${limit}, forceRefresh: ${forceRefresh}`);
       
       const storage = await getStorage();
-      const userFeeds = await storage.getUserFeeds(userId);
-      
-      console.log(`📊 User has ${userFeeds.length} feeds`);
-      
-      if (userFeeds.length === 0) {
-        return res.json({ clusters: [], message: 'No feeds to cluster' });
-      }
+      console.log(`📊 Storage type: ${storage.constructor.name}`);
       
       // Try to get cached clusters first (unless force refresh)
+      // Clusters are global, not user-specific
       if (!forceRefresh) {
         try {
+          console.log(`📊 Attempting to get cached clusters...`);
+          
+          // First, try direct storage.getClusters call to debug
+          console.log(`📊 Testing direct storage.getClusters...`);
+          const directClusters = await storage.getClusters({
+            userId: undefined,
+            includeExpired: false,
+            limit
+          });
+          console.log(`📊 Direct storage.getClusters returned ${directClusters.length} clusters`);
+          
+          if (directClusters.length > 0) {
+            console.log(`📊 First cluster: ${directClusters[0].title}`);
+            // Return clusters directly from storage
+            const response = {
+              clusters: directClusters.map(cluster => ({
+                id: cluster.id,
+                topic: cluster.title,
+                summary: cluster.summary || '',
+                articleCount: cluster.article_count,
+                sources: cluster.source_feeds || [],
+                avgSimilarity: parseFloat(cluster.avg_similarity || '0'),
+                relevanceScore: parseFloat(cluster.relevance_score || '0'),
+                latestTimestamp: cluster.timeframe_end?.toISOString() || new Date().toISOString(),
+                expiresAt: cluster.expires_at?.toISOString() || new Date().toISOString()
+              })),
+              articlesAnalyzed: directClusters.reduce((sum, c) => sum + c.article_count, 0),
+              generatedAt: new Date().toISOString(),
+              method: 'vector',
+              cached: true
+            };
+            console.log(`📊 Returning ${response.clusters.length} clusters from direct storage call`);
+            return res.json(response);
+          }
+          
+          console.log(`📊 No clusters from direct call, trying ClusteringServiceManager...`);
           const { createClusteringServiceManager } = await import('./clustering-service');
-          const clusteringService = createClusteringServiceManager(storage);
-          const cachedClusters = await clusteringService.getUserClusters(userId, limit);
+          const clusteringService = createClusteringServiceManager(storage as any);
+          const cachedClusters = await clusteringService.getUserClusters(undefined, limit); // Pass undefined for global clusters
+          
+          console.log(`📊 Got ${cachedClusters.length} cached clusters from service`);
           
           if (cachedClusters.length > 0) {
             console.log(`📊 Returning ${cachedClusters.length} cached clusters`);
-            return res.json({
+            const response = {
               clusters: cachedClusters.map(cluster => ({
                 id: cluster.id,
                 topic: cluster.topic,
@@ -2244,11 +2359,24 @@ export async function registerRoutes(
               generatedAt: new Date().toISOString(),
               method: 'vector',
               cached: true
-            });
+            };
+            console.log(`📊 Response cluster count: ${response.clusters.length}`);
+            return res.json(response);
+          } else {
+            console.log(`📊 No cached clusters found`);
           }
         } catch (cacheError) {
-          console.warn('Failed to get cached clusters:', cacheError);
+          console.warn('📊 Failed to get cached clusters:', cacheError);
         }
+      }
+      
+      // No cached clusters - check if user has feeds for on-demand generation
+      const userFeeds = await storage.getUserFeeds(userId);
+      console.log(`📊 User has ${userFeeds.length} feeds`);
+      
+      if (userFeeds.length === 0) {
+        console.log(`📊 No feeds for user, returning empty clusters (no on-demand generation possible)`);
+        return res.json({ clusters: [], message: 'No feeds subscribed - subscribe to feeds to see trending topics' });
       }
       
       // No cached clusters - generate on-demand using text-based method
@@ -2553,19 +2681,32 @@ export async function registerRoutes(
       const storage = await getStorage();
       const userArticle = await storage.markArticleRead(userId, articleId, isRead);
       
+      // Handle read_at which could be Date, string, or null
+      let readAtStr: string | null = null;
+      if (userArticle.read_at) {
+        readAtStr = userArticle.read_at instanceof Date 
+          ? userArticle.read_at.toISOString() 
+          : String(userArticle.read_at);
+      }
+      
       res.json({
         success: true,
         articleId,
         isRead: userArticle.is_read,
-        readAt: userArticle.read_at ? userArticle.read_at.toISOString() : null
+        readAt: readAtStr
       });
       
     } catch (error) {
-      console.error('Mark article read error:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Mark article read error:', {
+        message: errorMessage,
+        userId: req.user?.id,
+        articleId: req.params.articleId
+      });
       res.status(500).json({
         success: false,
         error: 'READ_STATE_ERROR',
-        message: 'An error occurred while updating read state'
+        message: errorMessage
       });
     }
   });
@@ -2597,60 +2738,34 @@ export async function registerRoutes(
       const storage = await getStorage();
       const userArticle = await storage.markArticleStarred(userId, articleId, isStarred);
       
+      // Handle starred_at which could be Date, string, or null
+      let starredAtStr: string | null = null;
+      if (userArticle.starred_at) {
+        starredAtStr = userArticle.starred_at instanceof Date 
+          ? userArticle.starred_at.toISOString() 
+          : String(userArticle.starred_at);
+      }
+      
       res.json({
         success: true,
         articleId,
         isStarred: userArticle.is_starred,
-        starredAt: userArticle.starred_at ? userArticle.starred_at.toISOString() : null
+        starredAt: starredAtStr
       });
       
     } catch (error) {
-      console.error('Mark article starred error:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      console.error('Mark article starred error:', {
+        message: errorMessage,
+        stack: errorStack,
+        userId: req.user?.id,
+        articleId: req.params.articleId
+      });
       res.status(500).json({
         success: false,
         error: 'STARRED_STATE_ERROR',
-        message: 'An error occurred while updating starred state'
-      });
-    }
-  });
-
-  // GET /api/articles/starred - Get all starred articles
-  // Requirements: 7.3
-  app.get('/api/articles/starred', requireAuth, async (req: Request, res: Response) => {
-    try {
-      const userId = req.user!.id;
-      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
-      const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : undefined;
-      
-      const storage = await getStorage();
-      const starredArticles = await storage.getStarredArticles(userId, limit, offset);
-      
-      // Get user's feeds to add feed information to articles
-      const userFeeds = await storage.getUserFeeds(userId);
-      const feedMap = new Map(userFeeds.map(feed => [feed.id, feed]));
-      
-      // Add feed information to each article
-      const articlesWithFeedInfo = starredArticles.map(article => {
-        const feed = feedMap.get(article.feed_id);
-        return {
-          ...article,
-          feed_name: feed?.name || 'Unknown Source',
-          feed_url: feed?.site_url || feed?.url,
-          feed_icon: feed?.icon_url,
-          feed_category: feed?.folder_name || 'General'
-        };
-      });
-      
-      res.json({
-        articles: articlesWithFeedInfo,
-        total: articlesWithFeedInfo.length
-      });
-      
-    } catch (error) {
-      console.error('Get starred articles error:', error);
-      res.status(500).json({
-        error: 'STARRED_ARTICLES_ERROR',
-        message: 'An error occurred while retrieving starred articles'
+        message: errorMessage // Return actual error for debugging
       });
     }
   });
@@ -2683,19 +2798,32 @@ export async function registerRoutes(
       const storage = await getStorage();
       const userArticle = await storage.setEngagementSignal(userId, articleId, signal);
       
+      // Handle engagement_signal_at which could be Date, string, or null
+      let signalAtStr: string | null = null;
+      if (userArticle.engagement_signal_at) {
+        signalAtStr = userArticle.engagement_signal_at instanceof Date 
+          ? userArticle.engagement_signal_at.toISOString() 
+          : String(userArticle.engagement_signal_at);
+      }
+      
       res.json({
         success: true,
         articleId,
         signal: userArticle.engagement_signal,
-        signalAt: userArticle.engagement_signal_at ? userArticle.engagement_signal_at.toISOString() : null
+        signalAt: signalAtStr
       });
       
     } catch (error) {
-      console.error('Set engagement signal error:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Set engagement signal error:', {
+        message: errorMessage,
+        userId: req.user?.id,
+        articleId: req.params.articleId
+      });
       res.status(500).json({
         success: false,
         error: 'ENGAGEMENT_SIGNAL_ERROR',
-        message: 'An error occurred while updating engagement signal'
+        message: errorMessage
       });
     }
   });
