@@ -1754,6 +1754,20 @@ export class SupabaseStorage implements IStorage {
     return expiredIds.length;
   }
 
+  async getArticleIdsByClusterId(clusterId: string): Promise<string[]> {
+    const { data, error } = await this.supabase
+      .from('articles')
+      .select('id')
+      .eq('cluster_id', clusterId);
+    
+    if (error) {
+      console.error(`Failed to get article IDs for cluster ${clusterId}:`, error.message);
+      return [];
+    }
+    
+    return (data || []).map(a => a.id);
+  }
+
   // ============================================================================
   // Feed Scheduler Management (Requirements: 3.1, 3.2, 3.3, 6.2, 6.6)
   // ============================================================================

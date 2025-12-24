@@ -2312,19 +2312,28 @@ export async function registerRoutes(
           
           if (directClusters.length > 0) {
             console.log(`📊 First cluster: ${directClusters[0].title}`);
-            // Return clusters directly from storage
+            
+            // Fetch article IDs for each cluster
+            const clustersWithArticleIds = await Promise.all(
+              directClusters.map(async (cluster) => {
+                const articleIds = await storage.getArticleIdsByClusterId(cluster.id);
+                return {
+                  id: cluster.id,
+                  topic: cluster.title,
+                  summary: cluster.summary || '',
+                  articleIds,
+                  articleCount: cluster.article_count,
+                  sources: cluster.source_feeds || [],
+                  avgSimilarity: parseFloat(cluster.avg_similarity || '0'),
+                  relevanceScore: parseFloat(cluster.relevance_score || '0'),
+                  latestTimestamp: cluster.timeframe_end?.toISOString() || new Date().toISOString(),
+                  expiresAt: cluster.expires_at?.toISOString() || new Date().toISOString()
+                };
+              })
+            );
+            
             const response = {
-              clusters: directClusters.map(cluster => ({
-                id: cluster.id,
-                topic: cluster.title,
-                summary: cluster.summary || '',
-                articleCount: cluster.article_count,
-                sources: cluster.source_feeds || [],
-                avgSimilarity: parseFloat(cluster.avg_similarity || '0'),
-                relevanceScore: parseFloat(cluster.relevance_score || '0'),
-                latestTimestamp: cluster.timeframe_end?.toISOString() || new Date().toISOString(),
-                expiresAt: cluster.expires_at?.toISOString() || new Date().toISOString()
-              })),
+              clusters: clustersWithArticleIds,
               articlesAnalyzed: directClusters.reduce((sum, c) => sum + c.article_count, 0),
               generatedAt: new Date().toISOString(),
               method: 'vector',
@@ -2343,18 +2352,28 @@ export async function registerRoutes(
           
           if (cachedClusters.length > 0) {
             console.log(`📊 Returning ${cachedClusters.length} cached clusters`);
+            
+            // Fetch article IDs for each cluster
+            const clustersWithArticleIds = await Promise.all(
+              cachedClusters.map(async (cluster) => {
+                const articleIds = await storage.getArticleIdsByClusterId(cluster.id);
+                return {
+                  id: cluster.id,
+                  topic: cluster.topic,
+                  summary: cluster.summary,
+                  articleIds,
+                  articleCount: cluster.articleCount,
+                  sources: cluster.sources,
+                  avgSimilarity: cluster.avgSimilarity,
+                  relevanceScore: cluster.relevanceScore,
+                  latestTimestamp: cluster.latestTimestamp.toISOString(),
+                  expiresAt: cluster.expiresAt.toISOString()
+                };
+              })
+            );
+            
             const response = {
-              clusters: cachedClusters.map(cluster => ({
-                id: cluster.id,
-                topic: cluster.topic,
-                summary: cluster.summary,
-                articleCount: cluster.articleCount,
-                sources: cluster.sources,
-                avgSimilarity: cluster.avgSimilarity,
-                relevanceScore: cluster.relevanceScore,
-                latestTimestamp: cluster.latestTimestamp.toISOString(),
-                expiresAt: cluster.expiresAt.toISOString()
-              })),
+              clusters: clustersWithArticleIds,
               articlesAnalyzed: cachedClusters.reduce((sum, c) => sum + c.articleCount, 0),
               generatedAt: new Date().toISOString(),
               method: 'vector',

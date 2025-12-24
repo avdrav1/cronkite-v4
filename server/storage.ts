@@ -201,6 +201,7 @@ export interface IStorage {
   assignArticlesToCluster(articleIds: string[], clusterId: string): Promise<void>;
   removeArticlesFromCluster(clusterId: string): Promise<void>;
   deleteExpiredClusters(): Promise<number>;
+  getArticleIdsByClusterId(clusterId: string): Promise<string[]>;
   
   // Feed Scheduler Management (Requirements: 3.1, 3.2, 3.3, 6.2, 6.6)
   getFeedById(feedId: string): Promise<Feed | undefined>;
@@ -2216,6 +2217,16 @@ export class MemStorage implements IStorage {
     }
     
     return deletedCount;
+  }
+
+  async getArticleIdsByClusterId(clusterId: string): Promise<string[]> {
+    const articleIds: string[] = [];
+    this.articles.forEach((article, id) => {
+      if (article.cluster_id === clusterId) {
+        articleIds.push(id);
+      }
+    });
+    return articleIds;
   }
 
   // ============================================================================
