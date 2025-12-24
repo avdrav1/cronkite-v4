@@ -1064,39 +1064,23 @@ export class SupabaseStorage implements IStorage {
   async updateUserArticleState(userId: string, articleId: string, updates: Partial<UserArticle>): Promise<UserArticle> {
     console.log('📖 updateUserArticleState called:', { userId, articleId, updates });
     
-    // Use upsert to handle both insert and update cases in a single operation
-    // This is more reliable than the two-step update-then-insert approach
-    const upsertData = {
-      user_id: userId,
-      article_id: articleId,
-      // Default values for required fields (will be overwritten by updates if present)
-      is_read: false,
-      is_starred: false,
-      // Apply the updates
-      ...updates,
-      updated_at: new Date().toISOString()
-    };
-    
-    console.log('📖 Upserting user_article:', upsertData);
-    
-    const { data, error } = await this.supabase
+    // First try to update existing record with all columns
+    const { data: updateData, error: updateError } = await this.supabase
       .from('user_articles')
-      .upsert(upsertData, { 
-        onConflict: 'user_id,article_id',
-        ignoreDuplicates: false 
-      })
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .eq('article_id', articleId)
       .select()
       .single();
     
-    console.log('📖 Upsert result:', { data, error: error?.message, errorCode: error?.code });
-    
-    if (!error && data) {
-      return data as UserArticle;
+    if (!updateError && updateData) {
+      console.log('📖 Update succeeded:', updateData);
+      return updateData as UserArticle;
     }
     
     // Check if error is due to missing columns
-    const errorMsg = error?.message?.toLowerCase() || '';
-    const isMissingColumn = error?.code === '42703' || 
+    const errorMsg = updateError?.message?.toLowerCase() || '';
+    const isMissingColumn = updateError?.code === '42703' || 
       errorMsg.includes('column') || 
       errorMsg.includes('schema cache') ||
       errorMsg.includes('engagement_signal');
@@ -1105,14 +1089,13 @@ export class SupabaseStorage implements IStorage {
       console.warn('⚠️ Some columns missing in user_articles, trying without engagement columns...');
       
       // Remove engagement columns and retry
-      const { engagement_signal, engagement_signal_at, ...minimalData } = upsertData as any;
+      const { engagement_signal, engagement_signal_at, ...minimalUpdates } = updates as any;
       
       const { data: retryData, error: retryError } = await this.supabase
         .from('user_articles')
-        .upsert(minimalData, { 
-          onConflict: 'user_id,article_id',
-          ignoreDuplicates: false 
-        })
+        .update({ ...minimalUpdates, updated_at: new Date().toISOString() })
+        .eq('user_id', userId)
+        .eq('article_id', articleId)
         .select()
         .single();
       
@@ -1124,10 +1107,29 @@ export class SupabaseStorage implements IStorage {
         } as UserArticle;
       }
       
+      // If update still fails, try creating new record without engagement columns
+      if (retryError?.code === 'PGRST116') {
+        return this.createUserArticleState({
+          user_id: userId,
+          article_id: articleId,
+          ...minimalUpdates
+        });
+      }
+      
       throw new Error(`Failed to update user article state: ${retryError?.message}`);
     }
     
-    throw new Error(`Failed to update user article state: ${error?.message}`);
+    // If no existing record (PGRST116 = no rows returned), create new one
+    if (updateError?.code === 'PGRST116') {
+      console.log('📖 No existing record, creating new one...');
+      return this.createUserArticleState({
+        user_id: userId,
+        article_id: articleId,
+        ...updates
+      });
+    }
+    
+    throw new Error(`Failed to update user article state: ${updateError?.message}`);
   }
 
   // Feed Count and Limit Management (Requirements: 5.1, 5.2)
