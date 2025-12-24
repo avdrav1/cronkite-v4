@@ -1,4 +1,19 @@
 // Netlify Function handler for production deployment
+
+// Polyfill for File API - required by @supabase/supabase-js in Node.js serverless environments
+// The Supabase client initializes storage features that expect browser APIs
+if (typeof globalThis.File === 'undefined') {
+  // @ts-ignore - Minimal File polyfill for Supabase compatibility
+  globalThis.File = class File {
+    name: string;
+    lastModified: number;
+    constructor(bits: any[], name: string, options?: { type?: string; lastModified?: number }) {
+      this.name = name;
+      this.lastModified = options?.lastModified || Date.now();
+    }
+  };
+}
+
 import serverless from 'serverless-http';
 import express from 'express';
 
