@@ -7,6 +7,7 @@ import {
   Menu,
   Plus,
   LogOut,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -94,6 +95,11 @@ export function AppShell({ children }: AppShellProps) {
 
           {/* User Actions - Absolute Right */}
           <div className="absolute top-6 right-4 md:right-8 flex items-center gap-2">
+            <Link href="/onboarding">
+              <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground">
+                <Sparkles className="h-5 w-5" />
+              </Button>
+            </Link>
             <Link href="/settings">
               <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground">
                 <Settings className="h-5 w-5" />
