@@ -1007,18 +1007,46 @@ export class SupabaseStorage implements IStorage {
   async createUserArticleState(userArticle: InsertUserArticle): Promise<UserArticle> {
     console.log('📖 createUserArticleState called:', userArticle);
     
-    // Use upsert to handle both insert and update cases
-    // This handles the case where a record already exists (duplicate key)
+    // First, try to get existing record
+    const { data: existing } = await this.supabase
+      .from('user_articles')
+      .select('*')
+      .eq('user_id', userArticle.user_id)
+      .eq('article_id', userArticle.article_id)
+      .single();
+    
+    if (existing) {
+      // Update existing record
+      console.log('📖 Found existing record, updating...');
+      const { data, error } = await this.supabase
+        .from('user_articles')
+        .update({ 
+          ...userArticle, 
+          updated_at: new Date().toISOString() 
+        })
+        .eq('user_id', userArticle.user_id)
+        .eq('article_id', userArticle.article_id)
+        .select()
+        .single();
+      
+      if (error) {
+        console.error('📖 Update error:', error.message, error.code);
+        throw new Error(`Failed to update user article state: ${error.message}`);
+      }
+      
+      console.log('📖 Update succeeded:', data);
+      return data as UserArticle;
+    }
+    
+    // Insert new record
+    console.log('📖 No existing record, inserting...');
     const { data, error } = await this.supabase
       .from('user_articles')
-      .upsert(userArticle, { 
-        onConflict: 'user_id,article_id',
-        ignoreDuplicates: false 
-      })
+      .insert(userArticle)
       .select()
       .single();
     
-    console.log('📖 Upsert result:', { data, error: error?.message, errorCode: error?.code });
+    console.log('📖 Insert result:', { data, error: error?.message, errorCode: error?.code });
     
     if (!error && data) {
       return data as UserArticle;
@@ -1039,10 +1067,7 @@ export class SupabaseStorage implements IStorage {
       
       const { data: retryData, error: retryError } = await this.supabase
         .from('user_articles')
-        .upsert(minimalUserArticle, { 
-          onConflict: 'user_id,article_id',
-          ignoreDuplicates: false 
-        })
+        .insert(minimalUserArticle)
         .select()
         .single();
       
@@ -1058,78 +1083,104 @@ export class SupabaseStorage implements IStorage {
       } as UserArticle;
     }
     
+    // Handle duplicate key error - record was created between our check and insert
+    if (error?.code === '23505') {
+      console.log('📖 Duplicate key - fetching existing record...');
+      const { data: existingData } = await this.supabase
+        .from('user_articles')
+        .select('*')
+        .eq('user_id', userArticle.user_id)
+        .eq('article_id', userArticle.article_id)
+        .single();
+      
+      if (existingData) {
+        // Update the existing record with our values
+        const { data: updateData, error: updateError } = await this.supabase
+          .from('user_articles')
+          .update({ ...userArticle, updated_at: new Date().toISOString() })
+          .eq('user_id', userArticle.user_id)
+          .eq('article_id', userArticle.article_id)
+          .select()
+          .single();
+        
+        if (!updateError && updateData) {
+          return updateData as UserArticle;
+        }
+      }
+    }
+    
     throw new Error(`Failed to create user article state: ${error?.message}`);
   }
 
   async updateUserArticleState(userId: string, articleId: string, updates: Partial<UserArticle>): Promise<UserArticle> {
     console.log('📖 updateUserArticleState called:', { userId, articleId, updates });
     
-    // First try to update existing record with all columns
-    const { data: updateData, error: updateError } = await this.supabase
+    // First check if record exists
+    const { data: existing, error: checkError } = await this.supabase
       .from('user_articles')
-      .update({ ...updates, updated_at: new Date().toISOString() })
+      .select('*')
       .eq('user_id', userId)
       .eq('article_id', articleId)
-      .select()
       .single();
     
-    if (!updateError && updateData) {
-      console.log('📖 Update succeeded:', updateData);
-      return updateData as UserArticle;
-    }
+    console.log('📖 Existing record check:', { exists: !!existing, error: checkError?.code });
     
-    // Check if error is due to missing columns
-    const errorMsg = updateError?.message?.toLowerCase() || '';
-    const isMissingColumn = updateError?.code === '42703' || 
-      errorMsg.includes('column') || 
-      errorMsg.includes('schema cache') ||
-      errorMsg.includes('engagement_signal');
-    
-    if (isMissingColumn) {
-      console.warn('⚠️ Some columns missing in user_articles, trying without engagement columns...');
-      
-      // Remove engagement columns and retry
-      const { engagement_signal, engagement_signal_at, ...minimalUpdates } = updates as any;
-      
-      const { data: retryData, error: retryError } = await this.supabase
+    if (existing) {
+      // Update existing record
+      console.log('📖 Updating existing record...');
+      const { data: updateData, error: updateError } = await this.supabase
         .from('user_articles')
-        .update({ ...minimalUpdates, updated_at: new Date().toISOString() })
+        .update({ ...updates, updated_at: new Date().toISOString() })
         .eq('user_id', userId)
         .eq('article_id', articleId)
         .select()
         .single();
       
-      if (!retryError && retryData) {
-        return {
-          ...retryData,
-          engagement_signal: null,
-          engagement_signal_at: null
-        } as UserArticle;
+      if (updateError) {
+        // Check if error is due to missing columns
+        const errorMsg = updateError.message?.toLowerCase() || '';
+        const isMissingColumn = updateError.code === '42703' || 
+          errorMsg.includes('column') || 
+          errorMsg.includes('schema cache') ||
+          errorMsg.includes('engagement_signal');
+        
+        if (isMissingColumn) {
+          console.warn('⚠️ Some columns missing, trying without engagement columns...');
+          const { engagement_signal, engagement_signal_at, ...minimalUpdates } = updates as any;
+          
+          const { data: retryData, error: retryError } = await this.supabase
+            .from('user_articles')
+            .update({ ...minimalUpdates, updated_at: new Date().toISOString() })
+            .eq('user_id', userId)
+            .eq('article_id', articleId)
+            .select()
+            .single();
+          
+          if (retryError) {
+            throw new Error(`Failed to update user article state: ${retryError.message}`);
+          }
+          
+          return {
+            ...retryData,
+            engagement_signal: null,
+            engagement_signal_at: null
+          } as UserArticle;
+        }
+        
+        throw new Error(`Failed to update user article state: ${updateError.message}`);
       }
       
-      // If update still fails, try creating new record without engagement columns
-      if (retryError?.code === 'PGRST116') {
-        return this.createUserArticleState({
-          user_id: userId,
-          article_id: articleId,
-          ...minimalUpdates
-        });
-      }
-      
-      throw new Error(`Failed to update user article state: ${retryError?.message}`);
+      console.log('📖 Update succeeded:', updateData);
+      return updateData as UserArticle;
     }
     
-    // If no existing record (PGRST116 = no rows returned), create new one
-    if (updateError?.code === 'PGRST116') {
-      console.log('📖 No existing record, creating new one...');
-      return this.createUserArticleState({
-        user_id: userId,
-        article_id: articleId,
-        ...updates
-      });
-    }
-    
-    throw new Error(`Failed to update user article state: ${updateError?.message}`);
+    // No existing record - create new one
+    console.log('📖 No existing record, creating new one...');
+    return this.createUserArticleState({
+      user_id: userId,
+      article_id: articleId,
+      ...updates
+    });
   }
 
   // Feed Count and Limit Management (Requirements: 5.1, 5.2)
