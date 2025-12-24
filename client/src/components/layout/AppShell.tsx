@@ -6,16 +6,9 @@ import {
   Settings,
   Menu,
   Plus,
-  LayoutGrid,
-  Star,
-  Clock,
-  Sparkles,
   LogOut,
-  CheckCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { Separator } from "@/components/ui/separator";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -44,21 +37,12 @@ export function AppShell({ children }: AppShellProps) {
   const { user, logout } = useAuth();
 
   // Parse search params reactively using wouter's useSearch
-  const { filter, source, category, cluster } = useMemo(() => {
+  const { cluster } = useMemo(() => {
     const params = new URLSearchParams(searchString);
     return {
-      filter: params.get('filter'),
-      source: params.get('source'),
-      category: params.get('category'),
       cluster: params.get('cluster')
     };
   }, [searchString]);
-
-  // Determine which nav item is active
-  const isAllActive = location === "/" && !filter && !source && !category && !cluster;
-  const isUnreadActive = filter === "unread";
-  const isStarredActive = filter === "starred";
-  const isReadActive = filter === "read";
 
   const handleLogout = async () => {
     try {
@@ -173,15 +157,6 @@ export function AppShell({ children }: AppShellProps) {
               <Plus className="h-4 w-4" /> Add New Feed
             </Button>
 
-            <nav className="flex flex-col gap-1 shrink-0">
-              <NavItem icon={LayoutGrid} label="All Articles" href="/" active={isAllActive} />
-              <NavItem icon={Clock} label="Unread" href="/?filter=unread" active={isUnreadActive} />
-              <NavItem icon={CheckCircle} label="Read" href="/?filter=read" active={isReadActive} />
-              <NavItem icon={Star} label="Starred" href="/?filter=starred" active={isStarredActive} />
-              <NavItem icon={Sparkles} label="Discover" href="/onboarding" active={location === "/onboarding"} />
-              <NavItem icon={Settings} label="Settings" href="/settings" active={location === "/settings"} />
-            </nav>
-
             <TrendingClusters 
               onClusterClick={(clickedCluster) => {
                 // Navigate to home with cluster filter
@@ -209,34 +184,4 @@ export function AppShell({ children }: AppShellProps) {
   );
 }
 
-function NavItem({ icon: Icon, label, count, active, href }: { icon: any; label: string; count?: number; active?: boolean; href?: string }) {
-  const [, setLocation] = useLocation();
 
-  const handleClick = () => {
-    if (href) {
-      // Use wouter's setLocation for proper routing
-      setLocation(href);
-      // Dispatch event for components that need to react to filter changes
-      window.dispatchEvent(new CustomEvent('feedFilterChange', { detail: { href } }));
-    }
-  };
-
-  return (
-    <Button
-      variant="ghost"
-      onClick={handleClick}
-      className={cn(
-        "w-full justify-start gap-3 px-3 h-10 font-medium transition-all hover:translate-x-1",
-        active ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-      )}
-    >
-      <Icon className="h-4 w-4" />
-      <span className="flex-1 text-left">{label}</span>
-      {count !== undefined && (
-        <span className="text-xs font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded-md">
-          {count}
-        </span>
-      )}
-    </Button>
-  );
-}
