@@ -123,6 +123,8 @@ async function buildAll() {
     define: {
       "process.env.NODE_ENV": '"production"',
     },
+    // Inject polyfills at the very start of the bundle, before any other code runs
+    inject: ["server/node-polyfills.ts"],
     minify: true,
     external: externals,
     logLevel: "info",
