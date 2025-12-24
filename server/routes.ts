@@ -76,6 +76,48 @@ export async function registerRoutes(
     });
   });
 
+  // Debug endpoint for read state (temporary - for debugging)
+  app.get('/api/debug/read-state', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const storage = await getStorage();
+      
+      // Get all user article states
+      const { data: userArticles, error } = await (storage as any).supabase
+        .from('user_articles')
+        .select('*')
+        .eq('user_id', userId)
+        .limit(50);
+      
+      if (error) {
+        return res.status(500).json({ error: error.message });
+      }
+      
+      const readArticles = userArticles?.filter((ua: any) => ua.is_read) || [];
+      const starredArticles = userArticles?.filter((ua: any) => ua.is_starred) || [];
+      
+      res.json({
+        userId,
+        totalRecords: userArticles?.length || 0,
+        readCount: readArticles.length,
+        starredCount: starredArticles.length,
+        sampleRecords: userArticles?.slice(0, 10).map((ua: any) => ({
+          article_id: ua.article_id?.substring(0, 8) + '...',
+          is_read: ua.is_read,
+          is_starred: ua.is_starred,
+          read_at: ua.read_at,
+          updated_at: ua.updated_at
+        })),
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      res.status(500).json({
+        error: 'Debug failed',
+        message: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  });
+
   // AI Diagnostic Route (for debugging clustering issues)
   app.get('/api/ai-status', async (req: Request, res: Response) => {
     try {
