@@ -18,6 +18,9 @@ import { Input } from "@/components/ui/input";
 import { AppearanceSettings } from "@/components/settings/AppearanceSettings";
 import { FeedManagement } from "@/components/settings/FeedManagement";
 import { AIUsageSettings } from "@/components/settings/AIUsageSettings";
+import { ScheduleSettings } from "@/components/settings/ScheduleSettings";
+import { ScheduleSettings } from "@/components/settings/ScheduleSettings";
+import { ScheduleSettings } from "@/components/settings/ScheduleSettings";
 import { Link, useLocation } from "wouter";
 
 const SETTINGS_TABS = [
@@ -40,7 +43,7 @@ export default function SettingsPage() {
       case 'appearance':
         return <AppearanceSettings />;
       case 'schedule':
-        return <div className="p-8 text-muted-foreground">Schedule settings coming soon...</div>;
+        return <ScheduleSettings />;
       case 'digest':
         return <div className="p-8 text-muted-foreground">Digest settings coming soon...</div>;
       case 'ai':

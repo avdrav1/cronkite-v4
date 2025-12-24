@@ -32,6 +32,11 @@ export const userSettings = pgTable("user_settings", {
   ai_summaries_enabled: boolean("ai_summaries_enabled").notNull().default(true),
   ai_clustering_enabled: boolean("ai_clustering_enabled").notNull().default(true),
   ai_daily_limit: text("ai_daily_limit").notNull().default("100"),
+  // Schedule preferences (feed sync timing)
+  medium_priority_hour: integer("medium_priority_hour").notNull().default(9), // Hour (0-23) for medium priority feeds
+  low_priority_day: integer("low_priority_day").notNull().default(5), // Day of week (0=Sun, 5=Fri) for low priority feeds
+  low_priority_hour: integer("low_priority_hour").notNull().default(9), // Hour (0-23) for low priority feeds
+  ai_clustering_frequency: integer("ai_clustering_frequency").notNull().default(1), // Hours between clustering (1, 4, 8, 12, 24)
   // Appearance preferences
   theme: text("theme").notNull().default("system"),
   accent_color: text("accent_color").notNull().default("blue"),

@@ -96,13 +96,17 @@ export function FeedManagement() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [expandedFolders, setExpandedFolders] = useState<string[]>(['Tech', 'News', 'Gaming']);
+  const [expandedFolders, setExpandedFolders] = useState<string[]>([]); // Start collapsed
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const { toast } = useToast();
   const invalidateFeedsQuery = useInvalidateFeedsQuery();
   
   // Feed count state - Requirements: 5.1, 5.2, 5.3, 5.4
   const [feedCount, setFeedCount] = useState<FeedCountResponse | null>(null);
+  
+  // Sync All state
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncProgress, setSyncProgress] = useState({ current: 0, total: 0, newArticles: 0 });
 
   // Fetch feed count from API - Requirements: 5.1, 5.2, 5.3, 5.4
   const fetchFeedCount = async () => {
@@ -147,9 +151,7 @@ export function FeedManagement() {
       
       setFeeds(transformedFeeds);
       
-      // Auto-expand folders that have feeds
-      const folders = Array.from(new Set(transformedFeeds.map(f => f.folder_name || 'General')));
-      setExpandedFolders(folders);
+      // Keep folders collapsed by default - don't auto-expand
     } catch (error) {
       console.error('Failed to fetch feeds:', error);
       setError(error instanceof Error ? error.message : 'Failed to load feeds');
@@ -157,6 +159,67 @@ export function FeedManagement() {
       setIsLoading(false);
     }
   };
+
+  // Sync All feeds with progress tracking
+  const handleSyncAll = async () => {
+    const activeFeeds = feeds.filter(f => f.status === 'active');
+    if (activeFeeds.length === 0) {
+      toast({
+        title: "No feeds to sync",
+        description: "You don't have any active feeds to synchronize.",
+      });
+      return;
+    }
+
+    setIsSyncing(true);
+    setSyncProgress({ current: 0, total: activeFeeds.length, newArticles: 0 });
+
+    try {
+      // Sync feeds one by one to show progress
+      let totalNewArticles = 0;
+      
+      for (let i = 0; i < activeFeeds.length; i++) {
+        const feed = activeFeeds[i];
+        setSyncProgress(prev => ({ ...prev, current: i + 1 }));
+        
+        try {
+          const response = await apiRequest('POST', '/api/feeds/sync', { feedIds: [feed.id] });
+          const result = await response.json();
+          
+          if (result.results && result.results[0]) {
+            totalNewArticles += result.results[0].articlesNew || 0;
+            setSyncProgress(prev => ({ ...prev, newArticles: totalNewArticles }));
+          }
+        } catch (err) {
+          console.error(`Failed to sync feed ${feed.name}:`, err);
+          // Continue with other feeds even if one fails
+        }
+      }
+
+      toast({
+        title: "Sync Complete",
+        description: `Synced ${activeFeeds.length} feeds. ${totalNewArticles} new articles found.`,
+      });
+
+      // Refresh feeds to show updated data
+      await fetchFeeds();
+      await fetchFeedCount();
+      
+    } catch (error) {
+      console.error('Sync all failed:', error);
+      toast({
+        variant: "destructive",
+        title: "Sync Failed",
+        description: error instanceof Error ? error.message : "An error occurred during sync.",
+      });
+    } finally {
+      setIsSyncing(false);
+      setSyncProgress({ current: 0, total: 0, newArticles: 0 });
+    }
+  };
+
+  // Calculate total article count
+  const totalArticleCount = feeds.reduce((sum, feed) => sum + (feed.article_count || 0), 0);
 
   // Load feeds on component mount
   useEffect(() => {
@@ -359,6 +422,15 @@ export function FeedManagement() {
               />
             </div>
             <Button 
+              variant="outline"
+              className="gap-2" 
+              onClick={handleSyncAll}
+              disabled={isSyncing || feeds.filter(f => f.status === 'active').length === 0}
+            >
+              <RefreshCw className={cn("h-4 w-4", isSyncing && "animate-spin")} />
+              {isSyncing ? 'Syncing...' : 'Sync All'}
+            </Button>
+            <Button 
               className="gap-2 bg-primary hover:bg-primary/90" 
               onClick={() => setIsAddModalOpen(true)}
               disabled={feedCount?.remaining === 0}
@@ -367,6 +439,24 @@ export function FeedManagement() {
             </Button>
           </div>
         </div>
+
+        {/* Sync Progress Bar */}
+        {isSyncing && (
+          <div className="mb-4 p-4 bg-muted/50 rounded-lg">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium">
+                Syncing feeds... ({syncProgress.current}/{syncProgress.total})
+              </span>
+              <span className="text-sm text-muted-foreground">
+                {syncProgress.newArticles} new articles
+              </span>
+            </div>
+            <Progress 
+              value={(syncProgress.current / syncProgress.total) * 100} 
+              className="h-2"
+            />
+          </div>
+        )}
 
         {/* Feed Count Display - Requirements: 5.3, 5.4 */}
         {feedCount && (
@@ -409,7 +499,7 @@ export function FeedManagement() {
           </div>
         )}
 
-        <div className="flex items-center gap-6 text-sm text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-muted-foreground">
           <div className="font-medium text-foreground">{feeds.length} feeds total</div>
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-500" />
@@ -422,6 +512,9 @@ export function FeedManagement() {
           <div className="flex items-center gap-2">
              <span className="w-2 h-2 rounded-full bg-red-500" />
             {feeds.filter(f => f.status === 'error').length} error
+          </div>
+          <div className="flex items-center gap-2 ml-auto font-medium text-foreground">
+            <span className="text-primary">{totalArticleCount.toLocaleString()}</span> total articles
           </div>
         </div>
       </div>

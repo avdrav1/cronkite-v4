@@ -3,6 +3,42 @@
 -- 1. complete_feed_sync_success was not updating feeds.last_fetched_at
 -- 2. recommended_feeds did not have default_priority set for news sources
 
+-- Step 1: Add missing columns if they don't exist
+DO $$
+BEGIN
+  -- Add default_priority to recommended_feeds
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'recommended_feeds' AND column_name = 'default_priority'
+  ) THEN
+    ALTER TABLE recommended_feeds ADD COLUMN default_priority TEXT DEFAULT 'medium';
+  END IF;
+  
+  -- Add sync_priority to feeds
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'feeds' AND column_name = 'sync_priority'
+  ) THEN
+    ALTER TABLE feeds ADD COLUMN sync_priority TEXT DEFAULT 'medium';
+  END IF;
+  
+  -- Add sync_interval_hours to feeds
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'feeds' AND column_name = 'sync_interval_hours'
+  ) THEN
+    ALTER TABLE feeds ADD COLUMN sync_interval_hours INTEGER DEFAULT 24;
+  END IF;
+  
+  -- Add next_sync_at to feeds
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'feeds' AND column_name = 'next_sync_at'
+  ) THEN
+    ALTER TABLE feeds ADD COLUMN next_sync_at TIMESTAMPTZ;
+  END IF;
+END $$;
+
 -- Fix the complete_feed_sync_success function to also update feeds.last_fetched_at
 CREATE OR REPLACE FUNCTION complete_feed_sync_success(
   p_sync_log_id UUID,

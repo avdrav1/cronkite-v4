@@ -28,6 +28,17 @@ Go to your Supabase Dashboard → SQL Editor and run the contents of:
 ## Quick SQL Fix (Copy & Paste)
 
 ```sql
+-- Step 0: Add default_priority column if it doesn't exist
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'recommended_feeds' AND column_name = 'default_priority'
+  ) THEN
+    ALTER TABLE recommended_feeds ADD COLUMN default_priority TEXT DEFAULT 'medium';
+  END IF;
+END $$;
+
 -- 1. Fix the complete_feed_sync_success function to update feeds.last_fetched_at
 CREATE OR REPLACE FUNCTION complete_feed_sync_success(
   p_sync_log_id UUID,
