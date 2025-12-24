@@ -233,6 +233,27 @@ async function buildAll() {
     console.log("⚠️ Test-generate-clusters function not found, skipping");
   }
 
+  // Build the run-ai-jobs on-demand function
+  console.log("⚡ Building run-ai-jobs (Netlify On-Demand Function)...");
+  if (existsSync("netlify/functions/run-ai-jobs.ts")) {
+    await esbuild({
+      entryPoints: ["netlify/functions/run-ai-jobs.ts"],
+      platform: "node",
+      bundle: true,
+      format: "cjs",
+      outfile: "dist/functions/run-ai-jobs.js",
+      define: {
+        "process.env.NODE_ENV": '"production"',
+      },
+      minify: true,
+      external: externals,
+      logLevel: "info",
+    });
+    console.log("✅ Run-ai-jobs function built");
+  } else {
+    console.log("⚠️ Run-ai-jobs function not found, skipping");
+  }
+
   // Copy necessary files for production
   console.log("📋 Copying production files...");
   

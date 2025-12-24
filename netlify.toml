@@ -21,8 +21,11 @@
   to = "/.netlify/functions/api/:splat"
   status = 200
 
-# Direct access to test-clustering function (diagnostic)
-# Note: Functions are accessed directly via /.netlify/functions/ path, no redirect needed
+# Allow direct access to Netlify functions (don't redirect to SPA)
+[[redirects]]
+  from = "/.netlify/functions/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
 
 # SPA redirect for client-side routing (wouter)
 # This must come AFTER API redirects to avoid conflicts

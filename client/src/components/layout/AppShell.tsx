@@ -45,17 +45,18 @@ export function AppShell({ children }: AppShellProps) {
   const { user, logout } = useAuth();
 
   // Parse search params reactively using wouter's useSearch
-  const { filter, source, category } = useMemo(() => {
+  const { filter, source, category, cluster } = useMemo(() => {
     const params = new URLSearchParams(searchString);
     return {
       filter: params.get('filter'),
       source: params.get('source'),
-      category: params.get('category')
+      category: params.get('category'),
+      cluster: params.get('cluster')
     };
   }, [searchString]);
 
   // Determine which nav item is active
-  const isAllActive = location === "/" && !filter && !source && !category;
+  const isAllActive = location === "/" && !filter && !source && !category && !cluster;
   const isUnreadActive = filter === "unread";
   const isStarredActive = filter === "starred";
   const isReadActive = filter === "read";
@@ -182,7 +183,15 @@ export function AppShell({ children }: AppShellProps) {
               <NavItem icon={Settings} label="Settings" href="/settings" active={location === "/settings"} />
             </nav>
 
-            <TrendingClusters />
+            <TrendingClusters 
+              onClusterClick={(clickedCluster) => {
+                // Navigate to home with cluster filter
+                setLocation(`/?cluster=${clickedCluster.id}`);
+                // Dispatch event for components that need to react to filter changes
+                window.dispatchEvent(new CustomEvent('feedFilterChange', { detail: { cluster: clickedCluster.id } }));
+              }}
+              activeClusterId={cluster || undefined}
+            />
 
             {/* AI Status Indicator - Shows when clusters are being generated */}
             <AIStatusIndicator />

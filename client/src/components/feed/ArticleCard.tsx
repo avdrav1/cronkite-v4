@@ -1,7 +1,7 @@
 import { type Article } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
-import { Star, X, Clock, User, ThumbsUp, ThumbsDown } from "lucide-react";
+import { Star, X, Clock, User, ThumbsUp, ThumbsDown, Sparkles } from "lucide-react";
 import { motion } from "framer-motion";
 import { apiRequest } from "@/lib/queryClient";
 import { useState, useEffect, useRef } from "react";
@@ -16,6 +16,10 @@ interface ArticleWithUIState extends Article {
   readTime?: string;
   imageUrl?: string;
   engagementSignal?: 'positive' | 'negative' | null;
+  // Cluster information for visual grouping
+  cluster_id?: string | null;
+  clusterTopic?: string;
+  clusterColor?: string;
 }
 
 interface ArticleCardProps {
@@ -45,7 +49,10 @@ export function ArticleCard({ article, onClick, onRemove, onStar, onReadChange, 
     date = article.published_at || article.created_at.toISOString(),
     isStarred = false,
     readTime = calculateReadTime(article.content),
-    engagementSignal = null
+    engagementSignal = null,
+    cluster_id = null,
+    clusterTopic,
+    clusterColor
   } = article;
 
   // Local state for optimistic updates
@@ -147,10 +154,25 @@ export function ArticleCard({ article, onClick, onRemove, onStar, onReadChange, 
       className={cn(
         "group relative bg-card text-card-foreground rounded-xl border overflow-hidden cursor-pointer shadow-sm hover:shadow-xl transition-shadow duration-300 break-inside-avoid flex flex-col",
         localIsRead ? "opacity-70 border-transparent bg-muted/20" : "border-border/50",
-        variant === "large" && "row-span-2"
+        variant === "large" && "row-span-2",
+        // Cluster visual indicator - colored left border
+        cluster_id && clusterColor && `border-l-4`
       )}
+      style={cluster_id && clusterColor ? { borderLeftColor: clusterColor } : undefined}
       onClick={() => onClick(article)}
     >
+      {/* Cluster Badge - shown for articles in a cluster */}
+      {cluster_id && clusterTopic && (
+        <div 
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium"
+          style={{ backgroundColor: clusterColor ? `${clusterColor}15` : 'var(--primary-5)' }}
+        >
+          <Sparkles className="h-3 w-3" style={{ color: clusterColor || 'var(--primary)' }} />
+          <span className="truncate" style={{ color: clusterColor || 'var(--primary)' }}>
+            {clusterTopic}
+          </span>
+        </div>
+      )}
 
 
       {/* Large Card Image */}

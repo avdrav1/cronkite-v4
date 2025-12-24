@@ -21,10 +21,11 @@ interface ArticleCluster {
 
 interface TrendingClustersProps {
   onClusterClick?: (cluster: ArticleCluster) => void;
+  activeClusterId?: string;
   className?: string;
 }
 
-export function TrendingClusters({ onClusterClick, className }: TrendingClustersProps) {
+export function TrendingClusters({ onClusterClick, activeClusterId, className }: TrendingClustersProps) {
   const [clusters, setClusters] = useState<ArticleCluster[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -133,7 +134,12 @@ export function TrendingClusters({ onClusterClick, className }: TrendingClusters
                 exit={{ opacity: 0, y: -10 }}
                 transition={{ delay: index * 0.1 }}
                 onClick={() => onClusterClick?.(cluster)}
-                className="w-full text-left p-3 rounded-lg bg-gradient-to-r from-primary/5 to-primary/10 hover:from-primary/10 hover:to-primary/15 border border-primary/10 hover:border-primary/20 transition-all group"
+                className={cn(
+                  "w-full text-left p-3 rounded-lg border transition-all group",
+                  activeClusterId === cluster.id
+                    ? "bg-primary/15 border-primary/30 shadow-sm"
+                    : "bg-gradient-to-r from-primary/5 to-primary/10 hover:from-primary/10 hover:to-primary/15 border-primary/10 hover:border-primary/20"
+                )}
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">

@@ -1911,12 +1911,18 @@ export async function registerRoutes(
       const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
       const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : undefined;
       
+      console.log('⭐ GET /api/articles/starred called:', { userId, limit, offset });
+      
       const storage = await getStorage();
+      console.log('⭐ Storage type:', storage.constructor.name);
+      
       const starredArticles = await storage.getStarredArticles(userId, limit, offset);
+      console.log('⭐ getStarredArticles returned:', starredArticles.length, 'articles');
       
       // Get user's feeds to add feed information to articles
       const userFeeds = await storage.getUserFeeds(userId);
       const feedMap = new Map(userFeeds.map(feed => [feed.id, feed]));
+      console.log('⭐ User has', userFeeds.length, 'feeds');
       
       // Add feed information to each article
       const articlesWithFeedInfo = starredArticles.map(article => {
@@ -1929,6 +1935,8 @@ export async function registerRoutes(
           feed_category: feed?.folder_name || 'General'
         };
       });
+      
+      console.log('⭐ Returning', articlesWithFeedInfo.length, 'starred articles');
       
       res.json({
         articles: articlesWithFeedInfo,
@@ -2291,6 +2299,7 @@ export async function registerRoutes(
       const forceRefresh = req.query.refresh === 'true'; // Force regenerate clusters
       
       console.log(`📊 Fetching clusters for user ${userId}, limit: ${limit}, forceRefresh: ${forceRefresh}`);
+      console.log(`📊 req.user exists: ${!!req.user}, req.user.id: ${req.user?.id}`);
       
       const storage = await getStorage();
       console.log(`📊 Storage type: ${storage.constructor.name}`);
@@ -2317,6 +2326,13 @@ export async function registerRoutes(
             const clustersWithArticleIds = await Promise.all(
               directClusters.map(async (cluster) => {
                 const articleIds = await storage.getArticleIdsByClusterId(cluster.id);
+                // Handle timestamps - Supabase returns strings, not Date objects
+                const timeframeEnd = cluster.timeframe_end 
+                  ? (typeof cluster.timeframe_end === 'string' ? cluster.timeframe_end : cluster.timeframe_end.toISOString())
+                  : new Date().toISOString();
+                const expiresAt = cluster.expires_at
+                  ? (typeof cluster.expires_at === 'string' ? cluster.expires_at : cluster.expires_at.toISOString())
+                  : new Date().toISOString();
                 return {
                   id: cluster.id,
                   topic: cluster.title,
@@ -2326,8 +2342,8 @@ export async function registerRoutes(
                   sources: cluster.source_feeds || [],
                   avgSimilarity: parseFloat(cluster.avg_similarity || '0'),
                   relevanceScore: parseFloat(cluster.relevance_score || '0'),
-                  latestTimestamp: cluster.timeframe_end?.toISOString() || new Date().toISOString(),
-                  expiresAt: cluster.expires_at?.toISOString() || new Date().toISOString()
+                  latestTimestamp: timeframeEnd,
+                  expiresAt: expiresAt
                 };
               })
             );
@@ -2357,6 +2373,13 @@ export async function registerRoutes(
             const clustersWithArticleIds = await Promise.all(
               cachedClusters.map(async (cluster) => {
                 const articleIds = await storage.getArticleIdsByClusterId(cluster.id);
+                // Handle timestamps - may be Date objects or strings
+                const latestTs = cluster.latestTimestamp
+                  ? (typeof cluster.latestTimestamp === 'string' ? cluster.latestTimestamp : cluster.latestTimestamp.toISOString())
+                  : new Date().toISOString();
+                const expiresTs = cluster.expiresAt
+                  ? (typeof cluster.expiresAt === 'string' ? cluster.expiresAt : cluster.expiresAt.toISOString())
+                  : new Date().toISOString();
                 return {
                   id: cluster.id,
                   topic: cluster.topic,
@@ -2366,8 +2389,8 @@ export async function registerRoutes(
                   sources: cluster.sources,
                   avgSimilarity: cluster.avgSimilarity,
                   relevanceScore: cluster.relevanceScore,
-                  latestTimestamp: cluster.latestTimestamp.toISOString(),
-                  expiresAt: cluster.expiresAt.toISOString()
+                  latestTimestamp: latestTs,
+                  expiresAt: expiresTs
                 };
               })
             );
@@ -2385,7 +2408,8 @@ export async function registerRoutes(
             console.log(`📊 No cached clusters found`);
           }
         } catch (cacheError) {
-          console.warn('📊 Failed to get cached clusters:', cacheError);
+          console.warn('📊 Failed to get cached clusters:', cacheError instanceof Error ? cacheError.message : cacheError);
+          console.warn('📊 Cache error stack:', cacheError instanceof Error ? cacheError.stack : 'no stack');
         }
       }
       
@@ -2404,13 +2428,22 @@ export async function registerRoutes(
       const feedArticlePromises = userFeeds.map(async (feed) => {
         try {
           const feedArticles = await storage.getArticlesByFeedId(feed.id, 20);
-          return feedArticles.map(article => ({
-            id: article.id,
-            title: article.title,
-            excerpt: article.excerpt || '',
-            source: feed.name,
-            published_at: article.published_at ? article.published_at.toISOString() : undefined
-          }));
+          return feedArticles.map(article => {
+            // Handle published_at - may be Date object or string from Supabase
+            let publishedAt: string | undefined;
+            if (article.published_at) {
+              publishedAt = typeof article.published_at === 'string' 
+                ? article.published_at 
+                : article.published_at.toISOString();
+            }
+            return {
+              id: article.id,
+              title: article.title,
+              excerpt: article.excerpt || '',
+              source: feed.name,
+              published_at: publishedAt
+            };
+          });
         } catch {
           return [];
         }
@@ -2445,10 +2478,12 @@ export async function registerRoutes(
         onDemand: true
       });
     } catch (error) {
-      console.error('Clustering error:', error);
+      console.error('📊 Clustering error:', error);
+      console.error('📊 Clustering error message:', error instanceof Error ? error.message : 'Unknown error');
+      console.error('📊 Clustering error stack:', error instanceof Error ? error.stack : 'No stack');
       res.status(500).json({
         error: 'Clustering failed',
-        message: 'An error occurred while generating topic clusters',
+        message: error instanceof Error ? error.message : 'An error occurred while generating topic clusters',
         clusters: []
       });
     }

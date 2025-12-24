@@ -33,6 +33,11 @@ interface ArticleWithFeed extends Article {
   feed_url?: string;
   feed_icon?: string;
   feed_category?: string; // Category/folder_name for filtering
+  
+  // Cluster information for visual grouping
+  cluster_id?: string | null;
+  clusterTopic?: string;
+  clusterColor?: string;
 }
 
 // Mixed feed item type (articles and trending topics)
@@ -47,6 +52,20 @@ import { ArrowDown } from "lucide-react";
 
 const CURRENT_DATE = new Date();
 const CHUNK_SIZE_DAYS = 7;
+
+// Color palette for cluster visual grouping - distinct, accessible colors
+const CLUSTER_COLORS = [
+  '#6366f1', // Indigo
+  '#8b5cf6', // Violet
+  '#ec4899', // Pink
+  '#f43f5e', // Rose
+  '#f97316', // Orange
+  '#eab308', // Yellow
+  '#22c55e', // Green
+  '#14b8a6', // Teal
+  '#06b6d4', // Cyan
+  '#3b82f6', // Blue
+];
 
 export default function Home() {
   const [selectedArticle, setSelectedArticle] = useState<ArticleWithFeed | null>(null);
@@ -71,13 +90,14 @@ export default function Home() {
   const searchString = useSearch();
   
   // Parse URL params reactively using wouter's useSearch
-  const { sourceFilter, categoryFilter, urlFilter, articleIdFromUrl } = useMemo(() => {
+  const { sourceFilter, categoryFilter, urlFilter, articleIdFromUrl, clusterFilter } = useMemo(() => {
     const params = new URLSearchParams(searchString);
     return {
       sourceFilter: params.get("source"),
       categoryFilter: params.get("category"),
       urlFilter: params.get("filter"), // "starred", "unread", or "read" from side nav
-      articleIdFromUrl: params.get("article") // Article ID from search result click
+      articleIdFromUrl: params.get("article"), // Article ID from search result click
+      clusterFilter: params.get("cluster") // Cluster ID for filtering by trending topic
     };
   }, [searchString, filterKey]);
   
@@ -166,12 +186,16 @@ export default function Home() {
       setIsLoading(true);
       setError(null);
       
+      console.log('🚀 Starting fetchArticles...');
+      
       // Fetch articles and clusters in parallel
       // Use apiFetch for clusters to handle auth errors gracefully
       const [articlesResponse, clustersResponse] = await Promise.all([
         apiRequest('GET', '/api/articles'),
         apiFetch('GET', '/api/clusters') // Use apiFetch to not throw on 401
       ]);
+      
+      console.log('🚀 Got responses - articles:', articlesResponse.status, 'clusters:', clustersResponse?.status);
       
       const data = await articlesResponse.json();
       
@@ -341,6 +365,8 @@ export default function Home() {
 
   // Create feed with articles and interspersed trending topics
   const createMixedFeed = (articles: ArticleWithFeed[], clusters: TrendingCluster[]): FeedItem[] => {
+    console.log('🔄 createMixedFeed called:', { articlesCount: articles.length, clustersCount: clusters.length });
+    
     const articleItems: FeedItem[] = articles.map(article => ({
       type: 'article' as const,
       data: article,
@@ -349,6 +375,7 @@ export default function Home() {
     
     // If no clusters or filtering by source/category, just return articles
     if (clusters.length === 0 || sourceFilter || categoryFilter) {
+      console.log('🔄 Returning articles only (no clusters or filtering active)');
       return articleItems;
     }
     
@@ -371,6 +398,7 @@ export default function Home() {
       }
     });
     
+    console.log('🔄 Mixed feed created:', { totalItems: result.length, trendingCards: clusterIndex });
     return result;
   };
 
@@ -433,8 +461,49 @@ export default function Home() {
   };
 
   // Create feed
+  // Build cluster map for visual grouping - maps cluster ID to topic and color
+  const clusterMap = useMemo(() => {
+    const map = new Map<string, { topic: string; color: string }>();
+    clusters.forEach((cluster, index) => {
+      map.set(cluster.id, {
+        topic: cluster.topic,
+        color: CLUSTER_COLORS[index % CLUSTER_COLORS.length]
+      });
+    });
+    return map;
+  }, [clusters]);
+
+  // Enrich articles with cluster info for visual grouping
+  const enrichedArticles = useMemo(() => {
+    return articles.map(article => {
+      if (article.cluster_id && clusterMap.has(article.cluster_id)) {
+        const clusterInfo = clusterMap.get(article.cluster_id)!;
+        return {
+          ...article,
+          clusterTopic: clusterInfo.topic,
+          clusterColor: clusterInfo.color
+        };
+      }
+      return article;
+    });
+  }, [articles, clusterMap]);
+
+  const enrichedStarredArticles = useMemo(() => {
+    return starredArticles.map(article => {
+      if (article.cluster_id && clusterMap.has(article.cluster_id)) {
+        const clusterInfo = clusterMap.get(article.cluster_id)!;
+        return {
+          ...article,
+          clusterTopic: clusterInfo.topic,
+          clusterColor: clusterInfo.color
+        };
+      }
+      return article;
+    });
+  }, [starredArticles, clusterMap]);
+
   // Use starred articles from API when filter is "saved" - Requirements: 7.3
-  const articlesToUse = activeFilter === "saved" ? starredArticles : articles;
+  const articlesToUse = activeFilter === "saved" ? enrichedStarredArticles : enrichedArticles;
   console.log('📋 Creating feed:', {
     activeFilter,
     articlesToUseCount: articlesToUse.length,
@@ -443,18 +512,24 @@ export default function Home() {
   });
   const mixedFeed = createMixedFeed(articlesToUse, clusters);
 
-  // Base filtering (Source + Category + Status)
+  // Base filtering (Source + Category + Status + Cluster)
   const baseFilteredFeed = mixedFeed.filter((item) => {
-    // Trending items pass through unless we're filtering by source/category
+    // Trending items pass through unless we're filtering by source/category/cluster
     if (item.type === 'trending') {
-      // Hide trending cards when filtering by specific source or category
-      if (sourceFilter || categoryFilter) return false;
+      // Hide trending cards when filtering by specific source, category, or cluster
+      if (sourceFilter || categoryFilter || clusterFilter) return false;
       // Hide trending cards when filtering by status
       if (activeFilter !== "all") return false;
       return true;
     }
     
     const article = item.data as ArticleWithFeed;
+    
+    // 0. Cluster Filter (filter by trending topic cluster)
+    if (clusterFilter) {
+      // Only show articles that belong to this cluster
+      if (article.cluster_id !== clusterFilter) return false;
+    }
     
     // 1. Source Filter (specific feed name) - EXACT match
     if (sourceFilter) {
@@ -632,14 +707,22 @@ export default function Home() {
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
               <h1 className="text-3xl font-display font-bold tracking-tight mb-2">
-                {sourceFilter ? sourceFilter : categoryFilter ? categoryFilter : "For You"}
+                {clusterFilter 
+                  ? clusters.find(c => c.id === clusterFilter)?.topic || "Trending Topic"
+                  : sourceFilter 
+                    ? sourceFilter 
+                    : categoryFilter 
+                      ? categoryFilter 
+                      : "For You"}
               </h1>
               <p className="text-muted-foreground">
-                {sourceFilter 
-                  ? `Latest articles from ${sourceFilter}`
-                  : categoryFilter
-                    ? `Latest articles in ${categoryFilter}`
-                    : "Top stories curated by AI based on your interests."
+                {clusterFilter
+                  ? `${visibleFeed.length} articles about this trending topic`
+                  : sourceFilter 
+                    ? `Latest articles from ${sourceFilter}`
+                    : categoryFilter
+                      ? `Latest articles in ${categoryFilter}`
+                      : "Top stories curated by AI based on your interests."
                 }
               </p>
             </div>

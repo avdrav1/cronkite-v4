@@ -1180,6 +1180,8 @@ export class SupabaseStorage implements IStorage {
 
   // Get Starred Articles (Requirements: 7.3)
   async getStarredArticles(userId: string, limit?: number, offset?: number): Promise<Array<Article & { is_read?: boolean; is_starred?: boolean; engagement_signal?: string | null }>> {
+    console.log('⭐ SupabaseStorage.getStarredArticles called:', { userId, limit, offset });
+    
     // Select all article columns EXCEPT embedding to reduce response size
     // Also include user article state fields
     let query = this.supabase
@@ -1211,8 +1213,11 @@ export class SupabaseStorage implements IStorage {
     const { data, error } = await query;
     
     if (error) {
+      console.error('⭐ getStarredArticles error:', error.message);
       throw new Error(`Failed to get starred articles: ${error.message}`);
     }
+    
+    console.log('⭐ getStarredArticles raw data:', data?.length || 0, 'records');
     
     // Extract articles from the joined data and include user state
     const articles = (data || [])
@@ -1223,6 +1228,8 @@ export class SupabaseStorage implements IStorage {
         engagement_signal: item.engagement_signal || null
       }))
       .filter((article: any) => article !== null && article.id);
+    
+    console.log('⭐ getStarredArticles returning:', articles.length, 'articles');
     
     return articles;
   }
