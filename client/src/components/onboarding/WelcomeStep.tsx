@@ -45,9 +45,9 @@ export function WelcomeStep({ onNext }: WelcomeStepProps) {
 
       <motion.h1 
         variants={itemVariants}
-        className="text-4xl font-display font-bold tracking-tight mb-4"
+        className="text-4xl font-bold tracking-tight mb-4"
       >
-        Welcome to Cronkite
+        Welcome to <span className="font-masthead text-5xl">Cronkite</span>
       </motion.h1>
 
       <motion.p 

@@ -31,7 +31,6 @@ import { AddFeedModal } from "@/components/feed/AddFeedModal";
 import { FeedsList } from "@/components/layout/FeedsList";
 import { TrendingClusters } from "@/components/trending/TrendingClusters";
 import { SemanticSearch } from "@/components/search/SemanticSearch";
-import { AIStatusIndicator } from "@/components/trending/AIStatusIndicator";
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -192,9 +191,6 @@ export function AppShell({ children }: AppShellProps) {
               }}
               activeClusterId={cluster || undefined}
             />
-
-            {/* AI Status Indicator - Shows when clusters are being generated */}
-            <AIStatusIndicator />
 
             <FeedsList />
           </div>

@@ -21,7 +21,7 @@ function AuthLoadingScreen() {
       <div className="text-center space-y-4">
         <Spinner className="h-8 w-8 mx-auto text-primary" />
         <div className="space-y-2">
-          <p className="text-lg font-medium">Cronkite</p>
+          <p className="text-2xl font-masthead font-medium">Cronkite</p>
           <p className="text-sm text-muted-foreground">Loading your personalized news feed...</p>
         </div>
       </div>

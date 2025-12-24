@@ -77,51 +77,9 @@ export function SimilarArticles({ articleId, className, onArticleClick }: Simila
     return "text-amber-600 dark:text-amber-400 bg-amber-500/10";
   };
 
-  if (isLoading) {
-    return (
-      <div className={cn("space-y-4", className)}>
-        <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-          <Sparkles className="h-4 w-4 text-primary" />
-          Similar Articles
-        </div>
-        <div className="flex items-center justify-center py-6 text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin mr-2" />
-          <span className="text-sm">Finding similar articles...</span>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className={cn("space-y-4", className)}>
-        <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-          <Sparkles className="h-4 w-4 text-primary" />
-          Similar Articles
-        </div>
-        <div className="flex items-center gap-2 py-4 text-muted-foreground text-sm">
-          <AlertCircle className="h-4 w-4" />
-          <span>{error}</span>
-        </div>
-      </div>
-    );
-  }
-
-  // No results state - Requirements: 4.5
-  if (similarArticles.length === 0) {
-    return (
-      <div className={cn("space-y-4", className)}>
-        <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-          <Sparkles className="h-4 w-4 text-primary" />
-          Similar Articles
-        </div>
-        <div className="text-center py-6 text-muted-foreground text-sm bg-muted/30 rounded-lg">
-          <TrendingUp className="h-8 w-8 mx-auto mb-2 opacity-50" />
-          <p>No similar articles found</p>
-          <p className="text-xs mt-1">Check back as more articles are analyzed</p>
-        </div>
-      </div>
-    );
+  // Hide section entirely during loading, on error, or when no results
+  if (isLoading || error || similarArticles.length === 0) {
+    return null;
   }
 
   return (

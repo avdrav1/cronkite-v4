@@ -1869,6 +1869,13 @@ export async function registerRoutes(
       const articleIds = allArticles.map(a => a.id);
       const userArticleStates = await storage.getUserArticleStates(userId, articleIds);
       
+      console.log('📖 GET /api/articles - userArticleStates:', {
+        totalArticles: allArticles.length,
+        statesFound: userArticleStates.size,
+        readCount: Array.from(userArticleStates.values()).filter(s => s.is_read).length,
+        starredCount: Array.from(userArticleStates.values()).filter(s => s.is_starred).length
+      });
+      
       // Merge user states into articles
       const articlesWithState = allArticles.map(article => {
         const userState = userArticleStates.get(article.id);
@@ -2716,6 +2723,8 @@ export async function registerRoutes(
       const articleId = req.params.articleId;
       const { isRead } = req.body;
       
+      console.log('📖 PUT /api/articles/:articleId/read called:', { userId, articleId, isRead });
+      
       if (!articleId) {
         return res.status(400).json({
           success: false,
@@ -2733,7 +2742,9 @@ export async function registerRoutes(
       }
       
       const storage = await getStorage();
+      console.log('📖 Calling storage.markArticleRead...');
       const userArticle = await storage.markArticleRead(userId, articleId, isRead);
+      console.log('📖 markArticleRead result:', { is_read: userArticle.is_read, read_at: userArticle.read_at });
       
       // Handle read_at which could be Date, string, or null
       let readAtStr: string | null = null;

@@ -203,6 +203,19 @@ export default function Home() {
         throw new Error('No articles data received');
       }
       
+      // Log read state statistics
+      const readCount = data.articles.filter((a: any) => a.is_read).length;
+      const starredCount = data.articles.filter((a: any) => a.is_starred).length;
+      console.log('📖 Articles loaded:', {
+        total: data.articles.length,
+        readCount,
+        starredCount,
+        sampleReadStates: data.articles.slice(0, 5).map((a: any) => ({ 
+          id: a.id?.substring(0, 8), 
+          is_read: a.is_read 
+        }))
+      });
+      
       // Convert API articles to our format with UI state
       const articlesWithState: ArticleWithFeed[] = data.articles.map((article: any) => ({
         ...article,
@@ -453,9 +466,16 @@ export default function Home() {
     
     // Persist read state to database
     try {
-      await apiRequest('PUT', `/api/articles/${article.id}/read`, { isRead: true });
+      console.log('📖 Marking article as read:', article.id);
+      const response = await apiRequest('PUT', `/api/articles/${article.id}/read`, { isRead: true });
+      const result = await response.json();
+      console.log('📖 Mark as read response:', result);
+      
+      if (!result.success) {
+        console.error('📖 Mark as read failed:', result.error, result.message);
+      }
     } catch (error) {
-      console.error('Failed to mark article as read:', error);
+      console.error('📖 Failed to mark article as read:', error);
       // Don't revert UI state - the article was opened, so it's effectively "read"
     }
   };

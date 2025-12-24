@@ -40,7 +40,7 @@ export default function Auth() {
       <div className="w-full max-w-md space-y-6">
         {/* Logo/Brand */}
         <div className="text-center">
-          <h1 className="text-3xl font-bold tracking-tight">Cronkite</h1>
+          <h1 className="text-5xl font-masthead font-bold tracking-tight">Cronkite</h1>
           <p className="text-muted-foreground mt-2">
             AI-powered news aggregation
           </p>
