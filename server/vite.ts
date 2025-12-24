@@ -1,7 +1,7 @@
 import { type Express } from "express";
 import { createServer as createViteServer, createLogger } from "vite";
 import { type Server } from "http";
-import viteConfig from "../vite.config";
+import path from "path";
 
 const viteLogger = createLogger();
 
@@ -57,8 +57,7 @@ export async function setupVite(server: Server, app: Express) {
 
     logVite(`🚀 Creating Vite server with middleware mode on port ${port}...`);
     const vite = await createViteServer({
-      ...viteConfig,
-      configFile: false,
+      configFile: path.resolve(import.meta.dirname, "..", "vite.config.ts"),
       customLogger: {
         ...viteLogger,
         error: (msg, options) => {

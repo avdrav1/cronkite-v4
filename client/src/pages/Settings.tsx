@@ -19,8 +19,6 @@ import { AppearanceSettings } from "@/components/settings/AppearanceSettings";
 import { FeedManagement } from "@/components/settings/FeedManagement";
 import { AIUsageSettings } from "@/components/settings/AIUsageSettings";
 import { ScheduleSettings } from "@/components/settings/ScheduleSettings";
-import { ScheduleSettings } from "@/components/settings/ScheduleSettings";
-import { ScheduleSettings } from "@/components/settings/ScheduleSettings";
 import { Link, useLocation } from "wouter";
 
 const SETTINGS_TABS = [
