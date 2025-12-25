@@ -51,10 +51,11 @@ export function OnboardingWizard() {
           const data = await response.json();
           const recommendedFeeds: RecommendedFeed[] = data.feeds;
           
-          // Pre-select featured feeds that match selected categories
+          // Pre-select featured feeds that match selected categories (max 25)
           // selectedCategories now contains database category names directly
           const relevantFeatured = recommendedFeeds
             .filter(f => selectedCategories.includes(f.category) && f.is_featured)
+            .slice(0, 25) // Limit to 25 feeds max
             .map(f => f.id);
           
           if (relevantFeatured.length > 0) {

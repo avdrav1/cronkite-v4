@@ -1,4 +1,3 @@
-import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { Check } from "lucide-react";
 
@@ -24,26 +23,22 @@ export function StepIndicator({ currentStep, totalSteps }: StepIndicatorProps) {
               <div 
                 className={cn(
                   "w-12 h-0.5 mx-2 transition-colors duration-300",
-                  step <= currentStep ? "bg-primary" : "bg-border"
+                  step <= currentStep ? "bg-primary" : "bg-muted-foreground/30"
                 )}
               />
             )}
             
             {/* Step Dot */}
-            <motion.div
-              initial={false}
-              animate={{
-                backgroundColor: isActive || isCompleted ? "var(--primary)" : "transparent",
-                borderColor: isActive || isCompleted ? "var(--primary)" : "var(--border)",
-                scale: isActive ? 1.1 : 1,
-              }}
+            <div
               className={cn(
-                "w-8 h-8 rounded-full border-2 flex items-center justify-center text-sm font-medium transition-colors duration-300",
-                isActive || isCompleted ? "text-primary-foreground" : "text-muted-foreground"
+                "w-8 h-8 rounded-full border-2 flex items-center justify-center text-sm font-medium transition-all duration-300",
+                isActive && "border-primary bg-primary text-primary-foreground scale-110",
+                isCompleted && "border-primary bg-primary text-primary-foreground",
+                !isActive && !isCompleted && "border-muted-foreground/50 bg-muted text-muted-foreground"
               )}
             >
               {isCompleted ? <Check className="h-4 w-4" /> : i + 1}
-            </motion.div>
+            </div>
           </div>
         );
       })}

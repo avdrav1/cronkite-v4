@@ -30,6 +30,8 @@ interface FeedDiscoveryProps {
   onBack: () => void;
 }
 
+const MAX_FEEDS = 25;
+
 type ViewMode = 'categories' | 'feeds';
 
 export function FeedDiscovery({ 
@@ -166,17 +168,34 @@ export function FeedDiscovery({
     }
   };
 
+  const handleToggleFeed = (id: string) => {
+    const isCurrentlySelected = selectedFeeds.includes(id);
+    // Only allow adding if under limit, always allow removing
+    if (!isCurrentlySelected && selectedFeeds.length >= MAX_FEEDS) {
+      return; // At limit, can't add more
+    }
+    toggleFeed(id);
+  };
+
   const selectAllInCategory = useCallback((categoryId: string) => {
     const categoryFeeds = allFeeds.filter(f => f.category === categoryId);
     const allSelected = categoryFeeds.every(f => selectedFeeds.includes(f.id));
     
-    categoryFeeds.forEach(feed => {
-      if (allSelected) {
+    if (allSelected) {
+      // Deselect all in category
+      categoryFeeds.forEach(feed => {
         if (selectedFeeds.includes(feed.id)) toggleFeed(feed.id);
-      } else {
-        if (!selectedFeeds.includes(feed.id)) toggleFeed(feed.id);
-      }
-    });
+      });
+    } else {
+      // Select feeds up to the limit
+      const currentlySelected = categoryFeeds.filter(f => selectedFeeds.includes(f.id)).length;
+      const notSelected = categoryFeeds.filter(f => !selectedFeeds.includes(f.id));
+      const canAdd = MAX_FEEDS - selectedFeeds.length;
+      
+      notSelected.slice(0, canAdd).forEach(feed => {
+        toggleFeed(feed.id);
+      });
+    }
   }, [allFeeds, selectedFeeds, toggleFeed]);
 
   if (isLoading) {
@@ -382,13 +401,14 @@ export function FeedDiscovery({
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: Math.min(index * 0.02, 0.3) }}
-                      onClick={() => toggleFeed(feed.id)}
+                      onClick={() => handleToggleFeed(feed.id)}
                       className={cn(
                         "flex items-start gap-3 p-3 rounded-xl border cursor-pointer",
                         "transition-all hover:border-primary/50",
                         isSelected 
                           ? "border-primary bg-primary/5" 
-                          : "border-border bg-card hover:bg-muted/50"
+                          : "border-border bg-card hover:bg-muted/50",
+                        !isSelected && selectedFeeds.length >= MAX_FEEDS && "opacity-50 cursor-not-allowed hover:border-border hover:bg-card"
                       )}
                     >
                       <div className={cn(
@@ -427,7 +447,16 @@ export function FeedDiscovery({
       {/* Footer */}
       <div className="mt-4 pt-4 border-t border-border flex flex-col sm:flex-row items-center justify-between gap-3">
         <div className="text-sm text-muted-foreground">
-          <span className="font-medium text-foreground">{selectedFeeds.length}</span> feeds selected
+          <span className={cn(
+            "font-medium",
+            selectedFeeds.length >= MAX_FEEDS ? "text-amber-600 dark:text-amber-400" : "text-foreground"
+          )}>
+            {selectedFeeds.length}
+          </span>
+          <span className="text-muted-foreground">/{MAX_FEEDS} feeds selected</span>
+          {selectedFeeds.length >= MAX_FEEDS && (
+            <span className="ml-2 text-amber-600 dark:text-amber-400 text-xs">(limit reached)</span>
+          )}
         </div>
         <div className="flex gap-2 w-full sm:w-auto">
           <Button 
