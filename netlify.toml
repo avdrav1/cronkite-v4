@@ -4,7 +4,7 @@
   functions = "dist/functions"
 
 [build.environment]
-  NODE_VERSION = "18"
+  NODE_VERSION = "20"
   NPM_FLAGS = "--legacy-peer-deps"
 
 # Serverless function configuration
@@ -19,12 +19,6 @@
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/api/:splat"
-  status = 200
-
-# Allow direct access to Netlify functions (don't redirect to SPA)
-[[redirects]]
-  from = "/.netlify/functions/*"
-  to = "/.netlify/functions/:splat"
   status = 200
 
 # SPA redirect for client-side routing (wouter)
