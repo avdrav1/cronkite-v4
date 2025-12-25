@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
-import { CATEGORIES } from "@/data/categories";
+import { getCategoryIcon } from "@/data/categories";
 import { cn } from "@/lib/utils";
 import { Check, Plus, Minus, RefreshCw, AlertCircle, Wifi, WifiOff, ChevronDown, ChevronUp, Search, X, Star, TrendingUp } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -477,7 +477,7 @@ export function FeedPreview({ selectedInterests, selectedFeeds, toggleFeed, togg
       <ScrollArea className="flex-1 pr-4 -mr-4 mb-6 h-[400px]">
         <div className="space-y-8">
           {Object.entries(feedsByCategory).map(([category, feeds], index) => {
-            const categoryInfo = CATEGORIES.find(c => c.id === category);
+            const CategoryIcon = getCategoryIcon(category);
             // Apply search filter to feeds within category
             const filteredFeeds = filterFeedsBySearch(feeds);
             // Skip category if no feeds match search
@@ -500,12 +500,10 @@ export function FeedPreview({ selectedInterests, selectedFeeds, toggleFeed, togg
                 {/* Category Header */}
                 <div className="bg-muted/30 p-4 border-b border-border flex items-center justify-between">
                   <div className="flex items-center gap-2 font-medium">
-                    {categoryInfo?.icon && (
-                      <div className="p-1.5 rounded-lg bg-muted">
-                        <categoryInfo.icon className="h-4 w-4 text-muted-foreground" />
-                      </div>
-                    )}
-                    <span className="capitalize">{categoryInfo?.label || category}</span>
+                    <div className="p-1.5 rounded-lg bg-muted">
+                      <CategoryIcon className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                    <span className="capitalize">{category}</span>
                     <span className="text-xs text-muted-foreground">
                       ({searchQuery ? `${filteredFeeds.length}/${feeds.length}` : feeds.length})
                     </span>

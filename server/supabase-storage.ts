@@ -408,6 +408,29 @@ export class SupabaseStorage implements IStorage {
     );
   }
 
+  // Get distinct categories with feed counts from recommended_feeds
+  async getCategories(): Promise<Array<{ category: string; feedCount: number }>> {
+    const { data, error } = await this.supabase
+      .from('recommended_feeds')
+      .select('category');
+    
+    if (error) {
+      throw new Error(`Failed to get categories: ${error.message}`);
+    }
+    
+    // Count feeds per category
+    const categoryCounts = new Map<string, number>();
+    for (const feed of data || []) {
+      const count = categoryCounts.get(feed.category) || 0;
+      categoryCounts.set(feed.category, count + 1);
+    }
+    
+    // Convert to array and sort by feed count descending
+    return Array.from(categoryCounts.entries())
+      .map(([category, feedCount]) => ({ category, feedCount }))
+      .sort((a, b) => b.feedCount - a.feedCount);
+  }
+
   // Recommended Feeds Management with Category Validation
   async createRecommendedFeed(insertFeed: InsertRecommendedFeed): Promise<RecommendedFeed> {
     // Validate category using category mapping service

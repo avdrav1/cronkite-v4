@@ -1,7 +1,6 @@
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
-import { CATEGORIES, getCategoryById } from "@/data/categories";
-import { cn } from "@/lib/utils";
+import { getCategoryIcon } from "@/data/categories";
 import { Link } from "wouter";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { apiRequest } from "@/lib/queryClient";
@@ -258,14 +257,12 @@ export function ConfirmationStep({ selectedInterests, selectedRegion, selectedFe
           <div>
             <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">Your Topics</h3>
             <div className="flex flex-wrap gap-2">
-              {selectedInterests.map(id => {
-                const cat = getCategoryById(id);
-                if (!cat) return null;
-                const Icon = cat.icon;
+              {selectedInterests.map(categoryName => {
+                const Icon = getCategoryIcon(categoryName);
                 return (
-                   <span key={id} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-muted text-sm font-medium">
+                   <span key={categoryName} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-muted text-sm font-medium">
                      <Icon className="h-3.5 w-3.5 text-muted-foreground" />
-                     {cat.label}
+                     {categoryName}
                    </span>
                 );
               })}

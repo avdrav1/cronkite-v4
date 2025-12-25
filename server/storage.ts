@@ -60,6 +60,9 @@ export interface IStorage {
   // Recommended Feeds Retrieval
   getRecommendedFeeds(): Promise<RecommendedFeed[]>;
   
+  // Categories - Get distinct categories from recommended_feeds
+  getCategories(): Promise<Array<{ category: string; feedCount: number }>>;
+  
   // Recommended Feeds Management with Category Validation
   createRecommendedFeed(feed: InsertRecommendedFeed): Promise<RecommendedFeed>;
   updateRecommendedFeed(id: string, updates: Partial<RecommendedFeed>): Promise<RecommendedFeed>;
@@ -453,6 +456,19 @@ export class MemStorage implements IStorage {
     }
     
     return this.recommendedFeeds;
+  }
+
+  // Get distinct categories with feed counts
+  async getCategories(): Promise<Array<{ category: string; feedCount: number }>> {
+    const categoryCounts = new Map<string, number>();
+    for (const feed of this.recommendedFeeds) {
+      const count = categoryCounts.get(feed.category) || 0;
+      categoryCounts.set(feed.category, count + 1);
+    }
+    
+    return Array.from(categoryCounts.entries())
+      .map(([category, feedCount]) => ({ category, feedCount }))
+      .sort((a, b) => b.feedCount - a.feedCount);
   }
 
   // Recommended Feeds Management with Category Validation

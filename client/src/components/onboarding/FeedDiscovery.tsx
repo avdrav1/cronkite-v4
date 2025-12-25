@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { CATEGORIES, getCategoryById } from "@/data/categories";
+import { getCategoryIcon } from "@/data/categories";
 import { cn } from "@/lib/utils";
 import { 
   Check, 
@@ -77,76 +77,10 @@ export function FeedDiscovery({
     
     // Filter by active category if in feeds view
     if (activeCategory) {
-      const categoryInfo = getCategoryById(activeCategory);
-      if (categoryInfo) {
-        // Map frontend category to database category name
-        const dbCategoryMap: Record<string, string> = {
-          'tech': 'Technology',
-          'business': 'Business',
-          'gaming': 'Gaming',
-          'sports': 'Sports',
-          'science': 'Science',
-          'space': 'Space',
-          'news': 'News',
-          'movies': 'Entertainment',
-          'music': 'Music',
-          'books': 'Books',
-          'food': 'Food',
-          'travel': 'Travel',
-          'programming': 'Programming',
-          'design': 'Design',
-          'cars': 'Automotive',
-          'diy': 'DIY',
-          'android': 'Android',
-          'apple': 'Apple',
-          'history': 'History',
-          'funny': 'Humor',
-          'beauty': 'Beauty',
-          'fashion': 'Fashion',
-          'startups': 'Startups',
-          'cricket': 'Cricket',
-          'football': 'Football',
-          'tennis': 'Tennis',
-          'photography': 'Photography',
-          'interior': 'Interior'
-        };
-        const dbCategory = dbCategoryMap[activeCategory] || categoryInfo.label;
-        feeds = feeds.filter(f => f.category === dbCategory);
-      }
+      feeds = feeds.filter(f => f.category === activeCategory);
     } else if (selectedCategories.length > 0 && !searchQuery) {
       // When showing categories view, filter by selected categories
-      const dbCategoryMap: Record<string, string> = {
-        'tech': 'Technology',
-        'business': 'Business',
-        'gaming': 'Gaming',
-        'sports': 'Sports',
-        'science': 'Science',
-        'space': 'Space',
-        'news': 'News',
-        'movies': 'Entertainment',
-        'music': 'Music',
-        'books': 'Books',
-        'food': 'Food',
-        'travel': 'Travel',
-        'programming': 'Programming',
-        'design': 'Design',
-        'cars': 'Automotive',
-        'diy': 'DIY',
-        'android': 'Android',
-        'apple': 'Apple',
-        'history': 'History',
-        'funny': 'Humor',
-        'beauty': 'Beauty',
-        'fashion': 'Fashion',
-        'startups': 'Startups',
-        'cricket': 'Cricket',
-        'football': 'Football',
-        'tennis': 'Tennis',
-        'photography': 'Photography',
-        'interior': 'Interior'
-      };
-      const dbCategories = selectedCategories.map(c => dbCategoryMap[c]).filter(Boolean);
-      feeds = feeds.filter(f => dbCategories.includes(f.category));
+      feeds = feeds.filter(f => selectedCategories.includes(f.category));
     }
     
     // Apply search filter across all feeds
@@ -167,45 +101,11 @@ export function FeedDiscovery({
     });
   }, [allFeeds, activeCategory, selectedCategories, searchQuery]);
 
-  // Get feed counts per category
+  // Get feed counts per category (using actual database category names)
   const categoryFeedCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    const dbCategoryMap: Record<string, string> = {
-      'Technology': 'tech',
-      'Business': 'business',
-      'Gaming': 'gaming',
-      'Sports': 'sports',
-      'Science': 'science',
-      'Space': 'space',
-      'News': 'news',
-      'Entertainment': 'movies',
-      'Music': 'music',
-      'Books': 'books',
-      'Food': 'food',
-      'Travel': 'travel',
-      'Programming': 'programming',
-      'Design': 'design',
-      'Automotive': 'cars',
-      'DIY': 'diy',
-      'Android': 'android',
-      'Apple': 'apple',
-      'History': 'history',
-      'Humor': 'funny',
-      'Beauty': 'beauty',
-      'Fashion': 'fashion',
-      'Startups': 'startups',
-      'Cricket': 'cricket',
-      'Football': 'football',
-      'Tennis': 'tennis',
-      'Photography': 'photography',
-      'Interior': 'interior'
-    };
-    
     allFeeds.forEach(feed => {
-      const frontendId = dbCategoryMap[feed.category];
-      if (frontendId) {
-        counts[frontendId] = (counts[frontendId] || 0) + 1;
-      }
+      counts[feed.category] = (counts[feed.category] || 0) + 1;
     });
     return counts;
   }, [allFeeds]);
@@ -213,44 +113,10 @@ export function FeedDiscovery({
   // Get selected feed count per category
   const selectedFeedCountsByCategory = useMemo(() => {
     const counts: Record<string, number> = {};
-    const dbCategoryMap: Record<string, string> = {
-      'Technology': 'tech',
-      'Business': 'business',
-      'Gaming': 'gaming',
-      'Sports': 'sports',
-      'Science': 'science',
-      'Space': 'space',
-      'News': 'news',
-      'Entertainment': 'movies',
-      'Music': 'music',
-      'Books': 'books',
-      'Food': 'food',
-      'Travel': 'travel',
-      'Programming': 'programming',
-      'Design': 'design',
-      'Automotive': 'cars',
-      'DIY': 'diy',
-      'Android': 'android',
-      'Apple': 'apple',
-      'History': 'history',
-      'Humor': 'funny',
-      'Beauty': 'beauty',
-      'Fashion': 'fashion',
-      'Startups': 'startups',
-      'Cricket': 'cricket',
-      'Football': 'football',
-      'Tennis': 'tennis',
-      'Photography': 'photography',
-      'Interior': 'interior'
-    };
-    
     selectedFeeds.forEach(feedId => {
       const feed = allFeeds.find(f => f.id === feedId);
       if (feed) {
-        const frontendId = dbCategoryMap[feed.category];
-        if (frontendId) {
-          counts[frontendId] = (counts[frontendId] || 0) + 1;
-        }
+        counts[feed.category] = (counts[feed.category] || 0) + 1;
       }
     });
     return counts;
@@ -301,38 +167,7 @@ export function FeedDiscovery({
   };
 
   const selectAllInCategory = useCallback((categoryId: string) => {
-    const dbCategoryMap: Record<string, string> = {
-      'tech': 'Technology',
-      'business': 'Business',
-      'gaming': 'Gaming',
-      'sports': 'Sports',
-      'science': 'Science',
-      'space': 'Space',
-      'news': 'News',
-      'movies': 'Entertainment',
-      'music': 'Music',
-      'books': 'Books',
-      'food': 'Food',
-      'travel': 'Travel',
-      'programming': 'Programming',
-      'design': 'Design',
-      'cars': 'Automotive',
-      'diy': 'DIY',
-      'android': 'Android',
-      'apple': 'Apple',
-      'history': 'History',
-      'funny': 'Humor',
-      'beauty': 'Beauty',
-      'fashion': 'Fashion',
-      'startups': 'Startups',
-      'cricket': 'Cricket',
-      'football': 'Football',
-      'tennis': 'Tennis',
-      'photography': 'Photography',
-      'interior': 'Interior'
-    };
-    const dbCategory = dbCategoryMap[categoryId];
-    const categoryFeeds = allFeeds.filter(f => f.category === dbCategory);
+    const categoryFeeds = allFeeds.filter(f => f.category === categoryId);
     const allSelected = categoryFeeds.every(f => selectedFeeds.includes(f.id));
     
     categoryFeeds.forEach(feed => {
@@ -366,8 +201,7 @@ export function FeedDiscovery({
     );
   }
 
-  const activeCategoryInfo = activeCategory ? getCategoryById(activeCategory) : null;
-  const ActiveIcon = activeCategoryInfo?.icon;
+  const ActiveIcon = activeCategory ? getCategoryIcon(activeCategory) : null;
 
   return (
     <div className="flex flex-col h-full">
@@ -406,12 +240,12 @@ export function FeedDiscovery({
                   Back
                 </Button>
               )}
-              {activeCategoryInfo && ActiveIcon && !searchQuery && (
+              {activeCategory && ActiveIcon && !searchQuery && (
                 <div className="flex items-center gap-2">
                   <div className="p-1.5 rounded-lg bg-primary/10">
                     <ActiveIcon className="h-4 w-4 text-primary" />
                   </div>
-                  <span className="font-medium">{activeCategoryInfo.label}</span>
+                  <span className="font-medium">{activeCategory}</span>
                   <Badge variant="secondary" className="text-xs">
                     {filteredFeeds.length} feeds
                   </Badge>
@@ -471,9 +305,7 @@ export function FeedDiscovery({
               className="grid grid-cols-1 sm:grid-cols-2 gap-2"
             >
               {selectedCategories.map((categoryId, index) => {
-                const category = getCategoryById(categoryId);
-                if (!category) return null;
-                const Icon = category.icon;
+                const Icon = getCategoryIcon(categoryId);
                 const feedCount = categoryFeedCounts[categoryId] || 0;
                 const selectedCount = selectedFeedCountsByCategory[categoryId] || 0;
                 
@@ -500,7 +332,7 @@ export function FeedDiscovery({
                       )} />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="font-medium text-sm">{category.label}</div>
+                      <div className="font-medium text-sm">{categoryId}</div>
                       <div className="text-xs text-muted-foreground">
                         {feedCount} feeds available
                       </div>

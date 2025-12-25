@@ -12,7 +12,7 @@ export function OnboardingWizard() {
   const [step, setStep] = useState(1);
   const [direction, setDirection] = useState(0);
 
-  // State
+  // State - selectedCategories now stores database category names directly
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [selectedFeeds, setSelectedFeeds] = useState<string[]>([]);
 
@@ -51,43 +51,10 @@ export function OnboardingWizard() {
           const data = await response.json();
           const recommendedFeeds: RecommendedFeed[] = data.feeds;
           
-          // Map frontend categories to database categories
-          const dbCategoryMap: Record<string, string> = {
-            'tech': 'Technology',
-            'business': 'Business',
-            'gaming': 'Gaming',
-            'sports': 'Sports',
-            'science': 'Science',
-            'space': 'Space',
-            'news': 'News',
-            'movies': 'Entertainment',
-            'music': 'Music',
-            'books': 'Books',
-            'food': 'Food',
-            'travel': 'Travel',
-            'programming': 'Programming',
-            'design': 'Design',
-            'cars': 'Automotive',
-            'diy': 'DIY',
-            'android': 'Android',
-            'apple': 'Apple',
-            'history': 'History',
-            'funny': 'Humor',
-            'beauty': 'Beauty',
-            'fashion': 'Fashion',
-            'startups': 'Startups',
-            'cricket': 'Cricket',
-            'football': 'Football',
-            'tennis': 'Tennis',
-            'photography': 'Photography',
-            'interior': 'Interior'
-          };
-          
-          const dbCategories = selectedCategories.map(c => dbCategoryMap[c]).filter(Boolean);
-          
           // Pre-select featured feeds that match selected categories
+          // selectedCategories now contains database category names directly
           const relevantFeatured = recommendedFeeds
-            .filter(f => dbCategories.includes(f.category) && f.is_featured)
+            .filter(f => selectedCategories.includes(f.category) && f.is_featured)
             .map(f => f.id);
           
           if (relevantFeatured.length > 0) {

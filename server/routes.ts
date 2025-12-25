@@ -841,6 +841,27 @@ export async function registerRoutes(
     })
   });
 
+  // GET /api/feeds/categories - Get distinct categories from recommended_feeds with feed counts
+  app.get('/api/feeds/categories', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const storage = await getStorage();
+      const categories = await storage.getCategories();
+      
+      res.json({
+        categories,
+        total: categories.length,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Get categories error:', error);
+      res.status(500).json({
+        error: 'Failed to get categories',
+        message: error instanceof Error ? error.message : 'Unknown error',
+        timestamp: new Date().toISOString()
+      });
+    }
+  });
+
   // GET /api/feeds/recommended - Get recommended feeds list (~865 feeds from database)
   // OPTIMIZED: Reduced verbose logging for better performance
   app.get('/api/feeds/recommended', requireAuth, async (req: Request, res: Response) => {

@@ -1,6 +1,13 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import url('https://fonts.cdnfonts.com/css/cloister-black');
+
+@font-face {
+  font-family: 'Chomsky';
+  src: url('/fonts/Chomsky.woff2') format('woff2');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
 
 @custom-variant dark (&:is(.dark *));
 
@@ -9,7 +16,7 @@
   --font-serif: 'Literata', serif;
   --font-mono: 'JetBrains Mono', monospace;
   --font-display: 'Space Grotesk', sans-serif;
-  --font-masthead: 'Cloister Black', cursive;
+  --font-masthead: 'Chomsky', cursive;
   
   --radius-sm: 0.375rem;
   --radius-md: 0.5rem;
@@ -172,7 +179,7 @@
 
 /* Typography Utilities */
 .font-masthead {
-  font-family: 'Cloister Black', cursive;
+  font-family: 'Chomsky', cursive;
 }
 
 .font-display {
