@@ -460,16 +460,19 @@ export function FeedsList({ onFeedSelect, onCategorySelect }: FeedsListProps) {
           type="button"
           onClick={handleAllArticlesClick}
           className={cn(
-            "w-full flex items-center justify-start gap-2 px-3 h-9 text-sm font-medium rounded-md transition-colors",
+            "w-full flex items-center justify-start gap-2 px-3 h-9 text-sm font-medium rounded-md transition-colors relative",
             isAllArticlesActive
-              ? "bg-sidebar-accent text-sidebar-accent-foreground"
+              ? "bg-primary/15 text-primary border-l-2 border-primary font-semibold"
               : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
           )}
         >
-          <Newspaper className="h-4 w-4" />
+          <Newspaper className={cn("h-4 w-4", isAllArticlesActive && "text-primary")} />
           <span className="flex-1 text-left">All Articles</span>
           {articleCountsData && (
-            <span className="text-xs text-muted-foreground/70 tabular-nums">
+            <span className={cn(
+              "text-xs tabular-nums",
+              isAllArticlesActive ? "text-primary/70" : "text-muted-foreground/70"
+            )}>
               {articleCountsData.totalArticles.toLocaleString()}
             </span>
           )}
@@ -563,14 +566,17 @@ function CategoryFolder({
           className={cn(
             "flex-1 flex items-center justify-start gap-2 px-2 h-9 text-sm font-medium rounded-md",
             isActive
-              ? "bg-sidebar-accent text-sidebar-accent-foreground"
+              ? "bg-primary/15 text-primary border-l-2 border-primary font-semibold"
               : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
           )}
           onClick={handleCategoryClick}
         >
-          <Folder className="h-4 w-4 text-muted-foreground/70" />
+          <Folder className={cn("h-4 w-4", isActive ? "text-primary" : "text-muted-foreground/70")} />
           <span className="flex-1 text-left">{label}</span>
-          <span className="text-xs text-muted-foreground/50 tabular-nums">
+          <span className={cn(
+            "text-xs tabular-nums",
+            isActive ? "text-primary/70" : "text-muted-foreground/50"
+          )}>
             {categoryArticleCount > 0 ? categoryArticleCount.toLocaleString() : feeds.length}
           </span>
         </button>
@@ -621,7 +627,7 @@ function FeedItem({ feed, isActive, onClick, onSync, isSyncing, isDisabled, arti
         className={cn(
           "flex-1 flex items-center justify-start gap-2 px-3 h-8 text-sm transition-colors rounded-md",
           isActive
-            ? "bg-sidebar-accent text-sidebar-accent-foreground"
+            ? "bg-primary/15 text-primary border-l-2 border-primary font-medium"
             : "text-muted-foreground hover:text-primary hover:bg-muted/50"
         )}
       >
@@ -643,7 +649,10 @@ function FeedItem({ feed, isActive, onClick, onSync, isSyncing, isDisabled, arti
         )} />
         <span className="flex-1 text-left truncate">{feed.name}</span>
         {articleCount !== undefined && articleCount > 0 && (
-          <span className="text-xs text-muted-foreground/50 tabular-nums">
+          <span className={cn(
+            "text-xs tabular-nums",
+            isActive ? "text-primary/70" : "text-muted-foreground/50"
+          )}>
             {articleCount.toLocaleString()}
           </span>
         )}
