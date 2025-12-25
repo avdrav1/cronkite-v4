@@ -133,7 +133,10 @@ export function TrendingClusters({ onClusterClick, activeClusterId, className }:
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
                 transition={{ delay: index * 0.1 }}
-                onClick={() => onClusterClick?.(cluster)}
+                onClick={() => {
+                  console.log('🔥 TrendingClusters button clicked:', cluster.id);
+                  onClusterClick?.(cluster);
+                }}
                 className={cn(
                   "w-full text-left p-3 rounded-lg border transition-all group",
                   activeClusterId === cluster.id

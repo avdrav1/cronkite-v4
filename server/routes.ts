@@ -2480,31 +2480,30 @@ export async function registerRoutes(
           if (directClusters.length > 0) {
             console.log(`📊 First cluster: ${directClusters[0].title}`);
             
-            // Fetch article IDs for each cluster
-            const clustersWithArticleIds = await Promise.all(
-              directClusters.map(async (cluster) => {
-                const articleIds = await storage.getArticleIdsByClusterId(cluster.id);
-                // Handle timestamps - Supabase returns strings, not Date objects
-                const timeframeEnd = cluster.timeframe_end 
-                  ? (typeof cluster.timeframe_end === 'string' ? cluster.timeframe_end : cluster.timeframe_end.toISOString())
-                  : new Date().toISOString();
-                const expiresAt = cluster.expires_at
-                  ? (typeof cluster.expires_at === 'string' ? cluster.expires_at : cluster.expires_at.toISOString())
-                  : new Date().toISOString();
-                return {
-                  id: cluster.id,
-                  topic: cluster.title,
-                  summary: cluster.summary || '',
-                  articleIds,
-                  articleCount: cluster.article_count,
-                  sources: cluster.source_feeds || [],
-                  avgSimilarity: parseFloat(cluster.avg_similarity || '0'),
-                  relevanceScore: parseFloat(cluster.relevance_score || '0'),
-                  latestTimestamp: timeframeEnd,
-                  expiresAt: expiresAt
-                };
-              })
-            );
+            // Map clusters with article IDs from the cluster record
+            const clustersWithArticleIds = directClusters.map((cluster) => {
+              // Use article_ids stored directly in cluster, fallback to empty array
+              const articleIds = cluster.article_ids || [];
+              // Handle timestamps - Supabase returns strings, not Date objects
+              const timeframeEnd = cluster.timeframe_end 
+                ? (typeof cluster.timeframe_end === 'string' ? cluster.timeframe_end : cluster.timeframe_end.toISOString())
+                : new Date().toISOString();
+              const expiresAt = cluster.expires_at
+                ? (typeof cluster.expires_at === 'string' ? cluster.expires_at : cluster.expires_at.toISOString())
+                : new Date().toISOString();
+              return {
+                id: cluster.id,
+                topic: cluster.title,
+                summary: cluster.summary || '',
+                articleIds,
+                articleCount: cluster.article_count,
+                sources: cluster.source_feeds || [],
+                avgSimilarity: parseFloat(cluster.avg_similarity || '0'),
+                relevanceScore: parseFloat(cluster.relevance_score || '0'),
+                latestTimestamp: timeframeEnd,
+                expiresAt: expiresAt
+              };
+            });
             
             const response = {
               clusters: clustersWithArticleIds,
@@ -2527,31 +2526,28 @@ export async function registerRoutes(
           if (cachedClusters.length > 0) {
             console.log(`📊 Returning ${cachedClusters.length} cached clusters`);
             
-            // Fetch article IDs for each cluster
-            const clustersWithArticleIds = await Promise.all(
-              cachedClusters.map(async (cluster) => {
-                const articleIds = await storage.getArticleIdsByClusterId(cluster.id);
-                // Handle timestamps - may be Date objects or strings
-                const latestTs = cluster.latestTimestamp
-                  ? (typeof cluster.latestTimestamp === 'string' ? cluster.latestTimestamp : cluster.latestTimestamp.toISOString())
-                  : new Date().toISOString();
-                const expiresTs = cluster.expiresAt
-                  ? (typeof cluster.expiresAt === 'string' ? cluster.expiresAt : cluster.expiresAt.toISOString())
-                  : new Date().toISOString();
-                return {
-                  id: cluster.id,
-                  topic: cluster.topic,
-                  summary: cluster.summary,
-                  articleIds,
-                  articleCount: cluster.articleCount,
-                  sources: cluster.sources,
-                  avgSimilarity: cluster.avgSimilarity,
-                  relevanceScore: cluster.relevanceScore,
-                  latestTimestamp: latestTs,
-                  expiresAt: expiresTs
-                };
-              })
-            );
+            // Use articleIds directly from cached clusters (already populated by service)
+            const clustersWithArticleIds = cachedClusters.map((cluster) => {
+              // Handle timestamps - may be Date objects or strings
+              const latestTs = cluster.latestTimestamp
+                ? (typeof cluster.latestTimestamp === 'string' ? cluster.latestTimestamp : cluster.latestTimestamp.toISOString())
+                : new Date().toISOString();
+              const expiresTs = cluster.expiresAt
+                ? (typeof cluster.expiresAt === 'string' ? cluster.expiresAt : cluster.expiresAt.toISOString())
+                : new Date().toISOString();
+              return {
+                id: cluster.id,
+                topic: cluster.topic,
+                summary: cluster.summary,
+                articleIds: cluster.articleIds || [],
+                articleCount: cluster.articleCount,
+                sources: cluster.sources,
+                avgSimilarity: cluster.avgSimilarity,
+                relevanceScore: cluster.relevanceScore,
+                latestTimestamp: latestTs,
+                expiresAt: expiresTs
+              };
+            });
             
             const response = {
               clusters: clustersWithArticleIds,

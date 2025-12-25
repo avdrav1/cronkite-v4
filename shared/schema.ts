@@ -143,6 +143,7 @@ export const clusters = pgTable("clusters", {
   title: text("title").notNull(),
   summary: text("summary"),
   article_count: integer("article_count").notNull().default(0),
+  article_ids: text("article_ids").array().default(sql`'{}'`), // Store article IDs directly
   source_feeds: text("source_feeds").array().default(sql`'{}'`),
   timeframe_start: timestamp("timeframe_start", { withTimezone: true }),
   timeframe_end: timestamp("timeframe_end", { withTimezone: true }),

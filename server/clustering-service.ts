@@ -557,11 +557,15 @@ export class ClusteringServiceManager {
           return articleTime > latest.getTime() ? new Date(articleTime) : latest;
         }, new Date(0));
         
+        // Get article IDs for this cluster
+        const articleIds = candidate.members.map(m => m.id);
+        
         // Store cluster (Requirements: 2.5)
         const clusterData: InsertCluster = {
           title: label.topic,
           summary: label.summary,
           article_count: candidate.members.length,
+          article_ids: articleIds, // Store article IDs directly in cluster
           source_feeds: Array.from(candidate.sources),
           timeframe_start: candidate.members.reduce((earliest, article) => {
             const articleTime = article.publishedAt?.getTime() || Date.now();
@@ -576,8 +580,7 @@ export class ClusteringServiceManager {
         
         const storedCluster = await this.storage.createCluster(clusterData);
         
-        // Assign articles to cluster
-        const articleIds = candidate.members.map(m => m.id);
+        // Also assign articles to cluster (update article.cluster_id)
         await this.storage.assignArticlesToCluster(articleIds, storedCluster.id);
         
         createdClusters.push({
@@ -634,7 +637,7 @@ export class ClusteringServiceManager {
       id: cluster.id,
       topic: cluster.title,
       summary: cluster.summary || '',
-      articleIds: [], // Would need to fetch from articles table
+      articleIds: (cluster as any).article_ids || [], // Use article_ids from cluster record
       articleCount: cluster.article_count,
       sources: cluster.source_feeds || [],
       avgSimilarity: parseFloat(cluster.avg_similarity || '0'),
