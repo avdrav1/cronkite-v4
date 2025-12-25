@@ -90,7 +90,7 @@ export function ConfirmationStep({ selectedInterests, selectedRegion, selectedFe
     setSyncProgress({ current: 0, total: selectedFeedsCount, newArticles: 0 });
     
     try {
-      await apiRequest('POST', '/api/feeds/sync', {});
+      await apiRequest('POST', '/api/feeds/sync', { waitForResults: false });
       
       // Start polling for progress
       pollingRef.current = setInterval(pollSyncStatus, 1500);
@@ -118,8 +118,8 @@ export function ConfirmationStep({ selectedInterests, selectedRegion, selectedFe
           onboarding_completed: true
         });
 
-        // Trigger initial feed synchronization for subscribed feeds
-        await apiRequest('POST', '/api/feeds/sync', {});
+        // Trigger initial feed synchronization for subscribed feeds (async, don't wait)
+        await apiRequest('POST', '/api/feeds/sync', { waitForResults: false });
         
         // Start polling for sync progress
         pollingRef.current = setInterval(pollSyncStatus, 1500);
