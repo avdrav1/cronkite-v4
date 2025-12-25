@@ -2279,4 +2279,45 @@ export class SupabaseStorage implements IStorage {
       throw new Error(`Failed to remove from dead letter queue: ${error.message}`);
     }
   }
+
+  // Get article counts per feed for a user
+  async getArticleCountsByFeed(userId: string): Promise<Map<string, number>> {
+    const result = new Map<string, number>();
+    
+    // Get user's feeds first
+    const userFeeds = await this.getUserFeeds(userId);
+    if (userFeeds.length === 0) {
+      return result;
+    }
+    
+    const feedIds = userFeeds.map(f => f.id);
+    
+    // Get article counts for each feed using a single query with grouping
+    const { data, error } = await this.supabase
+      .from('articles')
+      .select('feed_id')
+      .in('feed_id', feedIds);
+    
+    if (error) {
+      console.error('Failed to get article counts:', error);
+      return result;
+    }
+    
+    // Count articles per feed
+    if (data) {
+      for (const article of data) {
+        const count = result.get(article.feed_id) || 0;
+        result.set(article.feed_id, count + 1);
+      }
+    }
+    
+    // Ensure all feeds have an entry (even if 0)
+    for (const feed of userFeeds) {
+      if (!result.has(feed.id)) {
+        result.set(feed.id, 0);
+      }
+    }
+    
+    return result;
+  }
 }

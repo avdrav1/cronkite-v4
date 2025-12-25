@@ -253,6 +253,9 @@ export interface IStorage {
     lastAttemptAt: Date;
   }>>;
   removeFromDeadLetterQueue(id: string): Promise<void>;
+  
+  // Article Counts per Feed
+  getArticleCountsByFeed(userId: string): Promise<Map<string, number>>;
 }
 
 export class MemStorage implements IStorage {
@@ -2581,6 +2584,23 @@ export class MemStorage implements IStorage {
 
   async removeFromDeadLetterQueue(id: string): Promise<void> {
     this.deadLetterQueue.delete(id);
+  }
+
+  async getArticleCountsByFeed(userId: string): Promise<Map<string, number>> {
+    const result = new Map<string, number>();
+    const userFeeds = this.userFeeds.get(userId) || [];
+    
+    for (const feed of userFeeds) {
+      let count = 0;
+      for (const article of this.articles.values()) {
+        if (article.feed_id === feed.id) {
+          count++;
+        }
+      }
+      result.set(feed.id, count);
+    }
+    
+    return result;
   }
 }
 

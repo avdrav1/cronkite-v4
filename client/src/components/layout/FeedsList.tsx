@@ -1,10 +1,10 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
-import { Folder, Rss, ChevronDown, ChevronRight, Plus, RefreshCw, Loader2 } from "lucide-react";
+import { Folder, Rss, ChevronDown, ChevronRight, Plus, RefreshCw, Loader2, Newspaper } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useFeedsQuery, useInvalidateFeedsQuery, useFeedCountQuery } from "@/hooks/useFeedsQuery";
+import { useFeedsQuery, useInvalidateFeedsQuery, useFeedCountQuery, useArticleCountsQuery } from "@/hooks/useFeedsQuery";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Feed } from "@shared/schema";
@@ -117,6 +117,7 @@ export function groupFeedsByCategory(feeds: Feed[]): GroupedFeeds {
 export function FeedsList({ onFeedSelect, onCategorySelect }: FeedsListProps) {
   const { data, isLoading, error } = useFeedsQuery();
   const { data: feedCountData } = useFeedCountQuery();
+  const { data: articleCountsData } = useArticleCountsQuery();
   const invalidateFeedsQuery = useInvalidateFeedsQuery();
   const [location, setLocation] = useLocation();
   const { toast } = useToast();
@@ -315,6 +316,23 @@ export function FeedsList({ onFeedSelect, onCategorySelect }: FeedsListProps) {
 
   const categories = Object.keys(groupedFeeds).sort();
 
+  // Calculate category article counts
+  const getCategoryArticleCount = (category: string): number => {
+    if (!articleCountsData?.counts) return 0;
+    const feedsInCategory = groupedFeeds[category] || [];
+    return feedsInCategory.reduce((sum, feed) => {
+      return sum + (articleCountsData.counts[feed.id] || 0);
+    }, 0);
+  };
+
+  // Check if "All Articles" is active (no source or category filter)
+  const isAllArticlesActive = !urlParams.source && !urlParams.category;
+
+  const handleAllArticlesClick = () => {
+    setLocation('/');
+    window.dispatchEvent(new CustomEvent('feedFilterChange', { detail: {} }));
+  };
+
   return (
     <div className="space-y-4">
       <div className="px-3 flex items-center justify-between">
@@ -351,6 +369,27 @@ export function FeedsList({ onFeedSelect, onCategorySelect }: FeedsListProps) {
         </Button>
       </div>
       <div className="space-y-1">
+        {/* All Articles option */}
+        <button
+          type="button"
+          onClick={handleAllArticlesClick}
+          className={cn(
+            "w-full flex items-center justify-start gap-2 px-3 h-9 text-sm font-medium rounded-md transition-colors",
+            isAllArticlesActive
+              ? "bg-sidebar-accent text-sidebar-accent-foreground"
+              : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+          )}
+        >
+          <Newspaper className="h-4 w-4" />
+          <span className="flex-1 text-left">All Articles</span>
+          {articleCountsData && (
+            <span className="text-xs text-muted-foreground/70 tabular-nums">
+              {articleCountsData.totalArticles.toLocaleString()}
+            </span>
+          )}
+        </button>
+
+        {/* Category folders */}
         {categories.map(category => (
           <CategoryFolder
             key={category}
@@ -365,6 +404,8 @@ export function FeedsList({ onFeedSelect, onCategorySelect }: FeedsListProps) {
             onSyncFeed={handleSyncFeed}
             syncingFeedId={syncState.syncingFeedId}
             isSyncing={syncState.isSyncing || syncState.isBulkSyncing}
+            categoryArticleCount={getCategoryArticleCount(category)}
+            articleCounts={articleCountsData?.counts}
           />
         ))}
       </div>
@@ -384,6 +425,8 @@ interface CategoryFolderProps {
   onSyncFeed: (feedId: string, feedName: string, e: React.MouseEvent) => void;
   syncingFeedId: string | null;
   isSyncing: boolean;
+  categoryArticleCount: number;
+  articleCounts?: Record<string, number>;
 }
 
 function CategoryFolder({
@@ -398,6 +441,8 @@ function CategoryFolder({
   onSyncFeed,
   syncingFeedId,
   isSyncing,
+  categoryArticleCount,
+  articleCounts,
 }: CategoryFolderProps) {
   const handleToggle = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -439,7 +484,9 @@ function CategoryFolder({
         >
           <Folder className="h-4 w-4 text-muted-foreground/70" />
           <span className="flex-1 text-left">{label}</span>
-          <span className="text-xs text-muted-foreground/50">{feeds.length}</span>
+          <span className="text-xs text-muted-foreground/50 tabular-nums">
+            {categoryArticleCount > 0 ? categoryArticleCount.toLocaleString() : feeds.length}
+          </span>
         </button>
       </div>
       {isExpanded && (
@@ -453,6 +500,7 @@ function CategoryFolder({
               onSync={(e) => onSyncFeed(feed.id, feed.name, e)}
               isSyncing={syncingFeedId === feed.id}
               isDisabled={isSyncing}
+              articleCount={articleCounts?.[feed.id]}
             />
           ))}
         </div>
@@ -468,9 +516,10 @@ interface FeedItemProps {
   onSync: (e: React.MouseEvent) => void;
   isSyncing: boolean;
   isDisabled: boolean;
+  articleCount?: number;
 }
 
-function FeedItem({ feed, isActive, onClick, onSync, isSyncing, isDisabled }: FeedItemProps) {
+function FeedItem({ feed, isActive, onClick, onSync, isSyncing, isDisabled, articleCount }: FeedItemProps) {
   const handleClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -507,6 +556,11 @@ function FeedItem({ feed, isActive, onClick, onSync, isSyncing, isDisabled }: Fe
           feed.icon_url && "hidden"
         )} />
         <span className="flex-1 text-left truncate">{feed.name}</span>
+        {articleCount !== undefined && articleCount > 0 && (
+          <span className="text-xs text-muted-foreground/50 tabular-nums">
+            {articleCount.toLocaleString()}
+          </span>
+        )}
       </button>
       {/* Sync button - Requirements: 1.4 (show loading state during sync) */}
       <button

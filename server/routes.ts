@@ -2811,6 +2811,37 @@ export async function registerRoutes(
     }
   });
 
+  // GET /api/feeds/article-counts - Get article counts per feed for the user
+  app.get('/api/feeds/article-counts', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      
+      const storage = await getStorage();
+      const countsByFeed = await storage.getArticleCountsByFeed(userId);
+      
+      // Convert Map to object for JSON response
+      const counts: Record<string, number> = {};
+      let totalArticles = 0;
+      
+      countsByFeed.forEach((count, feedId) => {
+        counts[feedId] = count;
+        totalArticles += count;
+      });
+      
+      res.json({
+        counts,
+        totalArticles
+      });
+      
+    } catch (error) {
+      console.error('Get article counts error:', error);
+      res.status(500).json({
+        error: 'ARTICLE_COUNTS_ERROR',
+        message: 'An error occurred while retrieving article counts'
+      });
+    }
+  });
+
   // PUT /api/articles/:articleId/read - Mark article as read/unread
   // Requirements: 6.1, 6.2
   app.put('/api/articles/:articleId/read', requireAuth, async (req: Request, res: Response) => {

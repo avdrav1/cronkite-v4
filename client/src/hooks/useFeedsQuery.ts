@@ -21,6 +21,14 @@ export interface FeedCountResponse {
 }
 
 /**
+ * Response type from /api/feeds/article-counts endpoint
+ */
+export interface ArticleCountsResponse {
+  counts: Record<string, number>;
+  totalArticles: number;
+}
+
+/**
  * Hook for fetching user's subscribed feeds
  * Uses TanStack Query with 5-minute stale time for caching
  * 
@@ -51,6 +59,7 @@ export function useInvalidateFeedsQuery() {
   return () => {
     queryClient.invalidateQueries({ queryKey: ['user-feeds'] });
     queryClient.invalidateQueries({ queryKey: ['feed-count'] });
+    queryClient.invalidateQueries({ queryKey: ['article-counts'] });
   };
 }
 
@@ -68,6 +77,21 @@ export function useFeedCountQuery() {
       return response.json();
     },
     staleTime: 60 * 1000, // 1 minute
+  });
+}
+
+/**
+ * Hook for fetching article counts per feed
+ * Uses TanStack Query with 2-minute stale time
+ */
+export function useArticleCountsQuery() {
+  return useQuery<ArticleCountsResponse>({
+    queryKey: ['article-counts'],
+    queryFn: async () => {
+      const response = await apiRequest('GET', '/api/feeds/article-counts');
+      return response.json();
+    },
+    staleTime: 2 * 60 * 1000, // 2 minutes
   });
 }
 
