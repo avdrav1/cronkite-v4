@@ -659,9 +659,28 @@ export default function Home() {
   const clusterArticleIds = useMemo(() => {
     if (!clusterFilter) return null;
     const cluster = clusters.find(c => c.id === clusterFilter);
+    console.log('🔍 Cluster filter debug:', {
+      clusterFilter,
+      foundCluster: cluster?.topic,
+      clusterArticleIds: cluster?.articleIds,
+      articleIdsLength: cluster?.articleIds?.length
+    });
     if (!cluster || !cluster.articleIds) return null;
     return new Set(cluster.articleIds);
   }, [clusterFilter, clusters]);
+
+  // Debug: Log when cluster filter is active
+  if (clusterFilter) {
+    const matchingArticles = articlesToUse.filter(a => clusterArticleIds?.has(a.id));
+    console.log('🔍 Active cluster filter:', {
+      clusterFilter,
+      clusterArticleIdsSet: clusterArticleIds ? Array.from(clusterArticleIds) : null,
+      totalArticlesInFeed: articlesToUse.length,
+      matchingArticlesCount: matchingArticles.length,
+      sampleFeedArticleIds: articlesToUse.slice(0, 10).map(a => a.id),
+      matchingArticleTitles: matchingArticles.slice(0, 3).map(a => a.title?.substring(0, 50))
+    });
+  }
 
   const baseFilteredFeed = mixedFeed.filter((item) => {
     // Trending items pass through unless we're filtering by source/category/cluster
