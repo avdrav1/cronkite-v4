@@ -190,17 +190,18 @@ export default function Admin() {
   };
 
   const removeAllBroken = async () => {
-    const brokenFeeds = feeds.filter(f => f.status === 'error' || f.status === 'empty');
+    const brokenFeeds = feeds.filter(f => f.status === 'error' || f.status === 'empty' || f.status === 'stale');
     if (brokenFeeds.length === 0) {
       alert('No broken feeds to remove');
       return;
     }
     
-    if (!confirm(`Remove ${brokenFeeds.length} broken feeds?`)) return;
+    if (!confirm(`Remove ${brokenFeeds.length} broken/stale feeds?`)) return;
     
     try {
-      await apiRequest('POST', '/api/admin/feeds/remove-broken');
-      setFeeds(prev => prev.filter(f => f.status !== 'error' && f.status !== 'empty'));
+      const feedIds = brokenFeeds.map(f => f.id);
+      await apiRequest('POST', '/api/admin/feeds/remove-broken', { feedIds });
+      setFeeds(prev => prev.filter(f => f.status !== 'error' && f.status !== 'empty' && f.status !== 'stale'));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to remove broken feeds');
     }
@@ -410,10 +411,10 @@ export default function Admin() {
               <option key={cat} value={cat}>{cat}</option>
             ))}
           </select>
-          {(summary.errors > 0 || summary.empty > 0) && (
+          {(summary.errors > 0 || summary.empty > 0 || summary.stale > 0) && (
             <Button variant="destructive" size="sm" onClick={removeAllBroken}>
               <Trash2 className="h-4 w-4 mr-2" />
-              Remove {summary.errors + summary.empty} Broken
+              Remove {summary.errors + summary.empty + summary.stale} Broken
             </Button>
           )}
         </div>
