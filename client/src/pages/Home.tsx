@@ -607,9 +607,30 @@ export default function Home() {
     return map;
   }, [clusters]);
 
+  // Build a reverse map: article ID -> cluster info (for visual grouping)
+  const articleToClusterMap = useMemo(() => {
+    const map = new Map<string, { clusterId: string; topic: string; color: string }>();
+    clusters.forEach((cluster, index) => {
+      const color = CLUSTER_COLORS[index % CLUSTER_COLORS.length];
+      // Use articleIds from cluster to map articles to their cluster
+      if (cluster.articleIds && cluster.articleIds.length > 0) {
+        cluster.articleIds.forEach(articleId => {
+          map.set(articleId, {
+            clusterId: cluster.id,
+            topic: cluster.topic,
+            color
+          });
+        });
+      }
+    });
+    console.log('📊 Built articleToClusterMap with', map.size, 'article mappings');
+    return map;
+  }, [clusters]);
+
   // Enrich articles with cluster info for visual grouping
   const enrichedArticles = useMemo(() => {
     return articles.map(article => {
+      // First check if article has cluster_id set directly
       if (article.cluster_id && clusterMap.has(article.cluster_id)) {
         const clusterInfo = clusterMap.get(article.cluster_id)!;
         return {
@@ -618,9 +639,19 @@ export default function Home() {
           clusterColor: clusterInfo.color
         };
       }
+      // Otherwise check if article is in any cluster's articleIds
+      if (articleToClusterMap.has(article.id)) {
+        const clusterInfo = articleToClusterMap.get(article.id)!;
+        return {
+          ...article,
+          cluster_id: clusterInfo.clusterId,
+          clusterTopic: clusterInfo.topic,
+          clusterColor: clusterInfo.color
+        };
+      }
       return article;
     });
-  }, [articles, clusterMap]);
+  }, [articles, clusterMap, articleToClusterMap]);
 
   const enrichedStarredArticles = useMemo(() => {
     return starredArticles.map(article => {
@@ -632,9 +663,18 @@ export default function Home() {
           clusterColor: clusterInfo.color
         };
       }
+      if (articleToClusterMap.has(article.id)) {
+        const clusterInfo = articleToClusterMap.get(article.id)!;
+        return {
+          ...article,
+          cluster_id: clusterInfo.clusterId,
+          clusterTopic: clusterInfo.topic,
+          clusterColor: clusterInfo.color
+        };
+      }
       return article;
     });
-  }, [starredArticles, clusterMap]);
+  }, [starredArticles, clusterMap, articleToClusterMap]);
 
   const enrichedReadArticles = useMemo(() => {
     return readArticles.map(article => {
@@ -642,6 +682,15 @@ export default function Home() {
         const clusterInfo = clusterMap.get(article.cluster_id)!;
         return {
           ...article,
+          clusterTopic: clusterInfo.topic,
+          clusterColor: clusterInfo.color
+        };
+      }
+      if (articleToClusterMap.has(article.id)) {
+        const clusterInfo = articleToClusterMap.get(article.id)!;
+        return {
+          ...article,
+          cluster_id: clusterInfo.clusterId,
           clusterTopic: clusterInfo.topic,
           clusterColor: clusterInfo.color
         };
@@ -677,9 +726,22 @@ export default function Home() {
       clusterArticleIds: cluster?.articleIds,
       articleIdsLength: cluster?.articleIds?.length
     });
-    if (!cluster || !cluster.articleIds) return null;
+    if (!cluster || !cluster.articleIds || cluster.articleIds.length === 0) {
+      // Fallback: use articleToClusterMap to find articles
+      const articleIds: string[] = [];
+      articleToClusterMap.forEach((info, articleId) => {
+        if (info.clusterId === clusterFilter) {
+          articleIds.push(articleId);
+        }
+      });
+      if (articleIds.length > 0) {
+        console.log('🔍 Using articleToClusterMap fallback, found', articleIds.length, 'articles');
+        return new Set(articleIds);
+      }
+      return null;
+    }
     return new Set(cluster.articleIds);
-  }, [clusterFilter, clusters]);
+  }, [clusterFilter, clusters, articleToClusterMap]);
 
   // Debug: Log when cluster filter is active
   if (clusterFilter) {

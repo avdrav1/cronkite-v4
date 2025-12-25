@@ -2687,6 +2687,7 @@ export async function registerRoutes(
   app.get('/api/clusters/:clusterId/articles', requireAuth, async (req: Request, res: Response) => {
     try {
       const clusterId = req.params.clusterId;
+      const userId = req.user!.id;
       console.log(`📊 Fetching articles for cluster ${clusterId}`);
       
       const storage = await getStorage();
@@ -2707,7 +2708,60 @@ export async function registerRoutes(
         articleIds = await storage.getArticleIdsByClusterId(clusterId);
       }
       
-      console.log(`📊 Found ${articleIds.length} article IDs for cluster`);
+      console.log(`📊 Found ${articleIds.length} article IDs for cluster "${cluster.title}"`);
+      
+      // If still no articles, try to find matching articles by searching user's feed
+      if (articleIds.length === 0 && cluster.source_feeds && cluster.source_feeds.length > 0) {
+        console.log(`📊 No article IDs found, searching user's feed for matching articles...`);
+        
+        // Get user's feeds and articles
+        const userFeeds = await storage.getUserFeeds(userId);
+        const feedNames = new Set(cluster.source_feeds.map(s => s.toLowerCase()));
+        
+        // Find feeds that match the cluster's sources
+        const matchingFeeds = userFeeds.filter(f => 
+          feedNames.has(f.name.toLowerCase())
+        );
+        
+        if (matchingFeeds.length > 0) {
+          // Get recent articles from matching feeds
+          const articlePromises = matchingFeeds.map(feed => 
+            storage.getArticlesByFeedId(feed.id, 50)
+          );
+          const feedArticles = (await Promise.all(articlePromises)).flat();
+          
+          // Return articles from matching sources (limited to recent ones)
+          const matchingArticles = feedArticles
+            .sort((a, b) => {
+              const dateA = a.published_at ? new Date(a.published_at).getTime() : 0;
+              const dateB = b.published_at ? new Date(b.published_at).getTime() : 0;
+              return dateB - dateA;
+            })
+            .slice(0, cluster.article_count || 10);
+          
+          const articlesWithFeedInfo = await Promise.all(
+            matchingArticles.map(async (article) => {
+              const feed = matchingFeeds.find(f => f.id === article.feed_id);
+              return {
+                id: article.id,
+                title: article.title,
+                excerpt: article.excerpt || article.content?.substring(0, 200),
+                url: article.url,
+                source: feed?.name || 'Unknown Source',
+                published_at: article.published_at,
+                image_url: article.image_url
+              };
+            })
+          );
+          
+          console.log(`📊 Found ${articlesWithFeedInfo.length} matching articles from user's feeds`);
+          return res.json({
+            articles: articlesWithFeedInfo,
+            total: articlesWithFeedInfo.length,
+            method: 'feed_search'
+          });
+        }
+      }
       
       if (articleIds.length === 0) {
         return res.json({ articles: [], total: 0 });
