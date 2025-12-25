@@ -235,8 +235,8 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-2xl p-0 overflow-hidden gap-0 border-border bg-background shadow-2xl max-h-[90vh] flex flex-col">
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()} modal>
+      <DialogContent className="sm:max-w-2xl p-0 overflow-hidden gap-0 border-border bg-background shadow-2xl max-h-[90vh] flex flex-col" onPointerDownOutside={(e) => e.preventDefault()}>
         <div className="p-6 pb-2 border-b border-border bg-background/50 backdrop-blur-sm shrink-0">
           <DialogHeader className="flex flex-row items-center justify-between mb-4 space-y-0">
             <DialogTitle className="text-xl font-display font-bold">Add Feed</DialogTitle>

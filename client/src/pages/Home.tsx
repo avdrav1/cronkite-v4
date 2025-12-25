@@ -277,6 +277,10 @@ export default function Home() {
             if (clustersData.clusters && clustersData.clusters.length > 0) {
               setClusters(clustersData.clusters);
               console.log(`✅ Loaded ${clustersData.clusters.length} trending clusters from API`);
+              // Debug: log articleIds for each cluster
+              clustersData.clusters.forEach((c: any) => {
+                console.log(`📊 Cluster "${c.topic}": ${c.articleCount} articles, articleIds:`, c.articleIds?.slice(0, 5) || 'none');
+              });
             } else {
               // No clusters available - this is fine, just don't show trending cards
               console.log('ℹ️ No trending clusters available from API:', clustersData.message || 'No message');
@@ -651,6 +655,14 @@ export default function Home() {
   const mixedFeed = createMixedFeed(articlesToUse, clusters);
 
   // Base filtering (Source + Category + Status + Cluster)
+  // Build a set of article IDs for the active cluster filter (for efficient lookup)
+  const clusterArticleIds = useMemo(() => {
+    if (!clusterFilter) return null;
+    const cluster = clusters.find(c => c.id === clusterFilter);
+    if (!cluster || !cluster.articleIds) return null;
+    return new Set(cluster.articleIds);
+  }, [clusterFilter, clusters]);
+
   const baseFilteredFeed = mixedFeed.filter((item) => {
     // Trending items pass through unless we're filtering by source/category/cluster
     if (item.type === 'trending') {
@@ -664,9 +676,10 @@ export default function Home() {
     const article = item.data as ArticleWithFeed;
     
     // 0. Cluster Filter (filter by trending topic cluster)
-    if (clusterFilter) {
-      // Only show articles that belong to this cluster
-      if (article.cluster_id !== clusterFilter) return false;
+    // Use the cluster's articleIds array instead of article.cluster_id
+    if (clusterFilter && clusterArticleIds) {
+      // Only show articles that are in this cluster's articleIds
+      if (!clusterArticleIds.has(article.id)) return false;
     }
     
     // 1. Source Filter (specific feed name) - EXACT match
