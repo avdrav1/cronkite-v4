@@ -149,12 +149,14 @@ export function AppShell({ children }: AppShellProps) {
                     Settings
                   </Link>
                 </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href="/admin" className="w-full cursor-pointer">
-                    <Shield className="mr-2 h-4 w-4" />
-                    Feed Admin
-                  </Link>
-                </DropdownMenuItem>
+                {user?.is_admin && (
+                  <DropdownMenuItem asChild>
+                    <Link href="/admin" className="w-full cursor-pointer">
+                      <Shield className="mr-2 h-4 w-4" />
+                      Feed Admin
+                    </Link>
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={handleLogout} className="cursor-pointer">
                   <LogOut className="mr-2 h-4 w-4" />

@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import passport from "passport";
 import { getStorage } from "./storage";
-import { requireAuth, requireNoAuth, createSupabaseClient } from "./auth-middleware";
+import { requireAuth, requireNoAuth, requireAdmin, createSupabaseClient } from "./auth-middleware";
 import { syncFeeds, syncFeed } from "./rss-sync";
 import { 
   createFeedSyncIntegrationService, 
@@ -3542,8 +3542,45 @@ export async function registerRoutes(
   // Admin Routes - Feed Management
   // ============================================================================
 
+  // GET /api/admin/feeds/next-sync - Get feeds with upcoming sync times
+  app.get('/api/admin/feeds/next-sync', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const storage = await getStorage();
+      const supabase = (storage as any).supabase;
+      
+      if (!supabase) {
+        return res.json({ success: true, feeds: [] });
+      }
+      
+      // Get feeds ordered by next_sync_at (soonest first)
+      const { data: feeds, error } = await supabase
+        .from('feeds')
+        .select('id, name, next_sync_at, sync_priority, last_fetched_at')
+        .eq('status', 'active')
+        .order('next_sync_at', { ascending: true, nullsFirst: true })
+        .limit(20);
+      
+      if (error) {
+        throw new Error(error.message);
+      }
+      
+      res.json({
+        success: true,
+        feeds: feeds || []
+      });
+      
+    } catch (error) {
+      console.error('Get next sync feeds error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'NEXT_SYNC_ERROR',
+        message: 'Failed to retrieve next sync feeds'
+      });
+    }
+  });
+
   // GET /api/admin/feeds - Get all recommended feeds with health status
-  app.get('/api/admin/feeds', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/admin/feeds', requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const storage = await getStorage();
       const supabase = (storage as any).supabase;
@@ -3581,7 +3618,7 @@ export async function registerRoutes(
   });
 
   // POST /api/admin/feeds/:id/test - Test a single feed
-  app.post('/api/admin/feeds/:id/test', requireAuth, async (req: Request, res: Response) => {
+  app.post('/api/admin/feeds/:id/test', requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const feedId = req.params.id;
       const storage = await getStorage();
@@ -3683,7 +3720,7 @@ export async function registerRoutes(
   });
 
   // DELETE /api/admin/feeds/:id - Remove a recommended feed
-  app.delete('/api/admin/feeds/:id', requireAuth, async (req: Request, res: Response) => {
+  app.delete('/api/admin/feeds/:id', requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const feedId = req.params.id;
       const storage = await getStorage();
@@ -3706,7 +3743,7 @@ export async function registerRoutes(
   });
 
   // POST /api/admin/feeds/remove-broken - Remove all broken feeds
-  app.post('/api/admin/feeds/remove-broken', requireAuth, async (req: Request, res: Response) => {
+  app.post('/api/admin/feeds/remove-broken', requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const { feedIds } = req.body;
       
@@ -3734,7 +3771,7 @@ export async function registerRoutes(
   });
 
   // POST /api/admin/feeds/audit - Run health audit on all feeds (streaming)
-  app.post('/api/admin/feeds/audit', requireAuth, async (req: Request, res: Response) => {
+  app.post('/api/admin/feeds/audit', requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const storage = await getStorage();
       const supabase = (storage as any).supabase;

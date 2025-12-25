@@ -391,3 +391,27 @@ export const authMiddleware = (req: Request, res: Response, next: NextFunction) 
     next();
   });
 };
+
+// Middleware to check if user is an admin
+// Must be used after requireAuth to ensure user is authenticated
+export const requireAdmin = (req: Request, res: Response, next: NextFunction) => {
+  // User must be authenticated first (requireAuth should be called before this)
+  if (!req.user) {
+    return res.status(401).json({ 
+      error: 'Authentication required',
+      message: 'You must be logged in to access this resource'
+    });
+  }
+  
+  // Check if user has admin privileges
+  if (!req.user.is_admin) {
+    console.log('🔐 requireAdmin: Access denied for user:', req.user.email);
+    return res.status(403).json({ 
+      error: 'Admin access required',
+      message: 'You do not have permission to access this resource'
+    });
+  }
+  
+  console.log('🔐 requireAdmin: Admin access granted for:', req.user.email);
+  next();
+};

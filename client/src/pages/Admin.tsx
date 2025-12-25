@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from "react";
+import { useLocation } from "wouter";
 import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
 import { 
@@ -16,10 +17,17 @@ import {
   Search,
   Play,
   Square,
-  Download
+  Download,
+  Activity,
+  Calendar,
+  Zap,
+  Timer,
+  ShieldX
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
+import { formatDistanceToNow, format } from "date-fns";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface FeedHealth {
   id: string;
@@ -55,11 +63,36 @@ export default function Admin() {
   const [selectedStatus, setSelectedStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const { user } = useAuth();
+  const [, setLocation] = useLocation();
+
+  // Redirect non-admin users
+  useEffect(() => {
+    if (user && !user.is_admin) {
+      setLocation('/');
+    }
+  }, [user, setLocation]);
 
   // Load feeds on mount
   useEffect(() => {
-    loadFeeds();
-  }, []);
+    if (user?.is_admin) {
+      loadFeeds();
+    }
+  }, [user]);
+
+  // Show access denied for non-admin users
+  if (user && !user.is_admin) {
+    return (
+      <AppShell>
+        <div className="flex flex-col items-center justify-center py-20 gap-4">
+          <ShieldX className="h-16 w-16 text-muted-foreground" />
+          <h1 className="text-2xl font-bold">Access Denied</h1>
+          <p className="text-muted-foreground">You don't have permission to access this page.</p>
+          <Button onClick={() => setLocation('/')}>Go Home</Button>
+        </div>
+      </AppShell>
+    );
+  }
 
   const loadFeeds = async () => {
     try {
@@ -324,6 +357,9 @@ export default function Admin() {
           </Alert>
         )}
 
+        {/* Sync Monitor */}
+        <SyncMonitor />
+
         {/* Summary Cards */}
         <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
           <Card className="cursor-pointer hover:bg-muted/50" onClick={() => setSelectedStatus(null)}>
@@ -507,4 +543,280 @@ function StatusBadge({ status, error }: { status: string; error?: string }) {
     default:
       return <Badge variant="outline">Unknown</Badge>;
   }
+}
+
+interface SchedulerRun {
+  id: string;
+  run_type: string;
+  started_at: string;
+  completed_at: string | null;
+  feeds_synced: number;
+  feeds_succeeded: number;
+  feeds_failed: number;
+  articles_new: number;
+  errors: string | null;
+}
+
+interface SchedulerStatus {
+  lastRunAt: string | null;
+  runs24h: number;
+  successRate24h: number | null;
+  feedsSynced24h: number;
+  articlesNew24h: number;
+  isHealthy: boolean;
+}
+
+interface NextSyncInfo {
+  feedId: string;
+  feedName: string;
+  nextSyncAt: string;
+  priority: string;
+}
+
+function SyncMonitor() {
+  const [scheduler, setScheduler] = useState<SchedulerStatus | null>(null);
+  const [recentRuns, setRecentRuns] = useState<SchedulerRun[]>([]);
+  const [nextSyncs, setNextSyncs] = useState<NextSyncInfo[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchData = async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+
+      const [schedulerRes, nextSyncsRes] = await Promise.all([
+        apiRequest('GET', '/api/scheduler/status'),
+        apiRequest('GET', '/api/admin/feeds/next-sync')
+      ]);
+
+      const schedulerData = await schedulerRes.json();
+      const nextSyncsData = await nextSyncsRes.json();
+
+      if (schedulerData.success) {
+        setScheduler(schedulerData.scheduler?.feedSync || null);
+        setRecentRuns(schedulerData.recentRuns || []);
+      }
+
+      if (nextSyncsData.success) {
+        // Map the API response to our expected format
+        const mappedFeeds = (nextSyncsData.feeds || []).map((f: any) => ({
+          feedId: f.id,
+          feedName: f.name,
+          nextSyncAt: f.next_sync_at,
+          priority: f.sync_priority || 'medium'
+        }));
+        setNextSyncs(mappedFeeds);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load sync status');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+    // Refresh every 30 seconds
+    const interval = setInterval(fetchData, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const getPriorityColor = (priority: string) => {
+    switch (priority) {
+      case 'high': return 'text-red-500';
+      case 'medium': return 'text-amber-500';
+      case 'low': return 'text-blue-500';
+      default: return 'text-muted-foreground';
+    }
+  };
+
+  const getPriorityIcon = (priority: string) => {
+    switch (priority) {
+      case 'high': return <Zap className="h-3 w-3" />;
+      case 'medium': return <Clock className="h-3 w-3" />;
+      case 'low': return <Timer className="h-3 w-3" />;
+      default: return <Clock className="h-3 w-3" />;
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <Activity className="h-5 w-5 text-primary" />
+            <CardTitle className="text-lg">Sync Monitor</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-center py-4">
+            <Spinner className="h-5 w-5" />
+            <span className="ml-2 text-sm text-muted-foreground">Loading sync status...</span>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (error) {
+    return (
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <Activity className="h-5 w-5 text-primary" />
+            <CardTitle className="text-lg">Sync Monitor</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Activity className="h-5 w-5 text-primary" />
+            <CardTitle className="text-lg">Sync Monitor</CardTitle>
+            {scheduler?.isHealthy ? (
+              <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
+                <CheckCircle className="h-3 w-3 mr-1" />
+                Healthy
+              </Badge>
+            ) : (
+              <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
+                <AlertTriangle className="h-3 w-3 mr-1" />
+                Needs Attention
+              </Badge>
+            )}
+          </div>
+          <Button variant="ghost" size="sm" onClick={fetchData}>
+            <RefreshCw className="h-4 w-4" />
+          </Button>
+        </div>
+        <CardDescription>
+          Scheduled sync runs every 15 minutes via Netlify
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Scheduler Stats */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div className="p-3 bg-muted/50 rounded-lg">
+            <p className="text-xs text-muted-foreground">Last Run</p>
+            <p className="text-sm font-medium">
+              {scheduler?.lastRunAt 
+                ? formatDistanceToNow(new Date(scheduler.lastRunAt), { addSuffix: true })
+                : 'Never'}
+            </p>
+          </div>
+          <div className="p-3 bg-muted/50 rounded-lg">
+            <p className="text-xs text-muted-foreground">Runs (24h)</p>
+            <p className="text-sm font-medium">{scheduler?.runs24h || 0}</p>
+          </div>
+          <div className="p-3 bg-muted/50 rounded-lg">
+            <p className="text-xs text-muted-foreground">Success Rate</p>
+            <p className={cn(
+              "text-sm font-medium",
+              (scheduler?.successRate24h || 0) >= 90 ? "text-green-600" :
+              (scheduler?.successRate24h || 0) >= 70 ? "text-amber-600" : "text-red-600"
+            )}>
+              {scheduler?.successRate24h != null ? `${scheduler?.successRate24h}%` : 'N/A'}
+            </p>
+          </div>
+          <div className="p-3 bg-muted/50 rounded-lg">
+            <p className="text-xs text-muted-foreground">Feeds Synced (24h)</p>
+            <p className="text-sm font-medium">{scheduler?.feedsSynced24h || 0}</p>
+          </div>
+          <div className="p-3 bg-muted/50 rounded-lg">
+            <p className="text-xs text-muted-foreground">New Articles (24h)</p>
+            <p className="text-sm font-medium">{scheduler?.articlesNew24h || 0}</p>
+          </div>
+        </div>        {/* Next Scheduled Syncs */}
+        <div>
+          <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
+            <Calendar className="h-4 w-4" />
+            Next Scheduled Syncs
+          </h4>
+          {nextSyncs.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No feeds scheduled for sync</p>
+          ) : (
+            <div className="space-y-1 max-h-32 overflow-y-auto">
+              {nextSyncs.slice(0, 5).map((feed) => (
+                <div key={feed.feedId} className="flex items-center justify-between text-sm py-1 px-2 rounded hover:bg-muted/50">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={getPriorityColor(feed.priority)}>
+                      {getPriorityIcon(feed.priority)}
+                    </span>
+                    <span className="truncate">{feed.feedName}</span>
+                  </div>
+                  <span className="text-xs text-muted-foreground shrink-0 ml-2">
+                    {new Date(feed.nextSyncAt) <= new Date() 
+                      ? 'Due now'
+                      : formatDistanceToNow(new Date(feed.nextSyncAt), { addSuffix: true })}
+                  </span>
+                </div>
+              ))}
+              {nextSyncs.length > 5 && (
+                <p className="text-xs text-muted-foreground text-center py-1">
+                  +{nextSyncs.length - 5} more feeds scheduled
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Recent Runs */}
+        {recentRuns.length > 0 && (
+          <div>
+            <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
+              <Clock className="h-4 w-4" />
+              Recent Scheduler Runs
+            </h4>
+            <div className="space-y-1 max-h-40 overflow-y-auto">
+              {recentRuns.slice(0, 5).map((run) => (
+                <div key={run.id} className="flex items-center justify-between text-sm py-1.5 px-2 rounded bg-muted/30">
+                  <div className="flex items-center gap-2">
+                    {run.feeds_failed === 0 ? (
+                      <CheckCircle className="h-3.5 w-3.5 text-green-500" />
+                    ) : run.feeds_failed < run.feeds_synced / 2 ? (
+                      <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+                    ) : (
+                      <XCircle className="h-3.5 w-3.5 text-red-500" />
+                    )}
+                    <span className="text-xs">
+                      {format(new Date(run.started_at), 'MMM d, h:mm a')}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                    <span>{run.feeds_synced} feeds</span>
+                    <span className="text-green-600">+{run.articles_new} articles</span>
+                    {run.feeds_failed > 0 && (
+                      <span className="text-red-500">{run.feeds_failed} failed</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* No runs warning */}
+        {!scheduler?.lastRunAt && recentRuns.length === 0 && (
+          <Alert>
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              No scheduler runs detected. The Netlify scheduled function may not be running. 
+              Check your Netlify dashboard for function logs.
+            </AlertDescription>
+          </Alert>
+        )}
+      </CardContent>
+    </Card>
+  );
 }

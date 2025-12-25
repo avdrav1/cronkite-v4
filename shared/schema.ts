@@ -11,6 +11,7 @@ export const profiles = pgTable("profiles", {
   timezone: text("timezone").notNull().default("America/New_York"),
   region_code: text("region_code"),
   onboarding_completed: boolean("onboarding_completed").notNull().default(false),
+  is_admin: boolean("is_admin").notNull().default(false),
   created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updated_at: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

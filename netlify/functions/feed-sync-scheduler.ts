@@ -70,15 +70,14 @@ export default async function handler() {
         const batchStartTime = Date.now();
         const syncResult = await syncFeedsWithIntegration(storage as any, batch, {
           maxArticles: 50,
-          respectEtag: true,
-          timeout: 30000 // 30 second timeout per feed
+          respectEtag: true
         });
         
-        results.feedsSynced += syncResult.results.length;
+        results.feedsSynced += syncResult.syncResults.length;
         
         // Process each result
-        for (let j = 0; j < syncResult.results.length; j++) {
-          const result = syncResult.results[j];
+        for (let j = 0; j < syncResult.syncResults.length; j++) {
+          const result = syncResult.syncResults[j];
           const feed = batch[j];
           const feedDuration = Date.now() - batchStartTime;
           
@@ -157,6 +156,26 @@ export default async function handler() {
     console.log(`   Failed: ${results.feedsFailed}`);
     console.log(`   New articles: ${results.articlesNew}`);
     console.log(`   Duration: ${totalDuration}ms`);
+    
+    // Log scheduler run to database for monitoring
+    try {
+      const supabase = (storage as any).supabase;
+      if (supabase) {
+        await supabase.from('scheduler_runs').insert({
+          run_type: 'feed_sync',
+          started_at: new Date(startTime).toISOString(),
+          completed_at: new Date().toISOString(),
+          feeds_synced: results.feedsSynced,
+          feeds_succeeded: results.feedsSucceeded,
+          feeds_failed: results.feedsFailed,
+          articles_new: results.articlesNew,
+          errors: results.errors.length > 0 ? JSON.stringify(results.errors) : null
+        });
+        console.log("✅ Scheduler run logged to database");
+      }
+    } catch (logError) {
+      console.error("Failed to log scheduler run:", logError);
+    }
     
     return new Response(JSON.stringify({
       success: true,
