@@ -221,6 +221,43 @@ export interface IStorage {
   }): Promise<Feed>;
   getNewArticleIds(feedId: string, since: Date): Promise<string[]>;
   
+  // Feed Health Tracking
+  getFeedHealthStats(feedId: string, days?: number): Promise<{
+    feedId: string;
+    totalSyncs: number;
+    successfulSyncs: number;
+    failedSyncs: number;
+    successRate: number;
+    lastSyncAt: Date | null;
+    lastSyncStatus: 'success' | 'error' | 'in_progress' | null;
+    lastError: string | null;
+    avgSyncDuration: number;
+    totalArticlesFound: number;
+    totalArticlesNew: number;
+    recentSyncs: Array<{
+      id: string;
+      status: string;
+      startedAt: Date;
+      completedAt: Date | null;
+      duration: number | null;
+      articlesFound: number;
+      articlesNew: number;
+      error: string | null;
+    }>;
+  }>;
+  
+  getAllFeedsHealthStats(userId: string): Promise<Array<{
+    feedId: string;
+    feedName: string;
+    totalSyncs: number;
+    successfulSyncs: number;
+    failedSyncs: number;
+    successRate: number;
+    lastSyncAt: Date | null;
+    lastSyncStatus: 'success' | 'error' | 'in_progress' | null;
+    lastError: string | null;
+  }>>;
+  
   // AI Rate Limiter Storage (Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6)
   recordUsageLog(usage: InsertAIUsageLog): Promise<AIUsageLog>;
   getDailyUsage(userId: string, date: string): Promise<AIUsageDaily | undefined>;
@@ -2400,6 +2437,116 @@ export class MemStorage implements IStorage {
     });
     
     return newArticleIds;
+  }
+
+  // Feed Health Tracking Methods (MemStorage fallback)
+  async getFeedHealthStats(feedId: string, days: number = 7): Promise<{
+    feedId: string;
+    totalSyncs: number;
+    successfulSyncs: number;
+    failedSyncs: number;
+    successRate: number;
+    lastSyncAt: Date | null;
+    lastSyncStatus: 'success' | 'error' | 'in_progress' | null;
+    lastError: string | null;
+    avgSyncDuration: number;
+    totalArticlesFound: number;
+    totalArticlesNew: number;
+    recentSyncs: Array<{
+      id: string;
+      status: string;
+      startedAt: Date;
+      completedAt: Date | null;
+      duration: number | null;
+      articlesFound: number;
+      articlesNew: number;
+      error: string | null;
+    }>;
+  }> {
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+    
+    const syncs = Array.from(this.feedSyncLogs.values())
+      .filter(log => log.feed_id === feedId && log.sync_started_at >= since)
+      .sort((a, b) => b.sync_started_at.getTime() - a.sync_started_at.getTime());
+    
+    const successfulSyncs = syncs.filter(s => s.status === 'success').length;
+    const failedSyncs = syncs.filter(s => s.status === 'error').length;
+    const totalSyncs = syncs.length;
+    const lastSync = syncs[0] || null;
+    
+    const completedSyncs = syncs.filter(s => s.sync_duration_ms != null);
+    const avgSyncDuration = completedSyncs.length > 0
+      ? completedSyncs.reduce((sum, s) => sum + (s.sync_duration_ms || 0), 0) / completedSyncs.length
+      : 0;
+    
+    const totalArticlesFound = syncs.reduce((sum, s) => sum + (s.articles_found || 0), 0);
+    const totalArticlesNew = syncs.reduce((sum, s) => sum + (s.articles_new || 0), 0);
+    const lastFailedSync = syncs.find(s => s.status === 'error');
+    
+    return {
+      feedId,
+      totalSyncs,
+      successfulSyncs,
+      failedSyncs,
+      successRate: totalSyncs > 0 ? Math.round((successfulSyncs / totalSyncs) * 100) : 0,
+      lastSyncAt: lastSync?.sync_started_at || null,
+      lastSyncStatus: lastSync?.status as 'success' | 'error' | 'in_progress' | null,
+      lastError: lastFailedSync?.error_message || null,
+      avgSyncDuration: Math.round(avgSyncDuration),
+      totalArticlesFound,
+      totalArticlesNew,
+      recentSyncs: syncs.slice(0, 10).map(s => ({
+        id: s.id,
+        status: s.status,
+        startedAt: s.sync_started_at,
+        completedAt: s.sync_completed_at || null,
+        duration: s.sync_duration_ms || null,
+        articlesFound: s.articles_found || 0,
+        articlesNew: s.articles_new || 0,
+        error: s.error_message || null
+      }))
+    };
+  }
+
+  async getAllFeedsHealthStats(userId: string): Promise<Array<{
+    feedId: string;
+    feedName: string;
+    totalSyncs: number;
+    successfulSyncs: number;
+    failedSyncs: number;
+    successRate: number;
+    lastSyncAt: Date | null;
+    lastSyncStatus: 'success' | 'error' | 'in_progress' | null;
+    lastError: string | null;
+  }>> {
+    const feeds = this.userFeeds.get(userId) || [];
+    const since = new Date();
+    since.setDate(since.getDate() - 7);
+    
+    return feeds.map(feed => {
+      const syncs = Array.from(this.feedSyncLogs.values())
+        .filter(log => log.feed_id === feed.id && log.sync_started_at >= since)
+        .sort((a, b) => b.sync_started_at.getTime() - a.sync_started_at.getTime());
+      
+      const successfulSyncs = syncs.filter(s => s.status === 'success').length;
+      const failedSyncs = syncs.filter(s => s.status === 'error').length;
+      const totalSyncs = syncs.length;
+      const lastSync = syncs[0] || null;
+      const lastFailedSync = syncs.find(s => s.status === 'error');
+      
+      return {
+        feedId: feed.id,
+        feedName: feed.name,
+        totalSyncs,
+        successfulSyncs,
+        failedSyncs,
+        successRate: totalSyncs > 0 ? Math.round((successfulSyncs / totalSyncs) * 100) : 0,
+        lastSyncAt: lastSync?.sync_started_at || null,
+        lastSyncStatus: lastSync?.status as 'success' | 'error' | 'in_progress' | null,
+        lastError: lastFailedSync?.error_message || null
+      };
+    });
   }
 
   // AI Rate Limiter Storage Methods (Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6)

@@ -2,81 +2,31 @@ import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { useInvalidateFeedsQuery } from "@/hooks/useFeedsQuery";
-import { 
-  Search, 
-  Plus, 
-  MoreVertical, 
-  Folder, 
-  ChevronDown, 
-  ChevronRight,
-  AlertTriangle,
-  Pause,
-  RefreshCw,
-  Trash2,
-  Edit2,
-  Play,
-  Info,
-  Clock,
-  Zap,
-  Timer
-} from "lucide-react";
+import { Search, Plus, MoreVertical, Folder, ChevronDown, ChevronRight, AlertTriangle, Pause, RefreshCw, Trash2, Edit2, Play, Info, Clock, Zap, Timer, Activity } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-} from "@/components/ui/dropdown-menu";
-import { formatDistanceToNow, format } from "date-fns";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-  DialogFooter,
-} from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { formatDistanceToNow } from "date-fns";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-
 import { AddFeedModal } from "@/components/feed/AddFeedModal";
+import { FeedHealth } from "@/components/settings/FeedHealth";
 
-// Feed interface matching the API response
 interface Feed {
   id: string;
   name: string;
   url: string;
-  site_url?: string;
-  description?: string;
-  icon_url?: string;
   status: 'active' | 'paused' | 'error';
   priority: 'high' | 'medium' | 'low';
   last_fetched_at?: string;
-  next_sync_at?: string;
-  sync_interval_hours?: number;
   article_count: number;
   folder_name?: string;
-  created_at: string;
-  updated_at: string;
 }
 
-// Feed count response - Requirements: 5.1, 5.2, 5.3, 5.4
 interface FeedCountResponse {
   currentCount: number;
   maxAllowed: number;
@@ -84,11 +34,10 @@ interface FeedCountResponse {
   isNearLimit: boolean;
 }
 
-// Priority configuration - Requirements: 6.1, 6.3
 const PRIORITY_CONFIG = {
-  high: { label: 'High', interval: '1 hour', icon: Zap, color: 'text-red-500' },
-  medium: { label: 'Medium', interval: '24 hours', icon: Clock, color: 'text-amber-500' },
-  low: { label: 'Low', interval: '7 days', icon: Timer, color: 'text-blue-500' }
+  high: { label: 'High', interval: '1 hour', description: 'Breaking news sources', icon: Zap, color: 'text-red-500' },
+  medium: { label: 'Medium', interval: '24 hours', description: 'Regular news sources', icon: Clock, color: 'text-amber-500' },
+  low: { label: 'Low', interval: '7 days', description: 'Infrequent publishers', icon: Timer, color: 'text-blue-500' }
 } as const;
 
 export function FeedManagement() {
@@ -96,609 +45,171 @@ export function FeedManagement() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [expandedFolders, setExpandedFolders] = useState<string[]>([]); // Start collapsed
+  const [expandedFolders, setExpandedFolders] = useState<string[]>([]);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const { toast } = useToast();
   const invalidateFeedsQuery = useInvalidateFeedsQuery();
-  
-  // Feed count state - Requirements: 5.1, 5.2, 5.3, 5.4
   const [feedCount, setFeedCount] = useState<FeedCountResponse | null>(null);
-  
-  // Sync All state
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState({ current: 0, total: 0, newArticles: 0 });
 
-  // Fetch feed count from API - Requirements: 5.1, 5.2, 5.3, 5.4
   const fetchFeedCount = async () => {
     try {
       const response = await apiRequest('GET', '/api/feeds/count');
-      const data = await response.json();
-      setFeedCount(data);
-    } catch (error) {
-      console.error('Failed to fetch feed count:', error);
-    }
+      setFeedCount(await response.json());
+    } catch (e) { console.error('Failed to fetch feed count:', e); }
   };
 
-  // Fetch user's feeds from API
   const fetchFeeds = async () => {
     try {
       setIsLoading(true);
       setError(null);
-      
       const response = await apiRequest('GET', '/api/feeds/user');
       const data = await response.json();
-      
-      if (!data.feeds) {
-        throw new Error('No feeds data received');
-      }
-      
-      // Transform API response to match our Feed interface
-      const transformedFeeds: Feed[] = data.feeds.map((feed: any) => ({
-        id: feed.id,
-        name: feed.name,
-        url: feed.url,
-        site_url: feed.site_url,
-        description: feed.description,
-        icon_url: feed.icon_url,
-        status: feed.status || 'active',
-        priority: feed.priority || 'medium',
-        last_fetched_at: feed.last_fetched_at,
-        article_count: feed.article_count || 0,
-        folder_name: feed.folder_name || 'General',
-        created_at: feed.created_at,
-        updated_at: feed.updated_at
-      }));
-      
-      setFeeds(transformedFeeds);
-      
-      // Keep folders collapsed by default - don't auto-expand
-    } catch (error) {
-      console.error('Failed to fetch feeds:', error);
-      setError(error instanceof Error ? error.message : 'Failed to load feeds');
-    } finally {
-      setIsLoading(false);
-    }
+      if (!data.feeds) throw new Error('No feeds data received');
+      setFeeds(data.feeds.map((f: any) => ({
+        id: f.id, name: f.name, url: f.url, status: f.status || 'active',
+        priority: f.priority || 'medium', last_fetched_at: f.last_fetched_at,
+        article_count: f.article_count || 0, folder_name: f.folder_name || 'General'
+      })));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load feeds');
+    } finally { setIsLoading(false); }
   };
 
-  // Sync All feeds with progress tracking
   const handleSyncAll = async () => {
     const activeFeeds = feeds.filter(f => f.status === 'active');
-    if (activeFeeds.length === 0) {
-      toast({
-        title: "No feeds to sync",
-        description: "You don't have any active feeds to synchronize.",
-      });
-      return;
-    }
-
+    if (!activeFeeds.length) { toast({ title: "No feeds to sync" }); return; }
     setIsSyncing(true);
     setSyncProgress({ current: 0, total: activeFeeds.length, newArticles: 0 });
-
-    try {
-      // Sync feeds one by one to show progress
-      let totalNewArticles = 0;
-      
-      for (let i = 0; i < activeFeeds.length; i++) {
-        const feed = activeFeeds[i];
-        setSyncProgress(prev => ({ ...prev, current: i + 1 }));
-        
-        try {
-          const response = await apiRequest('POST', '/api/feeds/sync', { feedIds: [feed.id] });
-          const result = await response.json();
-          
-          if (result.results && result.results[0]) {
-            totalNewArticles += result.results[0].articlesNew || 0;
-            setSyncProgress(prev => ({ ...prev, newArticles: totalNewArticles }));
-          }
-        } catch (err) {
-          console.error(`Failed to sync feed ${feed.name}:`, err);
-          // Continue with other feeds even if one fails
-        }
-      }
-
-      toast({
-        title: "Sync Complete",
-        description: `Synced ${activeFeeds.length} feeds. ${totalNewArticles} new articles found.`,
-      });
-
-      // Refresh feeds to show updated data
-      await fetchFeeds();
-      await fetchFeedCount();
-      
-    } catch (error) {
-      console.error('Sync all failed:', error);
-      toast({
-        variant: "destructive",
-        title: "Sync Failed",
-        description: error instanceof Error ? error.message : "An error occurred during sync.",
-      });
-    } finally {
-      setIsSyncing(false);
-      setSyncProgress({ current: 0, total: 0, newArticles: 0 });
+    let totalNew = 0;
+    for (let i = 0; i < activeFeeds.length; i++) {
+      setSyncProgress(p => ({ ...p, current: i + 1 }));
+      try {
+        const res = await apiRequest('POST', '/api/feeds/sync', { feedIds: [activeFeeds[i].id] });
+        const r = await res.json();
+        if (r.results?.[0]) { totalNew += r.results[0].articlesNew || 0; setSyncProgress(p => ({ ...p, newArticles: totalNew })); }
+      } catch (e) { console.error(e); }
     }
+    toast({ title: "Sync Complete", description: `${totalNew} new articles found.` });
+    await fetchFeeds(); await fetchFeedCount();
+    setIsSyncing(false); setSyncProgress({ current: 0, total: 0, newArticles: 0 });
   };
 
-  // Calculate total article count
-  const totalArticleCount = feeds.reduce((sum, feed) => sum + (feed.article_count || 0), 0);
+  useEffect(() => { fetchFeeds(); fetchFeedCount(); }, []);
 
-  // Load feeds on component mount
-  useEffect(() => {
-    fetchFeeds();
-    fetchFeedCount();
-  }, []);
-
-  // Filter feeds based on search
-  const filteredFeeds = feeds.filter(feed => 
-    feed.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    feed.url.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  // Group by folder
+  const filteredFeeds = feeds.filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()) || f.url.toLowerCase().includes(searchQuery.toLowerCase()));
   const feedsByFolder: Record<string, Feed[]> = {};
-  filteredFeeds.forEach(feed => {
-    const folder = feed.folder_name || 'General';
-    if (!feedsByFolder[folder]) {
-      feedsByFolder[folder] = [];
-    }
-    feedsByFolder[folder].push(feed);
-  });
+  filteredFeeds.forEach(f => { const folder = f.folder_name || 'General'; if (!feedsByFolder[folder]) feedsByFolder[folder] = []; feedsByFolder[folder].push(f); });
+  const totalArticleCount = feeds.reduce((s, f) => s + (f.article_count || 0), 0);
 
-  // Handle feed actions (pause, resume, delete)
   const handleFeedAction = async (feedId: string, action: 'pause' | 'resume' | 'delete' | 'retry') => {
     try {
-      switch (action) {
-        case 'pause':
-          await apiRequest('PUT', `/api/feeds/${feedId}`, { status: 'paused' });
-          toast({
-            title: "Feed Paused",
-            description: "Feed has been paused and will not sync new articles.",
-          });
-          break;
-        case 'resume':
-          await apiRequest('PUT', `/api/feeds/${feedId}`, { status: 'active' });
-          toast({
-            title: "Feed Resumed",
-            description: "Feed has been resumed and will sync new articles.",
-          });
-          break;
-        case 'delete':
-          await apiRequest('DELETE', `/api/feeds/unsubscribe/${feedId}`);
-          // Invalidate the user feeds query to update sidebar immediately
-          // Requirements: 5.2 - Remove feed from sidebar without page refresh
-          invalidateFeedsQuery();
-          toast({
-            title: "Feed Removed",
-            description: "Feed has been removed from your subscriptions.",
-          });
-          // Refresh feed count after deletion
-          await fetchFeedCount();
-          break;
-        case 'retry':
-          await apiRequest('POST', '/api/feeds/sync', { feedIds: [feedId] });
-          toast({
-            title: "Sync Started",
-            description: "Feed synchronization has been started.",
-          });
-          break;
-      }
-      
-      // Refresh feeds list
+      if (action === 'pause') await apiRequest('PUT', `/api/feeds/${feedId}`, { status: 'paused' });
+      else if (action === 'resume') await apiRequest('PUT', `/api/feeds/${feedId}`, { status: 'active' });
+      else if (action === 'delete') { await apiRequest('DELETE', `/api/feeds/unsubscribe/${feedId}`); invalidateFeedsQuery(); await fetchFeedCount(); }
+      else if (action === 'retry') await apiRequest('POST', '/api/feeds/sync', { feedIds: [feedId] });
+      toast({ title: action === 'delete' ? "Feed Removed" : action === 'retry' ? "Sync Started" : `Feed ${action === 'pause' ? 'Paused' : 'Resumed'}` });
       await fetchFeeds();
-    } catch (error) {
-      console.error(`Failed to ${action} feed:`, error);
-      toast({
-        variant: "destructive",
-        title: `Failed to ${action} feed`,
-        description: error instanceof Error ? error.message : `An error occurred while ${action}ing the feed.`,
-        duration: 5000,
-      });
-    }
+    } catch (e) { toast({ variant: "destructive", title: `Failed to ${action} feed` }); }
   };
 
-  // Handle feed priority change - Requirements: 6.1, 6.2
-  const handlePriorityChange = async (feedId: string, newPriority: 'high' | 'medium' | 'low') => {
-    try {
-      await apiRequest('PUT', `/api/feeds/${feedId}/priority`, { priority: newPriority });
-      
-      const config = PRIORITY_CONFIG[newPriority];
-      toast({
-        title: "Priority Updated",
-        description: `Feed will now sync every ${config.interval}.`,
-      });
-      
-      // Refresh feeds list to show updated schedule
-      await fetchFeeds();
-    } catch (error) {
-      console.error('Failed to update priority:', error);
-      toast({
-        variant: "destructive",
-        title: "Failed to update priority",
-        description: error instanceof Error ? error.message : "An error occurred while updating feed priority.",
-        duration: 5000,
-      });
-    }
+  const toggleFolder = (folder: string) => setExpandedFolders(p => p.includes(folder) ? p.filter(f => f !== folder) : [...p, folder]);
+  const getStatusColor = (s: Feed['status']) => s === 'active' ? 'bg-emerald-500' : s === 'error' ? 'bg-red-500' : 'bg-zinc-500';
+  const getStatusIcon = (s: Feed['status']) => s === 'paused' ? <Pause className="h-4 w-4 text-zinc-500" /> : s === 'error' ? <AlertTriangle className="h-4 w-4 text-red-500" /> : null;
+  const getPriorityBadge = (p: Feed['priority']) => {
+    const c = PRIORITY_CONFIG[p]; const Icon = c.icon;
+    return (<Tooltip><TooltipTrigger asChild><Badge variant="outline" className={cn("text-xs gap-1 cursor-help", c.color)}><Icon className="h-3 w-3" />{c.label}</Badge></TooltipTrigger><TooltipContent><p className="font-medium">{c.description}</p><p className="text-xs text-muted-foreground">Syncs every {c.interval}</p></TooltipContent></Tooltip>);
   };
 
-  // Handle feed refresh callback from AddFeedModal
-  const handleFeedAdded = () => {
-    fetchFeeds();
-    fetchFeedCount();
-    setIsAddModalOpen(false);
-  };
-
-  const toggleFolder = (folder: string) => {
-    setExpandedFolders(prev => 
-      prev.includes(folder) 
-        ? prev.filter(f => f !== folder) 
-        : [...prev, folder]
-    );
-  };
-
-  const getStatusColor = (status: Feed['status']) => {
-    switch (status) {
-      case 'active': return 'bg-emerald-500';
-      case 'paused': return 'bg-zinc-500';
-      case 'error': return 'bg-red-500';
-      default: return 'bg-zinc-500';
-    }
-  };
-
-  const getStatusIcon = (status: Feed['status']) => {
-    switch (status) {
-      case 'active': return null;
-      case 'paused': return <Pause className="h-4 w-4 text-zinc-500" />;
-      case 'error': return <AlertTriangle className="h-4 w-4 text-red-500" />;
-      default: return null;
-    }
-  };
-
-  // Get priority badge component - Requirements: 6.1
-  const getPriorityBadge = (priority: Feed['priority']) => {
-    const config = PRIORITY_CONFIG[priority];
-    const Icon = config.icon;
-    return (
-      <Badge variant="outline" className={cn("text-xs gap-1", config.color)}>
-        <Icon className="h-3 w-3" />
-        {config.label}
-      </Badge>
-    );
-  };
-
-  // Loading state
-  if (isLoading) {
-    return (
-      <div className="flex flex-col h-full">
-        <div className="p-6 border-b border-border">
-          <h2 className="text-2xl font-display font-bold">Feed Management</h2>
-          <p className="text-muted-foreground">Loading your feeds...</p>
-        </div>
-        <div className="flex-1 flex items-center justify-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-        </div>
-      </div>
-    );
-  }
-
-  // Error state
-  if (error) {
-    return (
-      <div className="flex flex-col h-full">
-        <div className="p-6 border-b border-border">
-          <h2 className="text-2xl font-display font-bold">Feed Management</h2>
-          <p className="text-muted-foreground">Failed to load feeds</p>
-        </div>
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center">
-            <AlertTriangle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-            <p className="text-red-600 mb-4">{error}</p>
-            <Button onClick={fetchFeeds} className="gap-2">
-              <RefreshCw className="h-4 w-4" />
-              Try Again
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  if (isLoading) return (<div className="flex flex-col h-full"><div className="p-6 border-b"><h2 className="text-2xl font-bold">Feed Management</h2></div><div className="flex-1 flex items-center justify-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" /></div></div>);
+  if (error) return (<div className="flex flex-col h-full"><div className="p-6 border-b"><h2 className="text-2xl font-bold">Feed Management</h2></div><div className="flex-1 flex items-center justify-center text-center"><AlertTriangle className="h-12 w-12 text-red-500 mx-auto mb-4" /><p className="text-red-600 mb-4">{error}</p><Button onClick={fetchFeeds}><RefreshCw className="h-4 w-4 mr-2" />Try Again</Button></div></div>);
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="p-6 border-b border-border">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-          <div>
-            <h2 className="text-2xl font-display font-bold">Feed Management</h2>
-            <p className="text-muted-foreground">Manage your subscriptions and organize feeds</p>
-          </div>
-          
-          <div className="flex items-center gap-3 w-full md:w-auto">
-            <div className="relative flex-1 md:w-64">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input 
-                placeholder="Search feeds..." 
-                className="pl-9 bg-muted/50"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
+      <div className="p-6 border-b">
+        <h2 className="text-2xl font-bold mb-1">Feed Management</h2>
+        <p className="text-muted-foreground mb-4">Manage subscriptions and monitor feed health</p>
+        <Tabs defaultValue="feeds" className="w-full">
+          <TabsList className="grid w-full max-w-md grid-cols-2">
+            <TabsTrigger value="feeds" className="gap-2"><Folder className="h-4 w-4" />My Feeds</TabsTrigger>
+            <TabsTrigger value="health" className="gap-2"><Activity className="h-4 w-4" />Feed Health</TabsTrigger>
+          </TabsList>
+          <TabsContent value="feeds" className="mt-4 space-y-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="relative flex-1 min-w-[200px] max-w-xs">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input placeholder="Search feeds..." className="pl-9" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+              </div>
+              <Button variant="outline" onClick={handleSyncAll} disabled={isSyncing || !feeds.filter(f => f.status === 'active').length}>
+                <RefreshCw className={cn("h-4 w-4 mr-2", isSyncing && "animate-spin")} />{isSyncing ? 'Syncing...' : 'Sync All'}
+              </Button>
+              <Button onClick={() => setIsAddModalOpen(true)} disabled={feedCount?.remaining === 0}><Plus className="h-4 w-4 mr-2" />Add Feed</Button>
             </div>
-            <Button 
-              variant="outline"
-              className="gap-2" 
-              onClick={handleSyncAll}
-              disabled={isSyncing || feeds.filter(f => f.status === 'active').length === 0}
-            >
-              <RefreshCw className={cn("h-4 w-4", isSyncing && "animate-spin")} />
-              {isSyncing ? 'Syncing...' : 'Sync All'}
-            </Button>
-            <Button 
-              className="gap-2 bg-primary hover:bg-primary/90" 
-              onClick={() => setIsAddModalOpen(true)}
-              disabled={feedCount?.remaining === 0}
-            >
-              <Plus className="h-4 w-4" /> Add Feed
-            </Button>
-          </div>
-        </div>
-
-        {/* Sync Progress Bar */}
-        {isSyncing && (
-          <div className="mb-4 p-4 bg-muted/50 rounded-lg">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-medium">
-                Syncing feeds... ({syncProgress.current}/{syncProgress.total})
-              </span>
-              <span className="text-sm text-muted-foreground">
-                {syncProgress.newArticles} new articles
-              </span>
+            {isSyncing && (<div className="p-4 bg-muted/50 rounded-lg"><div className="flex justify-between mb-2 text-sm"><span>Syncing... ({syncProgress.current}/{syncProgress.total})</span><span>{syncProgress.newArticles} new</span></div><Progress value={(syncProgress.current / syncProgress.total) * 100} className="h-2" /></div>)}
+            {feedCount && (<div><div className="flex justify-between mb-2 text-sm text-muted-foreground"><span>Feeds: {feedCount.currentCount}/{feedCount.maxAllowed}</span><span>{feedCount.remaining} remaining</span></div><Progress value={(feedCount.currentCount / feedCount.maxAllowed) * 100} className="h-2" />{feedCount.isNearLimit && <Alert className="mt-3"><AlertTriangle className="h-4 w-4" /><AlertDescription>Approaching feed limit.</AlertDescription></Alert>}</div>)}
+            <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
+              <span className="font-medium text-foreground">{feeds.length} feeds</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />{feeds.filter(f => f.status === 'active').length} active</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-zinc-500" />{feeds.filter(f => f.status === 'paused').length} paused</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" />{feeds.filter(f => f.status === 'error').length} error</span>
+              <span className="ml-auto font-medium text-foreground">{totalArticleCount.toLocaleString()} articles</span>
             </div>
-            <Progress 
-              value={(syncProgress.current / syncProgress.total) * 100} 
-              className="h-2"
-            />
-          </div>
-        )}
-
-        {/* Feed Count Display - Requirements: 5.3, 5.4 */}
-        {feedCount && (
-          <div className="mb-4">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-muted-foreground">
-                Feed Subscriptions: {feedCount.currentCount} / {feedCount.maxAllowed}
-              </span>
-              <span className="text-sm text-muted-foreground">
-                {feedCount.remaining} remaining
-              </span>
+            <div className="p-4 bg-muted/30 rounded-lg border">
+              <div className="flex gap-3"><Info className="h-5 w-5 text-muted-foreground shrink-0" /><div><p className="text-sm font-medium mb-2">Feed Priority Levels</p><div className="grid grid-cols-3 gap-2 text-xs"><span className="flex items-center gap-1"><Zap className="h-3 w-3 text-red-500" />High: Hourly</span><span className="flex items-center gap-1"><Clock className="h-3 w-3 text-amber-500" />Medium: Daily</span><span className="flex items-center gap-1"><Timer className="h-3 w-3 text-blue-500" />Low: Weekly</span></div></div></div>
             </div>
-            <Progress 
-              value={(feedCount.currentCount / feedCount.maxAllowed) * 100} 
-              className={cn(
-                "h-2",
-                feedCount.isNearLimit && "bg-amber-100 dark:bg-amber-900/20"
-              )}
-            />
-            {/* Near Limit Warning - Requirements: 5.4 */}
-            {feedCount.isNearLimit && (
-              <Alert className="mt-3 border-amber-200 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-900/10">
-                <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-                <AlertDescription className="text-amber-700 dark:text-amber-300">
-                  You're approaching the feed limit ({feedCount.currentCount}/{feedCount.maxAllowed}). 
-                  Consider removing unused feeds to make room for new subscriptions.
-                </AlertDescription>
-              </Alert>
-            )}
-            {/* At Limit Warning */}
-            {feedCount.remaining === 0 && (
-              <Alert className="mt-3 border-red-200 bg-red-50 dark:border-red-900/50 dark:bg-red-900/10">
-                <AlertTriangle className="h-4 w-4 text-red-600 dark:text-red-400" />
-                <AlertDescription className="text-red-700 dark:text-red-300">
-                  You've reached the maximum feed limit ({feedCount.maxAllowed} feeds). 
-                  Remove existing feeds to add new ones.
-                </AlertDescription>
-              </Alert>
-            )}
-          </div>
-        )}
-
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-muted-foreground">
-          <div className="font-medium text-foreground">{feeds.length} feeds total</div>
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-500" />
-            {feeds.filter(f => f.status === 'active').length} active
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-zinc-500" />
-            {feeds.filter(f => f.status === 'paused').length} paused
-          </div>
-          <div className="flex items-center gap-2">
-             <span className="w-2 h-2 rounded-full bg-red-500" />
-            {feeds.filter(f => f.status === 'error').length} error
-          </div>
-          <div className="flex items-center gap-2 ml-auto font-medium text-foreground">
-            <span className="text-primary">{totalArticleCount.toLocaleString()}</span> total articles
-          </div>
-        </div>
-      </div>
-
-      {/* Feed List */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-4">
-        {Object.entries(feedsByFolder).map(([folder, folderFeeds]) => {
-          const isExpanded = expandedFolders.includes(folder);
-          
-          return (
-            <div key={folder} className="space-y-2">
-              <button 
-                onClick={() => toggleFolder(folder)}
-                className="flex items-center gap-2 w-full text-left p-2 hover:bg-muted/50 rounded-lg group transition-colors"
-              >
-                {isExpanded ? (
-                  <ChevronDown className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-colors" />
-                ) : (
-                  <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-colors" />
-                )}
-                <Folder className="h-4 w-4 text-primary fill-primary/10" />
-                <span className="font-semibold text-sm">{folder}</span>
-                <span className="text-xs text-muted-foreground">({folderFeeds.length} feeds)</span>
-              </button>
-
-              {isExpanded && (
-                <TooltipProvider>
-                <div className="pl-4 space-y-3">
-                  {folderFeeds.map(feed => (
-                    <div 
-                      key={feed.id} 
-                      className="group bg-card border border-border rounded-xl p-4 hover:shadow-md transition-all duration-200 hover:border-primary/20"
-                    >
-                      <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-3 mb-1 flex-wrap">
-                            <div className={cn("w-2 h-2 rounded-full shrink-0", getStatusColor(feed.status))} />
-                            <h3 className="font-bold text-base truncate">{feed.name}</h3>
-                            {getStatusIcon(feed.status)}
-                            {/* Priority Badge - Requirements: 6.1 */}
-                            {getPriorityBadge(feed.priority)}
-                            {feed.status === 'error' && (
-                              <span className="text-xs text-red-500 font-medium bg-red-500/10 px-2 py-0.5 rounded">
-                                Error syncing
-                              </span>
-                            )}
-                            {feed.status === 'paused' && (
-                              <span className="text-xs text-zinc-500 font-medium bg-zinc-500/10 px-2 py-0.5 rounded">
-                                Paused
-                              </span>
-                            )}
-                          </div>
-                          
-                          <div className="text-sm text-muted-foreground truncate font-mono mb-2 pl-5">
-                            {feed.url}
-                          </div>
-
-                          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-muted-foreground pl-5">
-                            <div className="flex items-center gap-1.5">
-                              <RefreshCw className="h-3 w-3" />
-                              Last sync: {feed.last_fetched_at ? formatDistanceToNow(new Date(feed.last_fetched_at), { addSuffix: true }) : 'Never'}
-                            </div>
-                            {/* Next sync schedule - Requirements: 6.4 */}
-                            {feed.next_sync_at && feed.status === 'active' && (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <div className="flex items-center gap-1.5 cursor-help">
-                                    <Clock className="h-3 w-3" />
-                                    Next: {formatDistanceToNow(new Date(feed.next_sync_at), { addSuffix: true })}
-                                  </div>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p className="text-xs">Scheduled: {format(new Date(feed.next_sync_at), 'PPp')}</p>
-                                </TooltipContent>
-                              </Tooltip>
-                            )}
-                            <div>{feed.article_count} articles</div>
-                            <div className="flex items-center gap-1.5">
-                              Syncs every: 
-                              <span className="font-medium">
-                                {PRIORITY_CONFIG[feed.priority].interval}
-                              </span>
+            <TooltipProvider>
+              <div className="space-y-3">
+                {Object.entries(feedsByFolder).map(([folder, folderFeeds]) => (
+                  <div key={folder}>
+                    <button onClick={() => toggleFolder(folder)} className="flex items-center gap-2 w-full p-2 hover:bg-muted/50 rounded-lg">
+                      {expandedFolders.includes(folder) ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                      <Folder className="h-4 w-4 text-primary" /><span className="font-semibold text-sm">{folder}</span><span className="text-xs text-muted-foreground">({folderFeeds.length})</span>
+                    </button>
+                    {expandedFolders.includes(folder) && (
+                      <div className="pl-4 space-y-2 mt-2">
+                        {folderFeeds.map(feed => (
+                          <div key={feed.id} className="bg-card border rounded-lg p-4 hover:shadow-sm transition-shadow">
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap mb-1">
+                                  <span className={cn("w-2 h-2 rounded-full", getStatusColor(feed.status))} />
+                                  <span className="font-medium truncate">{feed.name}</span>
+                                  {getStatusIcon(feed.status)}
+                                  {getPriorityBadge(feed.priority)}
+                                </div>
+                                <p className="text-xs text-muted-foreground truncate mb-1">{feed.url}</p>
+                                <p className="text-xs text-muted-foreground">Last sync: {feed.last_fetched_at ? formatDistanceToNow(new Date(feed.last_fetched_at), { addSuffix: true }) : 'Never'} · {feed.article_count} articles</p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {feed.status === 'error' && <Button variant="outline" size="sm" onClick={() => handleFeedAction(feed.id, 'retry')}><RefreshCw className="h-3 w-3 mr-1" />Retry</Button>}
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreVertical className="h-4 w-4" /></Button></DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuItem><Edit2 className="h-4 w-4 mr-2" />Edit</DropdownMenuItem>
+                                    {feed.status === 'paused' ? <DropdownMenuItem onClick={() => handleFeedAction(feed.id, 'resume')}><Play className="h-4 w-4 mr-2" />Resume</DropdownMenuItem> : <DropdownMenuItem onClick={() => handleFeedAction(feed.id, 'pause')}><Pause className="h-4 w-4 mr-2" />Pause</DropdownMenuItem>}
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem className="text-red-600" onClick={() => handleFeedAction(feed.id, 'delete')}><Trash2 className="h-4 w-4 mr-2" />Delete</DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </div>
                             </div>
                           </div>
-                        </div>
-
-                        <div className="flex items-center gap-2 self-start md:self-center pl-5 md:pl-0">
-                           {feed.status === 'error' && (
-                             <Button 
-                               variant="outline" 
-                               size="sm" 
-                               className="h-8 text-xs gap-1 border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-900/30 dark:bg-red-900/10 dark:text-red-400"
-                               onClick={() => handleFeedAction(feed.id, 'retry')}
-                             >
-                               <RefreshCw className="h-3 w-3" /> Retry Now
-                             </Button>
-                           )}
-                           
-                           <DropdownMenu>
-                             <DropdownMenuTrigger asChild>
-                               <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground">
-                                 <MoreVertical className="h-4 w-4" />
-                               </Button>
-                             </DropdownMenuTrigger>
-                             <DropdownMenuContent align="end">
-                               <DropdownMenuItem>
-                                 <Edit2 className="h-4 w-4 mr-2" /> Edit
-                               </DropdownMenuItem>
-                               {/* Priority submenu - Requirements: 6.1, 6.2 */}
-                               <DropdownMenuSub>
-                                 <DropdownMenuSubTrigger>
-                                   <Clock className="h-4 w-4 mr-2" /> Set Priority
-                                 </DropdownMenuSubTrigger>
-                                 <DropdownMenuSubContent>
-                                   <DropdownMenuItem 
-                                     onClick={() => handlePriorityChange(feed.id, 'high')}
-                                     className={cn(feed.priority === 'high' && "bg-primary/10")}
-                                   >
-                                     <Zap className="h-4 w-4 mr-2 text-red-500" /> 
-                                     High (hourly)
-                                     {feed.priority === 'high' && <span className="ml-auto text-primary">✓</span>}
-                                   </DropdownMenuItem>
-                                   <DropdownMenuItem 
-                                     onClick={() => handlePriorityChange(feed.id, 'medium')}
-                                     className={cn(feed.priority === 'medium' && "bg-primary/10")}
-                                   >
-                                     <Clock className="h-4 w-4 mr-2 text-amber-500" /> 
-                                     Medium (daily)
-                                     {feed.priority === 'medium' && <span className="ml-auto text-primary">✓</span>}
-                                   </DropdownMenuItem>
-                                   <DropdownMenuItem 
-                                     onClick={() => handlePriorityChange(feed.id, 'low')}
-                                     className={cn(feed.priority === 'low' && "bg-primary/10")}
-                                   >
-                                     <Timer className="h-4 w-4 mr-2 text-blue-500" /> 
-                                     Low (weekly)
-                                     {feed.priority === 'low' && <span className="ml-auto text-primary">✓</span>}
-                                   </DropdownMenuItem>
-                                 </DropdownMenuSubContent>
-                               </DropdownMenuSub>
-                               {feed.status === 'paused' ? (
-                                 <DropdownMenuItem 
-                                   className="text-emerald-600 focus:text-emerald-600 focus:bg-emerald-50 dark:focus:bg-emerald-900/20"
-                                   onClick={() => handleFeedAction(feed.id, 'resume')}
-                                 >
-                                   <Play className="h-4 w-4 mr-2" /> Resume
-                                 </DropdownMenuItem>
-                               ) : (
-                                 <DropdownMenuItem onClick={() => handleFeedAction(feed.id, 'pause')}>
-                                   <Pause className="h-4 w-4 mr-2" /> Pause
-                                 </DropdownMenuItem>
-                               )}
-                               <DropdownMenuSeparator />
-                               <DropdownMenuItem 
-                                 className="text-red-600 focus:text-red-600 focus:bg-red-50 dark:focus:bg-red-900/20"
-                                 onClick={() => handleFeedAction(feed.id, 'delete')}
-                               >
-                                 <Trash2 className="h-4 w-4 mr-2" /> Delete
-                               </DropdownMenuItem>
-                             </DropdownMenuContent>
-                           </DropdownMenu>
-                        </div>
+                        ))}
                       </div>
-                    </div>
-                  ))}
-                </div>
-                </TooltipProvider>
-              )}
-            </div>
-          );
-        })}
-
-        {filteredFeeds.length === 0 && (
-          <div className="text-center py-12 text-muted-foreground">
-            No feeds found matching "{searchQuery}"
-          </div>
-        )}
+                    )}
+                  </div>
+                ))}
+                {!filteredFeeds.length && <p className="text-center py-8 text-muted-foreground">No feeds found</p>}
+              </div>
+            </TooltipProvider>
+          </TabsContent>
+          <TabsContent value="health" className="mt-4">
+            <FeedHealth />
+          </TabsContent>
+        </Tabs>
       </div>
-
-      <AddFeedModal 
-        isOpen={isAddModalOpen} 
-        onClose={() => setIsAddModalOpen(false)}
-        onFeedAdded={handleFeedAdded}
-      />
+      <AddFeedModal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} onFeedAdded={() => { fetchFeeds(); fetchFeedCount(); setIsAddModalOpen(false); }} />
     </div>
   );
 }

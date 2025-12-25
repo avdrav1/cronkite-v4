@@ -59,6 +59,31 @@ const setUserInterestsSchema = z.object({
   interests: z.array(z.string()).min(1, "At least one interest must be selected")
 });
 
+// Helper function to get recent sync logs for a feed
+async function getRecentSyncLogs(storage: any, feedId: string, limit: number = 10): Promise<any[]> {
+  try {
+    const supabase = storage.supabase;
+    if (!supabase) return [];
+    
+    const { data, error } = await supabase
+      .from('feed_sync_log')
+      .select('*')
+      .eq('feed_id', feedId)
+      .order('sync_started_at', { ascending: false })
+      .limit(limit);
+    
+    if (error) {
+      console.error('Error fetching sync logs:', error);
+      return [];
+    }
+    
+    return data || [];
+  } catch (error) {
+    console.error('Error in getRecentSyncLogs:', error);
+    return [];
+  }
+}
+
 export async function registerRoutes(
   httpServer: Server | null,
   app: any
@@ -1276,6 +1301,117 @@ export async function registerRoutes(
       res.status(500).json({
         error: 'Failed to get sync status',
         message: 'An error occurred while retrieving sync status'
+      });
+    }
+  });
+  
+  // GET /api/feeds/health - Get health stats for all user's feeds
+  app.get('/api/feeds/health', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      
+      console.log(`📊 Getting feed health stats for user ${userId}`);
+      
+      const storage = await getStorage();
+      const healthStats = await storage.getAllFeedsHealthStats(userId);
+      
+      // Calculate overall stats
+      const totalFeeds = healthStats.length;
+      const feedsWithIssues = healthStats.filter(f => f.successRate < 80 || f.lastSyncStatus === 'error').length;
+      const overallSuccessRate = totalFeeds > 0
+        ? Math.round(healthStats.reduce((sum, f) => sum + f.successRate, 0) / totalFeeds)
+        : 0;
+      
+      res.json({
+        summary: {
+          totalFeeds,
+          feedsWithIssues,
+          overallSuccessRate,
+          healthyFeeds: totalFeeds - feedsWithIssues
+        },
+        feeds: healthStats.map(f => ({
+          feedId: f.feedId,
+          feedName: f.feedName,
+          totalSyncs: f.totalSyncs,
+          successfulSyncs: f.successfulSyncs,
+          failedSyncs: f.failedSyncs,
+          successRate: f.successRate,
+          lastSyncAt: f.lastSyncAt?.toISOString() || null,
+          lastSyncStatus: f.lastSyncStatus,
+          lastError: f.lastError,
+          isHealthy: f.successRate >= 80 && f.lastSyncStatus !== 'error'
+        }))
+      });
+    } catch (error) {
+      console.error('Get feed health error:', error);
+      res.status(500).json({
+        error: 'Failed to get feed health stats',
+        message: 'An error occurred while retrieving feed health statistics'
+      });
+    }
+  });
+  
+  // GET /api/feeds/:feedId/health - Get detailed health stats for a specific feed
+  app.get('/api/feeds/:feedId/health', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const { feedId } = req.params;
+      const days = parseInt(req.query.days as string) || 7;
+      
+      console.log(`📊 Getting detailed health stats for feed ${feedId}`);
+      
+      const storage = await getStorage();
+      
+      // Verify user owns this feed
+      const userFeeds = await storage.getUserFeeds(userId);
+      const feed = userFeeds.find(f => f.id === feedId);
+      
+      if (!feed) {
+        return res.status(404).json({
+          error: 'Feed not found',
+          message: 'The requested feed was not found or you do not have access to it'
+        });
+      }
+      
+      const healthStats = await storage.getFeedHealthStats(feedId, days);
+      
+      res.json({
+        feedId: healthStats.feedId,
+        feedName: feed.name,
+        feedUrl: feed.url,
+        priority: feed.priority,
+        status: feed.status,
+        stats: {
+          totalSyncs: healthStats.totalSyncs,
+          successfulSyncs: healthStats.successfulSyncs,
+          failedSyncs: healthStats.failedSyncs,
+          successRate: healthStats.successRate,
+          avgSyncDuration: healthStats.avgSyncDuration,
+          totalArticlesFound: healthStats.totalArticlesFound,
+          totalArticlesNew: healthStats.totalArticlesNew
+        },
+        lastSync: {
+          at: healthStats.lastSyncAt?.toISOString() || null,
+          status: healthStats.lastSyncStatus,
+          error: healthStats.lastError
+        },
+        recentSyncs: healthStats.recentSyncs.map(s => ({
+          id: s.id,
+          status: s.status,
+          startedAt: s.startedAt.toISOString(),
+          completedAt: s.completedAt?.toISOString() || null,
+          duration: s.duration,
+          articlesFound: s.articlesFound,
+          articlesNew: s.articlesNew,
+          error: s.error
+        })),
+        isHealthy: healthStats.successRate >= 80 && healthStats.lastSyncStatus !== 'error'
+      });
+    } catch (error) {
+      console.error('Get feed health detail error:', error);
+      res.status(500).json({
+        error: 'Failed to get feed health details',
+        message: 'An error occurred while retrieving feed health details'
       });
     }
   });
@@ -3715,6 +3851,238 @@ export async function registerRoutes(
     } catch (error) {
       console.error('Admin audit feeds error:', error);
       res.status(500).json({ error: 'Failed to audit feeds' });
+    }
+  });
+
+  // ============================================================================
+  // Feed Health & Scheduler Status Endpoints
+  // ============================================================================
+
+  // GET /api/feeds/health - Get health metrics for user's feeds
+  app.get('/api/feeds/health', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const storage = await getStorage();
+      
+      // Try to use the database function if available
+      const supabase = (storage as any).supabase;
+      if (supabase) {
+        const { data, error } = await supabase.rpc('get_user_feed_health', { p_user_id: userId });
+        
+        if (!error && data) {
+          return res.json({
+            success: true,
+            feeds: data,
+            summary: {
+              total: data.length,
+              healthy: data.filter((f: any) => f.health_status === 'healthy').length,
+              warning: data.filter((f: any) => f.health_status === 'warning').length,
+              critical: data.filter((f: any) => ['critical', 'error', 'failing'].includes(f.health_status)).length,
+              paused: data.filter((f: any) => f.health_status === 'paused').length
+            }
+          });
+        }
+      }
+      
+      // Fallback: compute health from feed_sync_log manually
+      const userFeeds = await storage.getUserFeeds(userId);
+      const feedHealth = await Promise.all(userFeeds.map(async (feed) => {
+        // Get recent sync logs for this feed
+        const syncLogs = await getRecentSyncLogs(storage, feed.id, 10);
+        
+        const successCount = syncLogs.filter(l => l.status === 'success').length;
+        const errorCount = syncLogs.filter(l => l.status === 'error').length;
+        const lastSync = syncLogs[0];
+        
+        // Calculate consecutive failures
+        let consecutiveFailures = 0;
+        for (const log of syncLogs) {
+          if (log.status === 'error') consecutiveFailures++;
+          else break;
+        }
+        
+        // Determine health status
+        let healthStatus = 'healthy';
+        if (feed.status === 'paused') healthStatus = 'paused';
+        else if (feed.status === 'error') healthStatus = 'error';
+        else if (consecutiveFailures >= 5) healthStatus = 'critical';
+        else if (consecutiveFailures >= 3) healthStatus = 'warning';
+        else if (syncLogs.length > 0 && successCount === 0) healthStatus = 'failing';
+        else if (syncLogs.length === 0) healthStatus = 'unknown';
+        else if (syncLogs.length > 0 && (successCount / syncLogs.length) < 0.5) healthStatus = 'degraded';
+        
+        return {
+          feed_id: feed.id,
+          feed_name: feed.name,
+          feed_url: feed.url,
+          status: feed.status,
+          priority: feed.sync_priority || feed.priority || 'medium',
+          health_status: healthStatus,
+          success_rate_7d: syncLogs.length > 0 ? Math.round((successCount / syncLogs.length) * 100) : null,
+          sync_count_7d: syncLogs.length,
+          articles_new_7d: syncLogs.reduce((sum, l) => sum + (l.articles_new || 0), 0),
+          last_sync_status: lastSync?.status || null,
+          last_sync_error: lastSync?.error_message || null,
+          last_sync_at: lastSync?.sync_completed_at || null,
+          consecutive_failures: consecutiveFailures,
+          next_sync_at: feed.next_sync_at
+        };
+      }));
+      
+      // Sort by health status (critical first)
+      const statusOrder: Record<string, number> = { critical: 1, error: 2, failing: 3, warning: 4, degraded: 5, unknown: 6, paused: 7, healthy: 8 };
+      feedHealth.sort((a, b) => (statusOrder[a.health_status] || 8) - (statusOrder[b.health_status] || 8));
+      
+      res.json({
+        success: true,
+        feeds: feedHealth,
+        summary: {
+          total: feedHealth.length,
+          healthy: feedHealth.filter(f => f.health_status === 'healthy').length,
+          warning: feedHealth.filter(f => f.health_status === 'warning').length,
+          critical: feedHealth.filter(f => ['critical', 'error', 'failing'].includes(f.health_status)).length,
+          paused: feedHealth.filter(f => f.health_status === 'paused').length
+        }
+      });
+      
+    } catch (error) {
+      console.error('Get feed health error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'FEED_HEALTH_ERROR',
+        message: 'Failed to retrieve feed health metrics'
+      });
+    }
+  });
+
+  // GET /api/scheduler/status - Get scheduler status and recent runs
+  app.get('/api/scheduler/status', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const storage = await getStorage();
+      const supabase = (storage as any).supabase;
+      
+      if (!supabase) {
+        return res.json({
+          success: true,
+          scheduler: null,
+          message: 'Scheduler status not available'
+        });
+      }
+      
+      // Get scheduler health
+      const { data: healthData } = await supabase.rpc('get_scheduler_status');
+      
+      // Get recent scheduler runs
+      const { data: recentRuns } = await supabase
+        .from('scheduler_runs')
+        .select('*')
+        .eq('run_type', 'feed_sync')
+        .order('started_at', { ascending: false })
+        .limit(10);
+      
+      const feedSyncHealth = healthData?.find((h: any) => h.run_type === 'feed_sync');
+      
+      res.json({
+        success: true,
+        scheduler: {
+          feedSync: feedSyncHealth ? {
+            lastRunAt: feedSyncHealth.last_run_at,
+            runs24h: feedSyncHealth.runs_24h,
+            successRate24h: feedSyncHealth.success_rate_24h,
+            feedsSynced24h: feedSyncHealth.feeds_synced_24h,
+            articlesNew24h: feedSyncHealth.articles_new_24h,
+            isHealthy: feedSyncHealth.is_healthy
+          } : null
+        },
+        recentRuns: recentRuns || []
+      });
+      
+    } catch (error) {
+      console.error('Get scheduler status error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'SCHEDULER_STATUS_ERROR',
+        message: 'Failed to retrieve scheduler status'
+      });
+    }
+  });
+
+  // GET /api/feeds/:feedId/sync-history - Get sync history for a specific feed
+  app.get('/api/feeds/:feedId/sync-history', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const feedId = req.params.feedId;
+      const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
+      
+      const storage = await getStorage();
+      
+      // Verify feed ownership
+      const feed = await storage.getFeedById(feedId);
+      if (!feed || feed.user_id !== userId) {
+        return res.status(404).json({
+          success: false,
+          error: 'FEED_NOT_FOUND',
+          message: 'Feed not found or access denied'
+        });
+      }
+      
+      // Get sync history
+      const supabase = (storage as any).supabase;
+      if (supabase) {
+        const { data: syncLogs, error } = await supabase
+          .from('feed_sync_log')
+          .select('*')
+          .eq('feed_id', feedId)
+          .order('sync_started_at', { ascending: false })
+          .limit(limit);
+        
+        if (error) {
+          throw new Error(error.message);
+        }
+        
+        // Calculate stats
+        const successCount = syncLogs?.filter((l: any) => l.status === 'success').length || 0;
+        const errorCount = syncLogs?.filter((l: any) => l.status === 'error').length || 0;
+        const totalArticles = syncLogs?.reduce((sum: number, l: any) => sum + (l.articles_new || 0), 0) || 0;
+        const avgDuration = syncLogs?.length > 0 
+          ? Math.round(syncLogs.reduce((sum: number, l: any) => sum + (l.sync_duration_ms || 0), 0) / syncLogs.length)
+          : 0;
+        
+        return res.json({
+          success: true,
+          feed: {
+            id: feed.id,
+            name: feed.name,
+            url: feed.url,
+            priority: feed.sync_priority || feed.priority,
+            status: feed.status
+          },
+          stats: {
+            totalSyncs: syncLogs?.length || 0,
+            successCount,
+            errorCount,
+            successRate: syncLogs?.length > 0 ? Math.round((successCount / syncLogs.length) * 100) : null,
+            totalArticlesFound: totalArticles,
+            avgDurationMs: avgDuration
+          },
+          history: syncLogs || []
+        });
+      }
+      
+      res.json({
+        success: true,
+        feed: { id: feed.id, name: feed.name },
+        stats: null,
+        history: []
+      });
+      
+    } catch (error) {
+      console.error('Get feed sync history error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'SYNC_HISTORY_ERROR',
+        message: 'Failed to retrieve sync history'
+      });
     }
   });
 

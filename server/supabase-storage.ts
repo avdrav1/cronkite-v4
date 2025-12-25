@@ -2072,6 +2072,165 @@ export class SupabaseStorage implements IStorage {
     return (data || []).map((a: any) => a.id);
   }
 
+  // Feed Health Tracking Methods
+  
+  async getFeedHealthStats(feedId: string, days: number = 7): Promise<{
+    feedId: string;
+    totalSyncs: number;
+    successfulSyncs: number;
+    failedSyncs: number;
+    successRate: number;
+    lastSyncAt: Date | null;
+    lastSyncStatus: 'success' | 'error' | 'in_progress' | null;
+    lastError: string | null;
+    avgSyncDuration: number;
+    totalArticlesFound: number;
+    totalArticlesNew: number;
+    recentSyncs: Array<{
+      id: string;
+      status: string;
+      startedAt: Date;
+      completedAt: Date | null;
+      duration: number | null;
+      articlesFound: number;
+      articlesNew: number;
+      error: string | null;
+    }>;
+  }> {
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+    
+    const { data, error } = await this.supabase
+      .from('feed_sync_log')
+      .select('*')
+      .eq('feed_id', feedId)
+      .gte('sync_started_at', since.toISOString())
+      .order('sync_started_at', { ascending: false })
+      .limit(50);
+    
+    if (error) {
+      throw new Error(`Failed to get feed health stats: ${error.message}`);
+    }
+    
+    const syncs = data || [];
+    const successfulSyncs = syncs.filter(s => s.status === 'success').length;
+    const failedSyncs = syncs.filter(s => s.status === 'error').length;
+    const totalSyncs = syncs.length;
+    
+    const lastSync = syncs[0] || null;
+    
+    // Calculate average duration from successful syncs
+    const completedSyncs = syncs.filter(s => s.sync_duration_ms != null);
+    const avgSyncDuration = completedSyncs.length > 0
+      ? completedSyncs.reduce((sum, s) => sum + (s.sync_duration_ms || 0), 0) / completedSyncs.length
+      : 0;
+    
+    // Calculate totals
+    const totalArticlesFound = syncs.reduce((sum, s) => sum + (s.articles_found || 0), 0);
+    const totalArticlesNew = syncs.reduce((sum, s) => sum + (s.articles_new || 0), 0);
+    
+    // Get last error from failed syncs
+    const lastFailedSync = syncs.find(s => s.status === 'error');
+    
+    return {
+      feedId,
+      totalSyncs,
+      successfulSyncs,
+      failedSyncs,
+      successRate: totalSyncs > 0 ? Math.round((successfulSyncs / totalSyncs) * 100) : 0,
+      lastSyncAt: lastSync ? new Date(lastSync.sync_started_at) : null,
+      lastSyncStatus: lastSync?.status as 'success' | 'error' | 'in_progress' | null,
+      lastError: lastFailedSync?.error_message || null,
+      avgSyncDuration: Math.round(avgSyncDuration),
+      totalArticlesFound,
+      totalArticlesNew,
+      recentSyncs: syncs.slice(0, 10).map(s => ({
+        id: s.id,
+        status: s.status,
+        startedAt: new Date(s.sync_started_at),
+        completedAt: s.sync_completed_at ? new Date(s.sync_completed_at) : null,
+        duration: s.sync_duration_ms,
+        articlesFound: s.articles_found || 0,
+        articlesNew: s.articles_new || 0,
+        error: s.error_message
+      }))
+    };
+  }
+
+  async getAllFeedsHealthStats(userId: string): Promise<Array<{
+    feedId: string;
+    feedName: string;
+    totalSyncs: number;
+    successfulSyncs: number;
+    failedSyncs: number;
+    successRate: number;
+    lastSyncAt: Date | null;
+    lastSyncStatus: 'success' | 'error' | 'in_progress' | null;
+    lastError: string | null;
+  }>> {
+    // Get user's feeds
+    const { data: feeds, error: feedsError } = await this.supabase
+      .from('feeds')
+      .select('id, name')
+      .eq('user_id', userId);
+    
+    if (feedsError) {
+      throw new Error(`Failed to get user feeds: ${feedsError.message}`);
+    }
+    
+    if (!feeds || feeds.length === 0) {
+      return [];
+    }
+    
+    const feedIds = feeds.map(f => f.id);
+    const feedNameMap = new Map(feeds.map(f => [f.id, f.name]));
+    
+    // Get sync logs for last 7 days
+    const since = new Date();
+    since.setDate(since.getDate() - 7);
+    
+    const { data: syncLogs, error: syncError } = await this.supabase
+      .from('feed_sync_log')
+      .select('feed_id, status, sync_started_at, error_message')
+      .in('feed_id', feedIds)
+      .gte('sync_started_at', since.toISOString())
+      .order('sync_started_at', { ascending: false });
+    
+    if (syncError) {
+      throw new Error(`Failed to get sync logs: ${syncError.message}`);
+    }
+    
+    // Group by feed
+    const syncsByFeed = new Map<string, typeof syncLogs>();
+    for (const log of syncLogs || []) {
+      const existing = syncsByFeed.get(log.feed_id) || [];
+      existing.push(log);
+      syncsByFeed.set(log.feed_id, existing);
+    }
+    
+    // Build stats for each feed
+    return feeds.map(feed => {
+      const syncs = syncsByFeed.get(feed.id) || [];
+      const successfulSyncs = syncs.filter(s => s.status === 'success').length;
+      const failedSyncs = syncs.filter(s => s.status === 'error').length;
+      const totalSyncs = syncs.length;
+      const lastSync = syncs[0] || null;
+      const lastFailedSync = syncs.find(s => s.status === 'error');
+      
+      return {
+        feedId: feed.id,
+        feedName: feedNameMap.get(feed.id) || 'Unknown',
+        totalSyncs,
+        successfulSyncs,
+        failedSyncs,
+        successRate: totalSyncs > 0 ? Math.round((successfulSyncs / totalSyncs) * 100) : 0,
+        lastSyncAt: lastSync ? new Date(lastSync.sync_started_at) : null,
+        lastSyncStatus: lastSync?.status as 'success' | 'error' | 'in_progress' | null,
+        lastError: lastFailedSync?.error_message || null
+      };
+    });
+  }
+
   // AI Rate Limiter Storage Methods (Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6)
   
   async recordUsageLog(usage: InsertAIUsageLog): Promise<any> {
