@@ -1,10 +1,9 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Search, Globe, Plus, Check, Link as LinkIcon, RefreshCw, X, Loader2 } from "lucide-react";
+import { Search, Globe, Plus, Check, Link as LinkIcon, RefreshCw, X, Loader2, Star } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { CATEGORIES_FILTER } from "@/lib/browse-feeds";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
@@ -74,22 +73,46 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
     }
   };
 
-  // Filter feeds based on search and category with debounced search
+  // Build dynamic categories from fetched feeds
+  const dynamicCategories = useMemo(() => {
+    const categoryMap = new Map<string, number>();
+    allFeeds.forEach(feed => {
+      categoryMap.set(feed.category, (categoryMap.get(feed.category) || 0) + 1);
+    });
+    
+    // Sort by count descending
+    const sorted = Array.from(categoryMap.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, count]) => ({ id: name, label: name, count }));
+    
+    return [{ id: 'all', label: 'All', count: allFeeds.length }, ...sorted];
+  }, [allFeeds]);
+
+  // Filter feeds based on search and category
   const filteredFeeds = useMemo(() => {
-    return allFeeds.filter(feed => {
+    let feeds = allFeeds;
+    
+    // Filter by category first
+    if (selectedCategory !== "all") {
+      feeds = feeds.filter(feed => feed.category === selectedCategory);
+    }
+    
+    // Then filter by search
+    if (searchQuery.trim()) {
       const searchLower = searchQuery.toLowerCase();
-      const matchesSearch = !searchQuery || 
+      feeds = feeds.filter(feed => 
         feed.name.toLowerCase().includes(searchLower) || 
         (feed.description?.toLowerCase().includes(searchLower)) ||
-        (feed.tags?.some(tag => tag.toLowerCase().includes(searchLower)));
-      
-      // Map category names for filtering
-      const feedCategory = feed.category.toLowerCase();
-      const matchesCategory = selectedCategory === "all" || 
-        feedCategory === selectedCategory.toLowerCase() ||
-        feedCategory.includes(selectedCategory.toLowerCase());
-      
-      return matchesSearch && matchesCategory;
+        feed.category.toLowerCase().includes(searchLower) ||
+        (feed.tags?.some(tag => tag.toLowerCase().includes(searchLower)))
+      );
+    }
+    
+    // Sort: featured first, then by name
+    return feeds.sort((a, b) => {
+      if (a.is_featured && !b.is_featured) return -1;
+      if (!a.is_featured && b.is_featured) return 1;
+      return a.name.localeCompare(b.name);
     });
   }, [allFeeds, searchQuery, selectedCategory]);
 
@@ -257,7 +280,7 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
 
                 <ScrollArea className="w-full whitespace-nowrap pb-2">
                   <div className="flex w-max space-x-2 p-1">
-                    {CATEGORIES_FILTER.map((cat) => (
+                    {dynamicCategories.map((cat) => (
                       <button
                         key={cat.id}
                         onClick={() => setSelectedCategory(cat.id)}
@@ -268,8 +291,13 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
                             : "bg-background border-border text-muted-foreground hover:bg-muted"
                         )}
                       >
-                        <span>{cat.icon}</span>
                         {cat.label}
+                        <span className={cn(
+                          "text-xs",
+                          selectedCategory === cat.id ? "text-primary-foreground/70" : "text-muted-foreground/60"
+                        )}>
+                          ({cat.count})
+                        </span>
                       </button>
                     ))}
                   </div>
@@ -293,8 +321,23 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
                   </div>
                 ) : filteredFeeds.length > 0 ? (
                   <>
-                    <div className="text-xs text-muted-foreground mb-3">
-                      Showing {filteredFeeds.length} of {allFeeds.length} feeds
+                    <div className="text-xs text-muted-foreground mb-3 flex items-center justify-between">
+                      <span>
+                        {searchQuery || selectedCategory !== 'all' 
+                          ? `${filteredFeeds.length} feeds found`
+                          : `${allFeeds.length} feeds available`
+                        }
+                      </span>
+                      {(searchQuery || selectedCategory !== 'all') && (
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="h-6 text-xs"
+                          onClick={() => { setSearchQuery(""); setSelectedCategory("all"); }}
+                        >
+                          Clear filters
+                        </Button>
+                      )}
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       {filteredFeeds.slice(0, 50).map((feed) => {
@@ -311,7 +354,12 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
                           >
                             <div className="flex justify-between items-start">
                               <div className="flex-1 min-w-0">
-                                <h3 className={cn("font-bold text-base leading-tight truncate", isAdded ? "text-muted-foreground" : "text-foreground")}>{feed.name}</h3>
+                                <div className="flex items-center gap-1.5">
+                                  <h3 className={cn("font-bold text-base leading-tight truncate", isAdded ? "text-muted-foreground" : "text-foreground")}>{feed.name}</h3>
+                                  {feed.is_featured && (
+                                    <Star className="h-3.5 w-3.5 text-amber-500 fill-amber-500 shrink-0" />
+                                  )}
+                                </div>
                                 <div className="text-xs text-muted-foreground font-mono mt-0.5 truncate">
                                   {(() => {
                                     try {
@@ -348,11 +396,6 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
                               <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">
                                 {feed.category}
                               </span>
-                              {feed.is_featured && (
-                                <span className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-900/20 px-2 py-0.5 rounded">
-                                  Featured
-                                </span>
-                              )}
                               {feed.language && feed.language !== 'en' && (
                                 <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">
                                   {feed.language.toUpperCase()}
@@ -364,8 +407,8 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
                       })}
                     </div>
                     {filteredFeeds.length > 50 && (
-                      <div className="text-center text-sm text-muted-foreground mt-4 py-2">
-                        Showing first 50 results. Use search to find more specific feeds.
+                      <div className="text-center text-sm text-muted-foreground mt-4 py-2 bg-muted/50 rounded-lg">
+                        Showing first 50 of {filteredFeeds.length} results. Use search to narrow down.
                       </div>
                     )}
                   </>
