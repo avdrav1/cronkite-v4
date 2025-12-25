@@ -2,22 +2,18 @@ import { useState, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { StepIndicator } from "./StepIndicator";
 import { WelcomeStep } from "./WelcomeStep";
-import { InterestSelector } from "./InterestSelector";
-import { RegionSelector } from "./RegionSelector";
-import { FeedPreview } from "./FeedPreview";
+import { CategorySelector } from "./CategorySelector";
+import { FeedDiscovery } from "./FeedDiscovery";
 import { ConfirmationStep } from "./ConfirmationStep";
-import { useLocation } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
 import { type RecommendedFeed } from "@shared/schema";
 
 export function OnboardingWizard() {
   const [step, setStep] = useState(1);
   const [direction, setDirection] = useState(0);
-  const [location, setLocation] = useLocation();
 
   // State
-  const [selectedInterests, setSelectedInterests] = useState<string[]>([]);
-  const [selectedRegion, setSelectedRegion] = useState<string | null>(null);
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [selectedFeeds, setSelectedFeeds] = useState<string[]>([]);
 
   // Navigation handlers
@@ -34,8 +30,8 @@ export function OnboardingWizard() {
   };
 
   // Logic handlers
-  const toggleInterest = (id: string) => {
-    setSelectedInterests(prev => 
+  const toggleCategory = (id: string) => {
+    setSelectedCategories(prev => 
       prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
     );
   };
@@ -46,39 +42,65 @@ export function OnboardingWizard() {
     );
   };
 
-  const toggleCategory = (category: string, feedIds: string[]) => {
-    const allSelected = feedIds.every(id => selectedFeeds.includes(id));
-    if (allSelected) {
-      setSelectedFeeds(prev => prev.filter(id => !feedIds.includes(id)));
-    } else {
-      setSelectedFeeds(prev => Array.from(new Set([...prev, ...feedIds])));
-    }
-  };
-
-  // Pre-select popular feeds when moving to feed step
+  // Pre-select featured feeds when moving to feed discovery step
   useEffect(() => {
-    if (step === 4 && selectedFeeds.length === 0) {
-      const preselectPopularFeeds = async () => {
+    if (step === 3 && selectedFeeds.length === 0 && selectedCategories.length > 0) {
+      const preselectFeaturedFeeds = async () => {
         try {
-          const response = await apiRequest('GET', '/api/feeds/recommended');
+          const response = await apiRequest('GET', '/api/feeds/recommended?limit=1000');
           const data = await response.json();
           const recommendedFeeds: RecommendedFeed[] = data.feeds;
           
-          // Pre-select featured feeds that match selected interests
-          const relevantPopular = recommendedFeeds
-            .filter(f => selectedInterests.includes(f.category) && f.is_featured)
+          // Map frontend categories to database categories
+          const dbCategoryMap: Record<string, string> = {
+            'tech': 'Technology',
+            'business': 'Business',
+            'gaming': 'Gaming',
+            'sports': 'Sports',
+            'science': 'Science',
+            'space': 'Space',
+            'news': 'News',
+            'movies': 'Entertainment',
+            'music': 'Music',
+            'books': 'Books',
+            'food': 'Food',
+            'travel': 'Travel',
+            'programming': 'Programming',
+            'design': 'Design',
+            'cars': 'Automotive',
+            'diy': 'DIY',
+            'android': 'Android',
+            'apple': 'Apple',
+            'history': 'History',
+            'funny': 'Humor',
+            'beauty': 'Beauty',
+            'fashion': 'Fashion',
+            'startups': 'Startups',
+            'cricket': 'Cricket',
+            'football': 'Football',
+            'tennis': 'Tennis',
+            'photography': 'Photography',
+            'interior': 'Interior'
+          };
+          
+          const dbCategories = selectedCategories.map(c => dbCategoryMap[c]).filter(Boolean);
+          
+          // Pre-select featured feeds that match selected categories
+          const relevantFeatured = recommendedFeeds
+            .filter(f => dbCategories.includes(f.category) && f.is_featured)
             .map(f => f.id);
           
-          setSelectedFeeds(relevantPopular);
+          if (relevantFeatured.length > 0) {
+            setSelectedFeeds(relevantFeatured);
+          }
         } catch (error) {
           console.error('Failed to pre-select feeds:', error);
-          // Continue without pre-selection if API fails
         }
       };
 
-      preselectPopularFeeds();
+      preselectFeaturedFeeds();
     }
-  }, [step, selectedInterests]);
+  }, [step, selectedCategories]);
 
   const variants = {
     enter: (direction: number) => ({
@@ -95,15 +117,18 @@ export function OnboardingWizard() {
     }),
   };
 
+  // Total steps: Welcome (1), Categories (2), Feed Discovery (3), Confirmation (4)
+  const totalSteps = 4;
+
   return (
     <div className="min-h-screen w-full bg-background flex flex-col items-center justify-center p-4 md:p-8 relative overflow-hidden">
       {/* Background Gradient */}
       <div className="absolute inset-0 bg-gradient-to-tr from-primary/5 via-transparent to-accent/5 pointer-events-none" />
 
       <div className="w-full max-w-4xl relative z-10 flex flex-col h-full md:h-auto min-h-[600px]">
-        {/* Only show step indicator for steps 2-4 */}
-        {step > 1 && step < 5 && (
-          <StepIndicator currentStep={step} totalSteps={5} />
+        {/* Only show step indicator for steps 2-3 */}
+        {step > 1 && step < 4 && (
+          <StepIndicator currentStep={step} totalSteps={totalSteps} />
         )}
 
         <div className="flex-1 bg-transparent md:bg-card/50 md:backdrop-blur-xl md:border md:border-border/50 md:rounded-3xl md:shadow-2xl md:p-8 relative overflow-hidden flex flex-col">
@@ -122,32 +147,25 @@ export function OnboardingWizard() {
                 <WelcomeStep onNext={nextStep} />
               )}
               {step === 2 && (
-                <InterestSelector 
-                  selectedInterests={selectedInterests} 
-                  toggleInterest={toggleInterest} 
+                <CategorySelector 
+                  selectedCategories={selectedCategories} 
+                  toggleCategory={toggleCategory} 
                   onNext={nextStep} 
                 />
               )}
               {step === 3 && (
-                <RegionSelector 
-                  selectedRegion={selectedRegion} 
-                  setRegion={setSelectedRegion} 
-                  onNext={nextStep} 
+                <FeedDiscovery 
+                  selectedCategories={selectedCategories}
+                  selectedFeeds={selectedFeeds}
+                  toggleFeed={toggleFeed}
+                  onNext={nextStep}
+                  onBack={prevStep}
                 />
               )}
               {step === 4 && (
-                <FeedPreview 
-                  selectedInterests={selectedInterests}
-                  selectedFeeds={selectedFeeds}
-                  toggleFeed={toggleFeed}
-                  toggleCategory={toggleCategory}
-                  onNext={nextStep}
-                />
-              )}
-              {step === 5 && (
                 <ConfirmationStep 
-                  selectedInterests={selectedInterests}
-                  selectedRegion={selectedRegion}
+                  selectedInterests={selectedCategories}
+                  selectedRegion={null}
                   selectedFeedsCount={selectedFeeds.length}
                 />
               )}
@@ -155,13 +173,13 @@ export function OnboardingWizard() {
           </AnimatePresence>
         </div>
         
-        {/* Back button for steps 2-4 */}
-        {step > 1 && step < 5 && (
+        {/* Back button for step 2 only (step 3 has its own back button) */}
+        {step === 2 && (
            <button 
              onClick={prevStep}
              className="absolute top-4 left-4 md:top-8 md:left-8 text-sm text-muted-foreground hover:text-foreground transition-colors"
            >
-             ← Back
+             Back
            </button>
         )}
       </div>

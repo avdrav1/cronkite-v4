@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import url('https://fonts.cdnfonts.com/css/cloister-black');
 
 @custom-variant dark (&:is(.dark *));
 
@@ -8,7 +9,7 @@
   --font-serif: 'Literata', serif;
   --font-mono: 'JetBrains Mono', monospace;
   --font-display: 'Space Grotesk', sans-serif;
-  --font-masthead: 'UnifrakturMaguntia', cursive;
+  --font-masthead: 'Cloister Black', cursive;
   
   --radius-sm: 0.375rem;
   --radius-md: 0.5rem;
@@ -171,7 +172,7 @@
 
 /* Typography Utilities */
 .font-masthead {
-  font-family: 'UnifrakturMaguntia', cursive;
+  font-family: 'Cloister Black', cursive;
 }
 
 .font-display {

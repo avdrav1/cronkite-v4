@@ -1,14 +1,12 @@
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
-import { CATEGORIES } from "@/data/categories";
-import { REGIONS } from "@/data/regions";
+import { CATEGORIES, getCategoryById } from "@/data/categories";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
-import { Confetti } from "@/components/ui/confetti"; // Placeholder import, simulating confetti
 import { useState, useEffect, useRef, useCallback } from "react";
 import { apiRequest } from "@/lib/queryClient";
 import { Spinner } from "@/components/ui/spinner";
-import { RefreshCw, AlertCircle, CheckCircle2 } from "lucide-react";
+import { RefreshCw, AlertCircle, CheckCircle2, PartyPopper, Rss } from "lucide-react";
 
 // Sync status response type from API
 interface SyncStatusResponse {
@@ -45,9 +43,6 @@ export function ConfirmationStep({ selectedInterests, selectedRegion, selectedFe
   const [failedFeeds, setFailedFeeds] = useState<Array<{ feedName: string; error: string }>>([]);
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
   const hasStartedRef = useRef(false);
-
-  const regionName = selectedRegion ? REGIONS.find(r => r.code === selectedRegion)?.name : null;
-  const regionFlag = selectedRegion ? REGIONS.find(r => r.code === selectedRegion)?.flag : null;
 
   // Poll sync status for progress updates
   const pollSyncStatus = useCallback(async () => {
@@ -156,18 +151,30 @@ export function ConfirmationStep({ selectedInterests, selectedRegion, selectedFe
       animate={{ opacity: 1, scale: 1 }}
       className="flex flex-col items-center text-center max-w-lg mx-auto py-8 relative"
     >
-      <div className="text-6xl mb-6 animate-bounce">🎉</div>
+      <div className="mb-6">
+        <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center">
+          <PartyPopper className="h-8 w-8 text-primary" />
+        </div>
+      </div>
       
-      <h1 className="text-4xl font-display font-bold tracking-tight mb-8">
+      <h1 className="text-3xl font-display font-bold tracking-tight mb-2">
         {isSyncing ? "Setting up your feed..." : syncComplete ? "You're all set!" : "Almost ready!"}
       </h1>
+      
+      <p className="text-muted-foreground mb-8">
+        {isSyncing 
+          ? "We're fetching the latest articles for you" 
+          : syncComplete 
+            ? "Your personalized news feed is ready"
+            : "Preparing your reading experience"}
+      </p>
 
-      {/* Sync Progress Indicator - Requirements 2.6, 2.7 */}
+      {/* Sync Progress Indicator */}
       {isSyncing && (
         <div className="flex flex-col items-center gap-4 mb-8 w-full">
           <div className="flex items-center gap-3">
-            <Spinner className="h-6 w-6 text-primary" />
-            <span className="text-lg font-medium">Syncing feeds...</span>
+            <Spinner className="h-5 w-5 text-primary" />
+            <span className="font-medium">Syncing feeds...</span>
           </div>
           
           {/* Progress bar */}
@@ -226,7 +233,7 @@ export function ConfirmationStep({ selectedInterests, selectedRegion, selectedFe
         </div>
       )}
 
-      {/* Sync Error - Requirement 2.9 */}
+      {/* Sync Error */}
       {syncError && (
         <div className="text-sm text-red-600 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3 mb-8 w-full">
           <div className="flex items-center gap-2 font-medium mb-2">
@@ -246,35 +253,31 @@ export function ConfirmationStep({ selectedInterests, selectedRegion, selectedFe
         </div>
       )}
 
-      <div className="w-full bg-card border border-border rounded-2xl p-6 shadow-lg mb-10 text-left">
-        <div className="space-y-6">
+      <div className="w-full bg-card border border-border rounded-2xl p-6 shadow-lg mb-8 text-left">
+        <div className="space-y-5">
           <div>
-            <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">Your Interests</h3>
+            <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">Your Topics</h3>
             <div className="flex flex-wrap gap-2">
               {selectedInterests.map(id => {
-                const cat = CATEGORIES.find(c => c.id === id);
+                const cat = getCategoryById(id);
+                if (!cat) return null;
+                const Icon = cat.icon;
                 return (
-                   <span key={id} className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-muted text-sm font-medium">
-                     <span>{cat?.emoji}</span> {cat?.label}
+                   <span key={id} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-muted text-sm font-medium">
+                     <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+                     {cat.label}
                    </span>
                 );
               })}
             </div>
           </div>
 
-          {selectedRegion && (
-            <div>
-              <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">Region</h3>
-              <div className="flex items-center gap-2 p-3 bg-muted/50 rounded-lg border border-border/50">
-                 <span className="text-xl">{regionFlag}</span>
-                 <span className="font-medium">{regionName}</span>
-              </div>
-            </div>
-          )}
-
           <div className="pt-4 border-t border-border">
              <div className="flex justify-between items-center">
-               <span className="text-muted-foreground">Subscriptions</span>
+               <div className="flex items-center gap-2 text-muted-foreground">
+                 <Rss className="h-4 w-4" />
+                 <span>Subscriptions</span>
+               </div>
                <span className="font-bold text-lg">{selectedFeedsCount} feeds</span>
              </div>
           </div>
@@ -284,10 +287,10 @@ export function ConfirmationStep({ selectedInterests, selectedRegion, selectedFe
       <Link href="/">
         <Button 
           size="lg" 
-          className="w-full md:w-auto px-12 h-14 text-lg rounded-xl shadow-lg shadow-primary/25 hover:shadow-primary/40 transition-all bg-primary hover:bg-primary/90"
+          className="w-full md:w-auto px-12 h-12 rounded-xl shadow-lg shadow-primary/25 hover:shadow-primary/40 transition-all bg-primary hover:bg-primary/90"
           disabled={isSyncing}
         >
-          {isSyncing ? "Syncing..." : "Start Reading →"}
+          {isSyncing ? "Syncing..." : "Start Reading"}
         </Button>
       </Link>
       

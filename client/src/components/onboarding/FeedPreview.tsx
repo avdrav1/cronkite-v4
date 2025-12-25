@@ -500,7 +500,11 @@ export function FeedPreview({ selectedInterests, selectedFeeds, toggleFeed, togg
                 {/* Category Header */}
                 <div className="bg-muted/30 p-4 border-b border-border flex items-center justify-between">
                   <div className="flex items-center gap-2 font-medium">
-                    <span className="text-xl">{categoryInfo?.emoji}</span>
+                    {categoryInfo?.icon && (
+                      <div className="p-1.5 rounded-lg bg-muted">
+                        <categoryInfo.icon className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                    )}
                     <span className="capitalize">{categoryInfo?.label || category}</span>
                     <span className="text-xs text-muted-foreground">
                       ({searchQuery ? `${filteredFeeds.length}/${feeds.length}` : feeds.length})

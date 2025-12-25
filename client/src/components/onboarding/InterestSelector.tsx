@@ -4,6 +4,7 @@ import { CATEGORIES } from "@/data/categories";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
 import { apiRequest } from "@/lib/queryClient";
+import { Check } from "lucide-react";
 
 interface InterestSelectorProps {
   selectedInterests: string[];
@@ -57,6 +58,7 @@ export function InterestSelector({ selectedInterests, toggleInterest, onNext }: 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
         {CATEGORIES.map((category, index) => {
           const isSelected = selectedInterests.includes(category.id);
+          const Icon = category.icon;
           return (
             <motion.button
               key={category.id}
@@ -73,14 +75,22 @@ export function InterestSelector({ selectedInterests, toggleInterest, onNext }: 
                   : "bg-card border-border hover:border-primary/50 hover:bg-muted/50"
               )}
             >
-              <span className="text-2xl">{category.emoji}</span>
+              <div className={cn(
+                "p-2 rounded-lg",
+                isSelected ? "bg-primary/20" : "bg-muted"
+              )}>
+                <Icon className={cn(
+                  "h-6 w-6",
+                  isSelected ? "text-primary" : "text-muted-foreground"
+                )} />
+              </div>
               <span className={cn("font-medium", isSelected ? "text-primary" : "text-foreground")}>
                 {category.label}
               </span>
               
               {isSelected && (
-                <div className="absolute -top-2 -right-2 bg-green-500 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs shadow-md">
-                  ✓
+                <div className="absolute -top-2 -right-2 bg-primary text-primary-foreground w-6 h-6 rounded-full flex items-center justify-center shadow-md">
+                  <Check className="h-3 w-3" />
                 </div>
               )}
             </motion.button>
