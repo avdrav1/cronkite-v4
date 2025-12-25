@@ -3190,5 +3190,321 @@ export async function registerRoutes(
     }
   });
 
+  // ============================================================================
+  // Admin Routes - Feed Management
+  // ============================================================================
+
+  // GET /api/admin/feeds - Get all recommended feeds with health status
+  app.get('/api/admin/feeds', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const storage = await getStorage();
+      const supabase = (storage as any).supabase;
+      
+      if (!supabase) {
+        return res.status(500).json({ error: 'Database not available' });
+      }
+      
+      const { data: feeds, error } = await supabase
+        .from('recommended_feeds')
+        .select('id, name, url, category, popularity_score, is_featured, created_at')
+        .order('category', { ascending: true })
+        .order('name', { ascending: true });
+      
+      if (error) {
+        return res.status(500).json({ error: error.message });
+      }
+      
+      // Map to health format (status will be 'pending' until audit runs)
+      const feedsWithHealth = (feeds || []).map((f: any) => ({
+        id: f.id,
+        name: f.name,
+        url: f.url,
+        category: f.category,
+        status: 'pending',
+        totalArticles: 0,
+        articlesLast30Days: 0,
+      }));
+      
+      res.json({ feeds: feedsWithHealth });
+    } catch (error) {
+      console.error('Admin get feeds error:', error);
+      res.status(500).json({ error: 'Failed to get feeds' });
+    }
+  });
+
+  // POST /api/admin/feeds/:id/test - Test a single feed
+  app.post('/api/admin/feeds/:id/test', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const feedId = req.params.id;
+      const storage = await getStorage();
+      const supabase = (storage as any).supabase;
+      
+      // Get feed URL
+      const { data: feed, error: fetchError } = await supabase
+        .from('recommended_feeds')
+        .select('id, name, url, category')
+        .eq('id', feedId)
+        .single();
+      
+      if (fetchError || !feed) {
+        return res.status(404).json({ error: 'Feed not found' });
+      }
+      
+      // Test the feed
+      const Parser = (await import('rss-parser')).default;
+      const parser = new Parser({
+        timeout: 15000,
+        headers: {
+          'User-Agent': 'Cronkite/1.0 (RSS Reader)',
+          'Accept': 'application/rss+xml, application/xml, text/xml, */*'
+        }
+      });
+      
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      
+      try {
+        const startTime = Date.now();
+        const parsed = await parser.parseURL(feed.url);
+        const responseTime = Date.now() - startTime;
+        
+        const items = parsed.items || [];
+        let articlesLast30Days = 0;
+        let latestDate: Date | null = null;
+        
+        for (const item of items) {
+          const pubDate = item.pubDate || item.isoDate;
+          if (pubDate) {
+            const articleDate = new Date(pubDate);
+            if (!latestDate || articleDate > latestDate) {
+              latestDate = articleDate;
+            }
+            if (articleDate >= thirtyDaysAgo) {
+              articlesLast30Days++;
+            }
+          }
+        }
+        
+        let status: string = 'healthy';
+        if (items.length === 0) {
+          status = 'empty';
+        } else if (articlesLast30Days === 0) {
+          status = 'stale';
+        }
+        
+        res.json({
+          feed: {
+            id: feed.id,
+            name: feed.name,
+            url: feed.url,
+            category: feed.category,
+            status,
+            totalArticles: items.length,
+            articlesLast30Days,
+            latestArticleDate: latestDate?.toISOString(),
+            responseTimeMs: responseTime,
+            lastChecked: new Date().toISOString()
+          }
+        });
+      } catch (parseError: any) {
+        let httpStatus: number | undefined;
+        if (parseError.message?.includes('Status code')) {
+          const match = parseError.message.match(/Status code (\d+)/);
+          if (match) httpStatus = parseInt(match[1], 10);
+        }
+        
+        res.json({
+          feed: {
+            id: feed.id,
+            name: feed.name,
+            url: feed.url,
+            category: feed.category,
+            status: 'error',
+            error: parseError.message,
+            httpStatus,
+            totalArticles: 0,
+            articlesLast30Days: 0,
+            lastChecked: new Date().toISOString()
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Admin test feed error:', error);
+      res.status(500).json({ error: 'Failed to test feed' });
+    }
+  });
+
+  // DELETE /api/admin/feeds/:id - Remove a recommended feed
+  app.delete('/api/admin/feeds/:id', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const feedId = req.params.id;
+      const storage = await getStorage();
+      const supabase = (storage as any).supabase;
+      
+      const { error } = await supabase
+        .from('recommended_feeds')
+        .delete()
+        .eq('id', feedId);
+      
+      if (error) {
+        return res.status(500).json({ error: error.message });
+      }
+      
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Admin delete feed error:', error);
+      res.status(500).json({ error: 'Failed to delete feed' });
+    }
+  });
+
+  // POST /api/admin/feeds/remove-broken - Remove all broken feeds
+  app.post('/api/admin/feeds/remove-broken', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { feedIds } = req.body;
+      
+      if (!feedIds || !Array.isArray(feedIds)) {
+        return res.status(400).json({ error: 'feedIds array required' });
+      }
+      
+      const storage = await getStorage();
+      const supabase = (storage as any).supabase;
+      
+      const { error } = await supabase
+        .from('recommended_feeds')
+        .delete()
+        .in('id', feedIds);
+      
+      if (error) {
+        return res.status(500).json({ error: error.message });
+      }
+      
+      res.json({ success: true, removed: feedIds.length });
+    } catch (error) {
+      console.error('Admin remove broken feeds error:', error);
+      res.status(500).json({ error: 'Failed to remove broken feeds' });
+    }
+  });
+
+  // POST /api/admin/feeds/audit - Run health audit on all feeds (streaming)
+  app.post('/api/admin/feeds/audit', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const storage = await getStorage();
+      const supabase = (storage as any).supabase;
+      
+      // Get all feeds
+      const { data: feeds, error } = await supabase
+        .from('recommended_feeds')
+        .select('id, name, url, category')
+        .order('category', { ascending: true });
+      
+      if (error) {
+        return res.status(500).json({ error: error.message });
+      }
+      
+      // Set up SSE
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      
+      const Parser = (await import('rss-parser')).default;
+      const parser = new Parser({
+        timeout: 15000,
+        headers: {
+          'User-Agent': 'Cronkite/1.0 (RSS Reader)',
+          'Accept': 'application/rss+xml, application/xml, text/xml, */*'
+        }
+      });
+      
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      
+      const results: any[] = [];
+      const batchSize = 5;
+      
+      for (let i = 0; i < feeds.length; i += batchSize) {
+        const batch = feeds.slice(i, i + batchSize);
+        
+        const batchResults = await Promise.all(batch.map(async (feed: any) => {
+          try {
+            const startTime = Date.now();
+            const parsed = await parser.parseURL(feed.url);
+            const responseTime = Date.now() - startTime;
+            
+            const items = parsed.items || [];
+            let articlesLast30Days = 0;
+            let latestDate: Date | null = null;
+            
+            for (const item of items) {
+              const pubDate = item.pubDate || item.isoDate;
+              if (pubDate) {
+                const articleDate = new Date(pubDate);
+                if (!latestDate || articleDate > latestDate) {
+                  latestDate = articleDate;
+                }
+                if (articleDate >= thirtyDaysAgo) {
+                  articlesLast30Days++;
+                }
+              }
+            }
+            
+            let status = 'healthy';
+            if (items.length === 0) status = 'empty';
+            else if (articlesLast30Days === 0) status = 'stale';
+            
+            return {
+              id: feed.id,
+              name: feed.name,
+              url: feed.url,
+              category: feed.category,
+              status,
+              totalArticles: items.length,
+              articlesLast30Days,
+              latestArticleDate: latestDate?.toISOString(),
+              responseTimeMs: responseTime,
+              lastChecked: new Date().toISOString()
+            };
+          } catch (parseError: any) {
+            let httpStatus: number | undefined;
+            if (parseError.message?.includes('Status code')) {
+              const match = parseError.message.match(/Status code (\d+)/);
+              if (match) httpStatus = parseInt(match[1], 10);
+            }
+            
+            return {
+              id: feed.id,
+              name: feed.name,
+              url: feed.url,
+              category: feed.category,
+              status: 'error',
+              error: parseError.message,
+              httpStatus,
+              totalArticles: 0,
+              articlesLast30Days: 0,
+              lastChecked: new Date().toISOString()
+            };
+          }
+        }));
+        
+        results.push(...batchResults);
+        
+        // Send progress update
+        res.write(`data: ${JSON.stringify({ type: 'progress', current: Math.min(i + batchSize, feeds.length), total: feeds.length })}\n\n`);
+        
+        // Send individual results
+        for (const result of batchResults) {
+          res.write(`data: ${JSON.stringify({ type: 'result', feed: result })}\n\n`);
+        }
+      }
+      
+      // Send complete
+      res.write(`data: ${JSON.stringify({ type: 'complete', feeds: results })}\n\n`);
+      res.end();
+      
+    } catch (error) {
+      console.error('Admin audit feeds error:', error);
+      res.status(500).json({ error: 'Failed to audit feeds' });
+    }
+  });
+
   return httpServer;
 }

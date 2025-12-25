@@ -12,6 +12,7 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  Shield,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -146,6 +147,12 @@ export function AppShell({ children }: AppShellProps) {
                   <Link href="/settings" className="w-full cursor-pointer">
                     <Settings className="mr-2 h-4 w-4" />
                     Settings
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/admin" className="w-full cursor-pointer">
+                    <Shield className="mr-2 h-4 w-4" />
+                    Feed Admin
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />

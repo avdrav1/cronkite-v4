@@ -11,6 +11,7 @@ import SettingsPage from "@/pages/Settings";
 import Onboarding from "@/pages/Onboarding";
 import Auth from "@/pages/Auth";
 import AuthCallback from "@/pages/AuthCallback";
+import Admin from "@/pages/Admin";
 import NotFound from "@/pages/not-found";
 import { useEffect } from "react";
 
@@ -114,6 +115,10 @@ function AppRouter() {
       
       <Route path="/settings">
         <ProtectedRoute component={SettingsPage} />
+      </Route>
+      
+      <Route path="/admin">
+        <ProtectedRoute component={Admin} />
       </Route>
       
       <Route path="/">
