@@ -1088,6 +1088,18 @@ export async function registerRoutes(
       
       const removedCount = await storage.clearUserSubscriptions(userId);
       
+      // Trigger cluster regeneration in background to clean up stale clusters
+      // The next 5-minute cycle will also regenerate, but this speeds up the cleanup
+      try {
+        const { triggerClusterGeneration } = await import('./ai-background-scheduler');
+        // Don't await - let it run in background
+        triggerClusterGeneration().catch(err => 
+          console.warn('Background cluster regeneration failed:', err)
+        );
+      } catch (e) {
+        // AI scheduler might not be initialized, that's ok
+      }
+      
       res.json({
         message: 'All subscriptions cleared',
         removed_count: removedCount

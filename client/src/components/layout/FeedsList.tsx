@@ -25,6 +25,12 @@ interface SyncState {
   isSyncing: boolean;
   syncingFeedId: string | null;
   isBulkSyncing: boolean;
+  bulkSyncProgress: {
+    total: number;
+    completed: number;
+    failed: number;
+    currentFeed?: string;
+  } | null;
 }
 
 /**
@@ -126,7 +132,8 @@ export function FeedsList({ onFeedSelect, onCategorySelect }: FeedsListProps) {
   const [syncState, setSyncState] = useState<SyncState>({
     isSyncing: false,
     syncingFeedId: null,
-    isBulkSyncing: false
+    isBulkSyncing: false,
+    bulkSyncProgress: null
   });
   
   // Initialize expanded categories from sessionStorage for session persistence
@@ -211,37 +218,84 @@ export function FeedsList({ onFeedSelect, onCategorySelect }: FeedsListProps) {
   };
 
   // Bulk sync handler - Requirements: 2.1, 2.2, 2.3, 2.4, 2.5
+  // Uses async sync with polling for progress to avoid 504 timeouts
   const handleSyncAll = async () => {
     if (syncState.isSyncing || syncState.isBulkSyncing) return;
     
-    setSyncState({ isSyncing: false, syncingFeedId: null, isBulkSyncing: true });
+    const totalFeeds = data?.feeds?.length || 0;
+    setSyncState({ 
+      isSyncing: false, 
+      syncingFeedId: null, 
+      isBulkSyncing: true,
+      bulkSyncProgress: { total: totalFeeds, completed: 0, failed: 0 }
+    });
     
     try {
-      const response = await apiRequest('POST', '/api/feeds/sync-all', { waitForResults: true });
-      const result = await response.json();
+      // Start sync without waiting (fire-and-forget)
+      await apiRequest('POST', '/api/feeds/sync-all', { waitForResults: false });
       
-      if (result.success) {
-        toast({
-          title: "All Feeds Synced",
-          description: `${result.successfulSyncs}/${result.totalFeeds} feeds synced, ${result.newArticles} new articles`,
+      // Poll for sync status
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusResponse = await apiRequest('GET', '/api/feeds/sync/status');
+          const status = await statusResponse.json();
+          
+          setSyncState(prev => ({
+            ...prev,
+            bulkSyncProgress: {
+              total: status.totalFeeds || totalFeeds,
+              completed: status.completedFeeds || 0,
+              failed: status.failedFeeds || 0,
+              currentFeed: status.currentFeed
+            }
+          }));
+          
+          // Check if sync is complete
+          if (!status.isActive) {
+            clearInterval(pollInterval);
+            
+            toast({
+              title: "Sync Complete",
+              description: `${status.completedFeeds} feeds synced${status.failedFeeds > 0 ? `, ${status.failedFeeds} failed` : ''}`,
+            });
+            
+            // Refresh feeds data
+            invalidateFeedsQuery();
+            
+            setSyncState({ 
+              isSyncing: false, 
+              syncingFeedId: null, 
+              isBulkSyncing: false,
+              bulkSyncProgress: null
+            });
+          }
+        } catch (pollError) {
+          console.error('Sync status poll error:', pollError);
+        }
+      }, 1500);
+      
+      // Safety timeout - stop polling after 5 minutes
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        setSyncState(prev => {
+          if (prev.isBulkSyncing) {
+            toast({
+              title: "Sync Timeout",
+              description: "Sync is taking longer than expected. Check back later.",
+            });
+            return { isSyncing: false, syncingFeedId: null, isBulkSyncing: false, bulkSyncProgress: null };
+          }
+          return prev;
         });
-        // Refresh feeds data
-        invalidateFeedsQuery();
-      } else {
-        toast({
-          variant: "destructive",
-          title: "Bulk Sync Failed",
-          description: result.message || "Failed to sync feeds",
-        });
-      }
+      }, 5 * 60 * 1000);
+      
     } catch (error) {
       toast({
         variant: "destructive",
         title: "Sync Error",
         description: error instanceof Error ? error.message : "An error occurred during bulk sync",
       });
-    } finally {
-      setSyncState({ isSyncing: false, syncingFeedId: null, isBulkSyncing: false });
+      setSyncState({ isSyncing: false, syncingFeedId: null, isBulkSyncing: false, bulkSyncProgress: null });
     }
   };
 
@@ -361,13 +415,45 @@ export function FeedsList({ onFeedSelect, onCategorySelect }: FeedsListProps) {
           title="Sync all feeds"
         >
           {syncState.isBulkSyncing ? (
-            <Loader2 className="h-3 w-3 animate-spin" />
+            <>
+              <Loader2 className="h-3 w-3 animate-spin" />
+              <span className="ml-1">
+                {syncState.bulkSyncProgress 
+                  ? `${syncState.bulkSyncProgress.completed}/${syncState.bulkSyncProgress.total}`
+                  : 'Syncing...'
+                }
+              </span>
+            </>
           ) : (
-            <RefreshCw className="h-3 w-3" />
+            <>
+              <RefreshCw className="h-3 w-3" />
+              <span className="ml-1">Sync All</span>
+            </>
           )}
-          <span className="ml-1">Sync All</span>
         </Button>
       </div>
+      
+      {/* Sync Progress Bar */}
+      {syncState.isBulkSyncing && syncState.bulkSyncProgress && (
+        <div className="px-3 space-y-1">
+          <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+            <div 
+              className="h-full bg-primary rounded-full transition-all duration-300"
+              style={{ 
+                width: `${syncState.bulkSyncProgress.total > 0 
+                  ? (syncState.bulkSyncProgress.completed / syncState.bulkSyncProgress.total) * 100 
+                  : 0}%` 
+              }}
+            />
+          </div>
+          {syncState.bulkSyncProgress.currentFeed && (
+            <p className="text-[10px] text-muted-foreground truncate">
+              {syncState.bulkSyncProgress.currentFeed}
+            </p>
+          )}
+        </div>
+      )}
+      
       <div className="space-y-1">
         {/* All Articles option */}
         <button
