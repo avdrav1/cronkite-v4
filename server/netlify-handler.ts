@@ -31,9 +31,12 @@ async function getServerlessHandler() {
     console.log('ℹ️ AI background scheduler disabled in serverless mode - using on-demand clustering');
     
     // Create serverless handler
+    // The redirect in netlify.toml sends /api/* to /.netlify/functions/api/:splat
+    // So /api/clusters/123 becomes /.netlify/functions/api/clusters/123
+    // We need to strip /.netlify/functions/api but keep /api for Express routes
     serverlessHandler = serverless(app, {
-      // Strip the /.netlify/functions/api prefix
-      basePath: '/.netlify/functions/api'
+      // Don't strip /api - Express routes expect it
+      basePath: '/.netlify/functions'
     });
     
     console.log('✅ Netlify function handler initialized');
