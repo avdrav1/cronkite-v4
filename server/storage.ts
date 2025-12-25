@@ -83,6 +83,7 @@ export interface IStorage {
   getUserFeeds(userId: string): Promise<Feed[]>;
   subscribeToFeeds(userId: string, feedIds: string[]): Promise<void>;
   unsubscribeFromFeed(userId: string, feedId: string): Promise<void>;
+  clearUserSubscriptions(userId: string): Promise<number>; // Returns count of removed subscriptions
   
   // Feed Synchronization Management
   startFeedSync(feedId: string): Promise<string>; // Returns sync log ID
@@ -644,6 +645,13 @@ export class MemStorage implements IStorage {
     const existingFeeds = this.userFeeds.get(userId) || [];
     const updatedFeeds = existingFeeds.filter(feed => feed.id !== feedId);
     this.userFeeds.set(userId, updatedFeeds);
+  }
+
+  async clearUserSubscriptions(userId: string): Promise<number> {
+    const existingFeeds = this.userFeeds.get(userId) || [];
+    const count = existingFeeds.length;
+    this.userFeeds.set(userId, []);
+    return count;
   }
 
   // Feed Synchronization Management

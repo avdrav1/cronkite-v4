@@ -28,6 +28,7 @@ interface FeedDiscoveryProps {
   toggleFeed: (id: string) => void;
   onNext: () => void;
   onBack: () => void;
+  isResetFlow?: boolean; // True when user is re-running onboarding to reset feeds
 }
 
 const MAX_FEEDS = 25;
@@ -39,7 +40,8 @@ export function FeedDiscovery({
   selectedFeeds, 
   toggleFeed, 
   onNext,
-  onBack 
+  onBack,
+  isResetFlow = false
 }: FeedDiscoveryProps) {
   const [allFeeds, setAllFeeds] = useState<RecommendedFeed[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -154,6 +156,11 @@ export function FeedDiscovery({
     setError(null);
 
     try {
+      // If this is a reset flow, clear existing subscriptions first
+      if (isResetFlow) {
+        await apiRequest('DELETE', '/api/feeds/subscriptions');
+      }
+      
       await apiRequest('POST', '/api/feeds/subscribe', {
         feedIds: selectedFeeds
       });

@@ -752,6 +752,30 @@ export class SupabaseStorage implements IStorage {
     }
   }
 
+  async clearUserSubscriptions(userId: string): Promise<number> {
+    // First count existing subscriptions
+    const { count, error: countError } = await this.supabase
+      .from('feeds')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId);
+    
+    if (countError) {
+      throw new Error(`Failed to count subscriptions: ${countError.message}`);
+    }
+    
+    // Delete all user's feed subscriptions
+    const { error } = await this.supabase
+      .from('feeds')
+      .delete()
+      .eq('user_id', userId);
+    
+    if (error) {
+      throw new Error(`Failed to clear subscriptions: ${error.message}`);
+    }
+    
+    return count || 0;
+  }
+
   // Feed Synchronization Management
   async startFeedSync(feedId: string): Promise<string> {
     const { data, error } = await this.supabase

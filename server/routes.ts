@@ -1079,6 +1079,28 @@ export async function registerRoutes(
       });
     }
   });
+
+  // DELETE /api/feeds/subscriptions - Clear all user subscriptions (for reset flow)
+  app.delete('/api/feeds/subscriptions', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const storage = await getStorage();
+      
+      const removedCount = await storage.clearUserSubscriptions(userId);
+      
+      res.json({
+        message: 'All subscriptions cleared',
+        removed_count: removedCount
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Clear subscriptions error:', errorMessage, error);
+      res.status(500).json({
+        error: 'Failed to clear subscriptions',
+        message: errorMessage
+      });
+    }
+  });
   
   // POST /api/feeds/subscribe - Subscribe to feeds (bulk subscription)
   // Updated with feed limit enforcement (Requirements: 3.1, 3.2, 3.3)

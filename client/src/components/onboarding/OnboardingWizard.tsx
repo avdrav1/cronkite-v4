@@ -139,6 +139,7 @@ export function OnboardingWizard() {
                   toggleFeed={toggleFeed}
                   onNext={nextStep}
                   onBack={prevStep}
+                  isResetFlow={!isFirstTime}
                 />
               )}
               {step === 4 && (
