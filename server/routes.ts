@@ -1922,10 +1922,50 @@ export async function registerRoutes(
   app.get('/api/articles', requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = req.user!.id;
+      const storage = await getStorage();
+      
+      // Check if specific article IDs are requested (for cluster articles)
+      const idsParam = req.query.ids as string | undefined;
+      if (idsParam) {
+        const articleIds = idsParam.split(',').filter(id => id.trim());
+        if (articleIds.length > 0) {
+          console.log(`📖 Fetching ${articleIds.length} specific articles by IDs`);
+          
+          // Fetch articles by IDs
+          const articles = await Promise.all(
+            articleIds.map(async (id) => {
+              try {
+                const article = await storage.getArticleById(id);
+                if (article) {
+                  // Get feed info for the article
+                  const feed = await storage.getFeedById(article.feed_id);
+                  return {
+                    ...article,
+                    feed_name: feed?.name || 'Unknown Source',
+                    feed_url: feed?.site_url || feed?.url,
+                    feed_icon: feed?.icon_url,
+                    feed_category: feed?.folder_name || 'General',
+                    source: feed?.name || 'Unknown Source'
+                  };
+                }
+                return null;
+              } catch {
+                return null;
+              }
+            })
+          );
+          
+          const validArticles = articles.filter(Boolean);
+          return res.json({
+            articles: validArticles,
+            total: validArticles.length,
+            feeds_count: 0
+          });
+        }
+      }
+      
       // No artificial limit - frontend handles date-based pagination (7-day chunks)
       const maxArticlesPerFeed = 200; // Reasonable per-feed limit to prevent memory issues
-      
-      const storage = await getStorage();
       
       // Get user's subscribed feeds
       const userFeeds = await storage.getUserFeeds(userId);
@@ -2640,6 +2680,73 @@ export async function registerRoutes(
         message: error instanceof Error ? error.message : 'An error occurred while generating topic clusters',
         clusters: []
       });
+    }
+  });
+
+  // GET /api/clusters/:clusterId/articles - Get articles for a specific cluster
+  app.get('/api/clusters/:clusterId/articles', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const clusterId = req.params.clusterId;
+      console.log(`📊 Fetching articles for cluster ${clusterId}`);
+      
+      const storage = await getStorage();
+      
+      // Get the cluster to find article IDs
+      const clusters = await storage.getClusters({ includeExpired: true, limit: 100 });
+      const cluster = clusters.find(c => c.id === clusterId);
+      
+      if (!cluster) {
+        return res.status(404).json({ error: 'Cluster not found', articles: [] });
+      }
+      
+      // Get article IDs from cluster record or from articles table
+      let articleIds: string[] = (cluster as any).article_ids || [];
+      
+      // If no article_ids in cluster, try to get from articles table
+      if (articleIds.length === 0) {
+        articleIds = await storage.getArticleIdsByClusterId(clusterId);
+      }
+      
+      console.log(`📊 Found ${articleIds.length} article IDs for cluster`);
+      
+      if (articleIds.length === 0) {
+        return res.json({ articles: [], total: 0 });
+      }
+      
+      // Fetch articles by IDs
+      const articles = await Promise.all(
+        articleIds.map(async (id) => {
+          try {
+            const article = await storage.getArticleById(id);
+            if (article) {
+              const feed = await storage.getFeedById(article.feed_id);
+              return {
+                id: article.id,
+                title: article.title,
+                excerpt: article.excerpt || article.content?.substring(0, 200),
+                url: article.url,
+                source: feed?.name || 'Unknown Source',
+                published_at: article.published_at,
+                image_url: article.image_url
+              };
+            }
+            return null;
+          } catch {
+            return null;
+          }
+        })
+      );
+      
+      const validArticles = articles.filter(Boolean);
+      console.log(`📊 Returning ${validArticles.length} articles for cluster`);
+      
+      res.json({
+        articles: validArticles,
+        total: validArticles.length
+      });
+    } catch (error) {
+      console.error('Failed to get cluster articles:', error);
+      res.status(500).json({ error: 'Failed to get cluster articles', articles: [] });
     }
   });
 

@@ -37,15 +37,15 @@ export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick 
     
     setIsLoading(true);
     try {
-      // Fetch articles by their IDs
-      const response = await apiRequest('GET', `/api/articles?ids=${cluster.articleIds.join(',')}`);
+      // Fetch articles for this cluster using the dedicated endpoint
+      const response = await apiRequest('GET', `/api/clusters/${cluster.id}/articles`);
       const data = await response.json();
       if (data.articles) {
         setArticles(data.articles);
+        console.log(`📊 Loaded ${data.articles.length} articles for cluster "${cluster.topic}"`);
       }
     } catch (error) {
       console.error('Failed to fetch cluster articles:', error);
-      // Fallback: show placeholder data
       setArticles([]);
     } finally {
       setIsLoading(false);

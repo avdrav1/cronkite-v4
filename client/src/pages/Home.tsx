@@ -129,6 +129,18 @@ export default function Home() {
     };
   }, []);
 
+  // Listen for trending cluster clicks from sidebar
+  useEffect(() => {
+    const handleOpenTrendingCluster = (event: CustomEvent) => {
+      console.log('Home: Opening trending cluster from sidebar:', event.detail);
+      setSelectedCluster(event.detail as TrendingCluster);
+    };
+    window.addEventListener('openTrendingCluster', handleOpenTrendingCluster as EventListener);
+    return () => {
+      window.removeEventListener('openTrendingCluster', handleOpenTrendingCluster as EventListener);
+    };
+  }, []);
+
   // Handle article ID from URL (from search results)
   useEffect(() => {
     if (articleIdFromUrl && articles.length > 0) {

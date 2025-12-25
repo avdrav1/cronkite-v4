@@ -210,8 +210,8 @@ export function AppShell({ children }: AppShellProps) {
             <TrendingClusters 
               onClusterClick={(clickedCluster) => {
                 console.log('🔥 Cluster clicked:', clickedCluster.id, clickedCluster.topic);
-                setLocation(`/?cluster=${clickedCluster.id}`);
-                window.dispatchEvent(new CustomEvent('feedFilterChange', { detail: { cluster: clickedCluster.id } }));
+                // Dispatch event to open the TrendingClusterSheet in Home.tsx
+                window.dispatchEvent(new CustomEvent('openTrendingCluster', { detail: clickedCluster }));
               }}
               activeClusterId={cluster || undefined}
             />
