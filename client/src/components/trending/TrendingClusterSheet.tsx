@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { TrendingUp, Sparkles, Newspaper, ExternalLink, Loader2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
-import { apiRequest } from "@/lib/queryClient";
+import { apiFetch } from "@/lib/queryClient";
 import type { TrendingCluster } from "@/components/feed/TrendingTopicCard";
 
 interface ClusterArticle {
@@ -20,9 +20,21 @@ interface TrendingClusterSheetProps {
   isOpen: boolean;
   onClose: () => void;
   onArticleClick?: (articleId: string) => void;
+  allArticles?: Array<{
+    id: string;
+    title: string;
+    excerpt?: string | null;
+    url: string;
+    source?: string;
+    feed_name?: string;
+    published_at?: string | null;
+    date?: string;
+    image_url?: string | null;
+    imageUrl?: string;
+  }>;
 }
 
-export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick }: TrendingClusterSheetProps) {
+export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick, allArticles }: TrendingClusterSheetProps) {
   const [articles, setArticles] = useState<ClusterArticle[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -30,19 +42,67 @@ export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick 
     if (cluster && isOpen) {
       fetchClusterArticles();
     }
-  }, [cluster, isOpen]);
+  }, [cluster, isOpen, allArticles]);
 
   const fetchClusterArticles = async () => {
     if (!cluster) return;
     
     setIsLoading(true);
     try {
-      // Fetch articles for this cluster using the dedicated endpoint
-      const response = await apiRequest('GET', `/api/clusters/${cluster.id}/articles`);
-      const data = await response.json();
-      if (data.articles) {
-        setArticles(data.articles);
-        console.log(`📊 Loaded ${data.articles.length} articles for cluster "${cluster.topic}"`);
+      // BEST: If we have allArticles passed in, filter locally (instant, no API call)
+      if (cluster.articleIds && cluster.articleIds.length > 0 && allArticles && allArticles.length > 0) {
+        const articleIdSet = new Set(cluster.articleIds);
+        const matchedArticles = allArticles
+          .filter(a => articleIdSet.has(a.id))
+          .map(a => ({
+            id: a.id,
+            title: a.title,
+            excerpt: a.excerpt,
+            url: a.url,
+            source: a.source || a.feed_name || 'Unknown',
+            published_at: a.published_at || a.date || new Date().toISOString(),
+            image_url: a.image_url || a.imageUrl
+          }));
+        
+        console.log(`📊 Matched ${matchedArticles.length} articles locally for cluster "${cluster.topic}" (from ${cluster.articleIds.length} IDs, ${allArticles.length} total articles)`);
+        setArticles(matchedArticles);
+        setIsLoading(false);
+        return;
+      }
+      
+      // FALLBACK: Fetch articles by ID if we have articleIds but no allArticles
+      if (cluster.articleIds && cluster.articleIds.length > 0) {
+        console.log(`📊 Fetching ${cluster.articleIds.length} articles by IDs for cluster "${cluster.topic}"`);
+        
+        const articlePromises = cluster.articleIds.map(async (id) => {
+          try {
+            const response = await apiFetch('GET', `/api/articles/${id}`);
+            if (response.ok) {
+              const data = await response.json();
+              return data.article;
+            }
+            return null;
+          } catch {
+            return null;
+          }
+        });
+        
+        const fetchedArticles = await Promise.all(articlePromises);
+        const validArticles = fetchedArticles.filter(Boolean).map((article: any) => ({
+          id: article.id,
+          title: article.title,
+          excerpt: article.excerpt,
+          url: article.url,
+          source: article.feed_name || 'Unknown',
+          published_at: article.published_at || article.created_at,
+          image_url: article.image_url
+        }));
+        
+        setArticles(validArticles);
+        console.log(`📊 Loaded ${validArticles.length} articles by ID for cluster "${cluster.topic}"`);
+      } else {
+        console.log(`📊 No articleIds for cluster "${cluster.topic}"`);
+        setArticles([]);
       }
     } catch (error) {
       console.error('Failed to fetch cluster articles:', error);
