@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { useLocation } from "wouter";
 import { StepIndicator } from "./StepIndicator";
 import { WelcomeStep } from "./WelcomeStep";
 import { CategorySelector } from "./CategorySelector";
@@ -7,10 +8,16 @@ import { FeedDiscovery } from "./FeedDiscovery";
 import { ConfirmationStep } from "./ConfirmationStep";
 import { apiRequest } from "@/lib/queryClient";
 import { type RecommendedFeed } from "@shared/schema";
+import { useAuth } from "@/contexts/AuthContext";
 
 export function OnboardingWizard() {
   const [step, setStep] = useState(1);
   const [direction, setDirection] = useState(0);
+  const [, setLocation] = useLocation();
+  const { user } = useAuth();
+
+  // Determine if this is first-time onboarding or a reset from main UI
+  const isFirstTime = !user?.onboarding_completed;
 
   // State - selectedCategories now stores database category names directly
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
@@ -112,7 +119,11 @@ export function OnboardingWizard() {
               className="flex-1 flex flex-col h-full"
             >
               {step === 1 && (
-                <WelcomeStep onNext={nextStep} />
+                <WelcomeStep 
+                  onNext={nextStep} 
+                  isFirstTime={isFirstTime}
+                  onCancel={() => setLocation('/')}
+                />
               )}
               {step === 2 && (
                 <CategorySelector 
