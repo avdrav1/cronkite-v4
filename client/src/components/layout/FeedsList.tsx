@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from "react";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { cn } from "@/lib/utils";
 import { Folder, Rss, ChevronDown, ChevronRight, Plus, RefreshCw, Loader2, Newspaper } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -126,6 +126,7 @@ export function FeedsList({ onFeedSelect, onCategorySelect }: FeedsListProps) {
   const { data: articleCountsData } = useArticleCountsQuery();
   const invalidateFeedsQuery = useInvalidateFeedsQuery();
   const [location, setLocation] = useLocation();
+  const searchString = useSearch();
   const { toast } = useToast();
   
   // Sync state - Requirements: 1.4, 2.4 (show loading state during sync)
@@ -164,15 +165,14 @@ export function FeedsList({ onFeedSelect, onCategorySelect }: FeedsListProps) {
   }, [expandedCategories]);
 
   // Parse URL to determine active feed/category
-  // Re-parse when location changes to ensure reactivity
+  // Use wouter's useSearch for proper reactivity when URL changes
   const urlParams = useMemo(() => {
-    // Use window.location.search but depend on location from wouter for reactivity
-    const searchParams = new URLSearchParams(window.location.search);
+    const searchParams = new URLSearchParams(searchString);
     return {
       source: searchParams.get('source'),
       category: searchParams.get('category'),
     };
-  }, [location]); // location dependency ensures re-render on navigation
+  }, [searchString]); // searchString from useSearch ensures reactivity
 
   // Group feeds by category
   const groupedFeeds = useMemo(() => {
@@ -186,7 +186,7 @@ export function FeedsList({ onFeedSelect, onCategorySelect }: FeedsListProps) {
     
     if (syncState.isSyncing || syncState.isBulkSyncing) return;
     
-    setSyncState({ isSyncing: true, syncingFeedId: feedId, isBulkSyncing: false });
+    setSyncState({ isSyncing: true, syncingFeedId: feedId, isBulkSyncing: false, bulkSyncProgress: null });
     
     try {
       const response = await apiRequest('POST', `/api/feeds/${feedId}/sync`);
@@ -213,7 +213,7 @@ export function FeedsList({ onFeedSelect, onCategorySelect }: FeedsListProps) {
         description: error instanceof Error ? error.message : "An error occurred during sync",
       });
     } finally {
-      setSyncState({ isSyncing: false, syncingFeedId: null, isBulkSyncing: false });
+      setSyncState({ isSyncing: false, syncingFeedId: null, isBulkSyncing: false, bulkSyncProgress: null });
     }
   };
 
