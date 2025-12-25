@@ -1,10 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
 import { 
@@ -15,8 +14,8 @@ import {
   AlertTriangle,
   Clock,
   Search,
-  Plus,
   Play,
+  Square,
   Download
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
@@ -55,6 +54,7 @@ export default function Admin() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedStatus, setSelectedStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Load feeds on mount
   useEffect(() => {
@@ -80,48 +80,82 @@ export default function Admin() {
       setIsRunningAudit(true);
       setError(null);
       
+      // Create abort controller for cancellation
+      abortControllerRef.current = new AbortController();
+      
       // Mark all feeds as pending
-      setFeeds(prev => prev.map(f => ({ ...f, status: 'pending' as const })));
+      const pendingFeeds = feeds.map(f => ({ ...f, status: 'pending' as const }));
+      setFeeds(pendingFeeds);
+      setAuditProgress({ current: 0, total: pendingFeeds.length });
       
-      const response = await apiRequest('POST', '/api/admin/feeds/audit');
-      const reader = response.body?.getReader();
+      // Test feeds in small batches from the client side to avoid timeout
+      const batchSize = 5;
+      const results: FeedHealth[] = [];
       
-      if (!reader) {
-        throw new Error('No response body');
-      }
-      
-      const decoder = new TextDecoder();
-      
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      for (let i = 0; i < pendingFeeds.length; i += batchSize) {
+        // Check if cancelled
+        if (abortControllerRef.current?.signal.aborted) {
+          break;
+        }
         
-        const text = decoder.decode(value);
-        const lines = text.split('\n').filter(l => l.startsWith('data: '));
+        const batch = pendingFeeds.slice(i, i + batchSize);
         
-        for (const line of lines) {
-          try {
-            const data = JSON.parse(line.slice(6));
-            
-            if (data.type === 'progress') {
-              setAuditProgress({ current: data.current, total: data.total });
-            } else if (data.type === 'result') {
-              setFeeds(prev => prev.map(f => 
-                f.id === data.feed.id ? { ...f, ...data.feed } : f
-              ));
-            } else if (data.type === 'complete') {
-              setFeeds(data.feeds);
+        // Test each feed in the batch in parallel
+        const batchResults = await Promise.all(
+          batch.map(async (feed) => {
+            try {
+              if (abortControllerRef.current?.signal.aborted) {
+                return { ...feed, status: 'pending' as const };
+              }
+              const response = await apiRequest('POST', `/api/admin/feeds/${feed.id}/test`);
+              const data = await response.json();
+              return data.feed as FeedHealth;
+            } catch (err) {
+              return {
+                ...feed,
+                status: 'error' as const,
+                error: err instanceof Error ? err.message : 'Test failed',
+                lastChecked: new Date().toISOString()
+              };
             }
-          } catch (e) {
-            // Ignore parse errors
+          })
+        );
+        
+        results.push(...batchResults);
+        
+        // Update progress and results
+        setAuditProgress({ current: results.length, total: pendingFeeds.length });
+        setFeeds(prev => {
+          const updated = [...prev];
+          for (const result of batchResults) {
+            const idx = updated.findIndex(f => f.id === result.id);
+            if (idx !== -1) {
+              updated[idx] = result;
+            }
           }
+          return updated;
+        });
+        
+        // Small delay between batches to avoid overwhelming the server
+        if (i + batchSize < pendingFeeds.length && !abortControllerRef.current?.signal.aborted) {
+          await new Promise(resolve => setTimeout(resolve, 100));
         }
       }
+      
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Audit failed');
+      if (err instanceof Error && err.name !== 'AbortError') {
+        setError(err.message);
+      }
     } finally {
       setIsRunningAudit(false);
       setAuditProgress({ current: 0, total: 0 });
+      abortControllerRef.current = null;
+    }
+  };
+
+  const stopAudit = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
     }
   };
 
@@ -236,24 +270,52 @@ export default function Admin() {
               <Download className="h-4 w-4 mr-2" />
               Export Report
             </Button>
-            <Button 
-              onClick={runHealthAudit} 
-              disabled={isRunningAudit}
-            >
-              {isRunningAudit ? (
-                <>
-                  <Spinner className="h-4 w-4 mr-2" />
-                  Testing {auditProgress.current}/{auditProgress.total}
-                </>
-              ) : (
-                <>
-                  <Play className="h-4 w-4 mr-2" />
-                  Run Health Audit
-                </>
-              )}
-            </Button>
+            {isRunningAudit ? (
+              <Button 
+                variant="destructive"
+                onClick={stopAudit}
+              >
+                <Square className="h-4 w-4 mr-2" />
+                Stop ({auditProgress.current}/{auditProgress.total})
+              </Button>
+            ) : (
+              <Button 
+                onClick={runHealthAudit}
+              >
+                <Play className="h-4 w-4 mr-2" />
+                Run Health Audit
+              </Button>
+            )}
           </div>
         </div>
+
+        {/* Progress Bar - shown during audit */}
+        {isRunningAudit && auditProgress.total > 0 && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">
+                Testing feeds: {auditProgress.current} of {auditProgress.total}
+              </span>
+              <span className="font-medium">
+                {((auditProgress.current / auditProgress.total) * 100).toFixed(1)}%
+              </span>
+            </div>
+            <div className="h-3 bg-muted rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-primary transition-all duration-300 ease-out"
+                style={{ width: `${(auditProgress.current / auditProgress.total) * 100}%` }}
+              />
+            </div>
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>
+                {summary.healthy} healthy, {summary.errors} errors, {summary.stale} stale
+              </span>
+              <span>
+                ~{Math.ceil((auditProgress.total - auditProgress.current) / 5 * 2)} seconds remaining
+              </span>
+            </div>
+          </div>
+        )}
 
         {error && (
           <Alert variant="destructive">
