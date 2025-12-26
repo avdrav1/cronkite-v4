@@ -14,6 +14,8 @@ import {
   PanelRightOpen,
   Shield,
   Activity,
+  RefreshCw,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,9 +28,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
+import { Progress } from "@/components/ui/progress";
 
 import { AddFeedModal } from "@/components/feed/AddFeedModal";
 import { FeedsList } from "@/components/layout/FeedsList";
+import { useFeedCountQuery } from "@/hooks/useFeedsQuery";
 import { TrendingClusters } from "@/components/trending/TrendingClusters";
 import { SemanticSearch } from "@/components/search/SemanticSearch";
 
@@ -42,7 +48,58 @@ export function AppShell({ children }: AppShellProps) {
   const [, setLocation] = useLocation();
   const searchString = useSearch();
   const [isAddFeedOpen, setIsAddFeedOpen] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncProgress, setSyncProgress] = useState({ current: 0, total: 0, newArticles: 0 });
   const { user, logout } = useAuth();
+  const { toast } = useToast();
+  const { data: feedCount } = useFeedCountQuery();
+  const isFeedsFull = feedCount?.remaining === 0;
+
+  const handleSyncAll = async () => {
+    try {
+      // Fetch user's feeds
+      const feedsResponse = await apiRequest('GET', '/api/feeds/user');
+      const feedsData = await feedsResponse.json();
+      const feeds = feedsData.feeds?.filter((f: any) => f.status === 'active') || [];
+
+      if (feeds.length === 0) {
+        toast({ title: "No feeds to sync" });
+        return;
+      }
+
+      setIsSyncing(true);
+      setSyncProgress({ current: 0, total: feeds.length, newArticles: 0 });
+
+      let totalNew = 0;
+      for (let i = 0; i < feeds.length; i++) {
+        setSyncProgress(p => ({ ...p, current: i + 1 }));
+        try {
+          const res = await apiRequest('POST', '/api/feeds/sync', { feedIds: [feeds[i].id] });
+          const result = await res.json();
+          if (result.results?.[0]) {
+            totalNew += result.results[0].articlesNew || 0;
+            setSyncProgress(p => ({ ...p, newArticles: totalNew }));
+          }
+        } catch (e) {
+          console.error('Feed sync error:', e);
+        }
+      }
+
+      toast({
+        title: "Sync Complete",
+        description: `Found ${totalNew} new article${totalNew !== 1 ? 's' : ''}.`
+      });
+
+      // Trigger feed list refresh
+      window.dispatchEvent(new CustomEvent('feedsUpdated'));
+    } catch (e) {
+      console.error('Sync all error:', e);
+      toast({ variant: "destructive", title: "Sync failed" });
+    } finally {
+      setIsSyncing(false);
+      setSyncProgress({ current: 0, total: 0, newArticles: 0 });
+    }
+  };
 
   const { cluster } = useMemo(() => {
     const params = new URLSearchParams(searchString);
@@ -189,13 +246,40 @@ export function AppShell({ children }: AppShellProps) {
             "flex flex-col p-4 gap-6 h-full overflow-y-auto scrollbar-none",
             !isLeftSidebarOpen && "p-0 opacity-0"
           )}>
-            <Button 
-              className="w-full justify-start gap-2 shadow-sm font-medium shrink-0" 
+            {isFeedsFull ? (
+              <Button
+                variant="destructive"
+                className="w-full justify-start gap-2 shadow-sm font-medium shrink-0"
+                size="lg"
+                onClick={() => setLocation('/settings')}
+              >
+                <Trash2 className="h-4 w-4" /> Delete Feed
+              </Button>
+            ) : (
+              <Button
+                className="w-full justify-start gap-2 shadow-sm font-medium shrink-0"
+                size="lg"
+                onClick={() => setIsAddFeedOpen(true)}
+              >
+                <Plus className="h-4 w-4" /> Add New Feed
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              className="w-full justify-start gap-2 font-medium shrink-0"
               size="lg"
-              onClick={() => setIsAddFeedOpen(true)}
+              onClick={handleSyncAll}
+              disabled={isSyncing}
             >
-              <Plus className="h-4 w-4" /> Add New Feed
+              <RefreshCw className={cn("h-4 w-4", isSyncing && "animate-spin")} />
+              {isSyncing ? `Syncing ${syncProgress.current}/${syncProgress.total}...` : 'Sync All Feeds'}
             </Button>
+            {isSyncing && (
+              <div className="space-y-1">
+                <Progress value={(syncProgress.current / syncProgress.total) * 100} className="h-2" />
+                <p className="text-xs text-muted-foreground text-center">{syncProgress.newArticles} new articles</p>
+              </div>
+            )}
             <FeedsList />
           </div>
         </aside>

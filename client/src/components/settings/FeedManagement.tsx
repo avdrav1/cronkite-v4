@@ -2,10 +2,9 @@ import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { useInvalidateFeedsQuery } from "@/hooks/useFeedsQuery";
-import { Search, Plus, MoreVertical, Folder, ChevronDown, ChevronRight, AlertTriangle, Pause, RefreshCw, Trash2, Edit2, Play, Info, Clock, Zap, Timer, Activity } from "lucide-react";
+import { Search, Plus, Folder, ChevronDown, ChevronRight, AlertTriangle, Pause, RefreshCw, Trash2, Info, Clock, Zap, Timer, Activity } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { formatDistanceToNow } from "date-fns";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
@@ -181,17 +180,13 @@ export function FeedManagement() {
                                 <p className="text-xs text-muted-foreground truncate mb-1">{feed.url}</p>
                                 <p className="text-xs text-muted-foreground">Last sync: {feed.last_fetched_at ? formatDistanceToNow(new Date(feed.last_fetched_at), { addSuffix: true }) : 'Never'} · {feed.article_count} articles</p>
                               </div>
-                              <div className="flex items-center gap-2">
-                                {feed.status === 'error' && <Button variant="outline" size="sm" onClick={() => handleFeedAction(feed.id, 'retry')}><RefreshCw className="h-3 w-3 mr-1" />Retry</Button>}
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreVertical className="h-4 w-4" /></Button></DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end">
-                                    <DropdownMenuItem><Edit2 className="h-4 w-4 mr-2" />Edit</DropdownMenuItem>
-                                    {feed.status === 'paused' ? <DropdownMenuItem onClick={() => handleFeedAction(feed.id, 'resume')}><Play className="h-4 w-4 mr-2" />Resume</DropdownMenuItem> : <DropdownMenuItem onClick={() => handleFeedAction(feed.id, 'pause')}><Pause className="h-4 w-4 mr-2" />Pause</DropdownMenuItem>}
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem className="text-red-600" onClick={() => handleFeedAction(feed.id, 'delete')}><Trash2 className="h-4 w-4 mr-2" />Delete</DropdownMenuItem>
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
+                              <div className="flex items-center gap-1">
+                                <Button variant="ghost" size="icon" onClick={() => handleFeedAction(feed.id, 'retry')} title="Sync feed">
+                                  <RefreshCw className="h-4 w-4" />
+                                </Button>
+                                <Button variant="ghost" size="icon" onClick={() => handleFeedAction(feed.id, 'delete')} title="Delete feed">
+                                  <Trash2 className="h-4 w-4 text-red-500" />
+                                </Button>
                               </div>
                             </div>
                           </div>
