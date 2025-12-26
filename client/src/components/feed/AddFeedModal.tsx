@@ -32,7 +32,7 @@ interface AddFeedModalProps {
 export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps) {
   const [activeTab, setActiveTab] = useState("browse");
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState("all");
+  const [selectedCategory, setSelectedCategory] = useState("");
   const [addedFeeds, setAddedFeeds] = useState<string[]>([]);
   const { toast } = useToast();
   const invalidateFeedsQuery = useInvalidateFeedsQuery();
@@ -84,17 +84,17 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
       .sort((a, b) => b[1] - a[1])
       .map(([name, count]) => ({ id: name, label: name, count }));
     
-    return [{ id: 'all', label: 'All', count: allFeeds.length }, ...sorted];
+    return sorted;
   }, [allFeeds]);
 
   // Filter feeds based on search and category
   const filteredFeeds = useMemo(() => {
-    let feeds = allFeeds;
-    
-    // Filter by category first
-    if (selectedCategory !== "all") {
-      feeds = feeds.filter(feed => feed.category === selectedCategory);
+    // Require category selection before showing feeds
+    if (!selectedCategory) {
+      return [];
     }
+
+    let feeds = allFeeds.filter(feed => feed.category === selectedCategory);
     
     // Then filter by search
     if (searchQuery.trim()) {
@@ -254,7 +254,7 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
           </Tabs>
         </div>
 
-        <div className="flex-1 overflow-hidden bg-background min-h-[300px]">
+        <div className="flex-1 overflow-hidden bg-background min-h-0">
           {activeTab === "browse" && (
             <div className="h-full flex flex-col">
               {/* Search & Filter Bar */}
@@ -279,11 +279,15 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
 
                 <Select value={selectedCategory} onValueChange={setSelectedCategory}>
                   <SelectTrigger className="w-full bg-muted/50">
-                    <SelectValue placeholder="Select category">
-                      {dynamicCategories.find(c => c.id === selectedCategory)?.label || 'All'} 
-                      <span className="text-muted-foreground ml-1">
-                        ({dynamicCategories.find(c => c.id === selectedCategory)?.count || 0})
-                      </span>
+                    <SelectValue placeholder="Select a category">
+                      {selectedCategory && (
+                        <>
+                          {dynamicCategories.find(c => c.id === selectedCategory)?.label}
+                          <span className="text-muted-foreground ml-1">
+                            ({dynamicCategories.find(c => c.id === selectedCategory)?.count || 0})
+                          </span>
+                        </>
+                      )}
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent className="max-h-[300px]">
@@ -316,20 +320,15 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
                 ) : filteredFeeds.length > 0 ? (
                   <div className="p-3 sm:p-4">
                     <div className="text-xs text-muted-foreground mb-2 flex items-center justify-between sticky top-0 bg-background py-1">
-                      <span>
-                        {searchQuery || selectedCategory !== 'all' 
-                          ? `${filteredFeeds.length} feeds`
-                          : `${allFeeds.length} feeds`
-                        }
-                      </span>
-                      {(searchQuery || selectedCategory !== 'all') && (
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
+                      <span>{filteredFeeds.length} feeds</span>
+                      {searchQuery && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           className="h-6 text-xs"
-                          onClick={() => { setSearchQuery(""); setSelectedCategory("all"); }}
+                          onClick={() => setSearchQuery("")}
                         >
-                          Clear
+                          Clear search
                         </Button>
                       )}
                     </div>
@@ -386,11 +385,15 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
                       })}
                     </div>
                   </div>
+                ) : !selectedCategory ? (
+                  <div className="flex flex-col items-center justify-center h-40 text-muted-foreground p-4 text-center">
+                    <p>Select a category above to browse feeds</p>
+                  </div>
                 ) : (
                   <div className="flex flex-col items-center justify-center h-40 text-muted-foreground p-4 text-center">
                     <p>No feeds found matching "{searchQuery}"</p>
-                    <Button variant="link" size="sm" onClick={() => { setSearchQuery(""); setSelectedCategory("all"); }}>
-                      Clear filters
+                    <Button variant="link" size="sm" onClick={() => setSearchQuery("")}>
+                      Clear search
                     </Button>
                     <Button variant="link" size="sm" onClick={() => setActiveTab("custom")}>
                       Or add a custom URL
