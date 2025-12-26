@@ -805,6 +805,10 @@ export default function Home() {
     // Starred and read articles bypass date filtering - show all regardless of date
     if (activeFilter === "saved" || activeFilter === "read") return true;
     
+    // When filtering by specific source or category, bypass date filtering
+    // This ensures users see all articles from their selected feed, not just recent ones
+    if (sourceFilter || categoryFilter || clusterFilter) return true;
+    
     const article = item.data as ArticleWithFeed;
     if (!article.date) return true; // Show articles without dates
     
@@ -1043,7 +1047,8 @@ export default function Home() {
         </MasonryGrid>
         )}
 
-        {/* Load More Button */}
+        {/* Load More Button - only show when not filtering by source/category/cluster */}
+        {!sourceFilter && !categoryFilter && !clusterFilter && activeFilter !== "saved" && activeFilter !== "read" && (
         <div className="flex flex-col items-center justify-center py-8 gap-3">
           <div className="w-px h-8 bg-border"></div>
           <Button 
@@ -1068,6 +1073,7 @@ export default function Home() {
             </span>
           )}
         </div>
+        )}
       </div>
 
       {/* Article Sheet */}
