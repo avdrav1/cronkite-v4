@@ -12,6 +12,7 @@ import Onboarding from "@/pages/Onboarding";
 import Auth from "@/pages/Auth";
 import AuthCallback from "@/pages/AuthCallback";
 import Admin from "@/pages/Admin";
+import SyncMonitor from "@/pages/SyncMonitor";
 import NotFound from "@/pages/not-found";
 import { useEffect } from "react";
 
@@ -119,6 +120,10 @@ function AppRouter() {
       
       <Route path="/admin">
         <ProtectedRoute component={Admin} />
+      </Route>
+      
+      <Route path="/admin/sync-monitor">
+        <ProtectedRoute component={SyncMonitor} />
       </Route>
       
       <Route path="/">

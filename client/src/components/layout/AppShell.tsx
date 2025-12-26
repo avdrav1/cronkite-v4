@@ -13,6 +13,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Shield,
+  Activity,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -154,6 +155,14 @@ export function AppShell({ children }: AppShellProps) {
                     <Link href="/admin" className="w-full cursor-pointer">
                       <Shield className="mr-2 h-4 w-4" />
                       Feed Admin
+                    </Link>
+                  </DropdownMenuItem>
+                )}
+                {user?.is_admin && (
+                  <DropdownMenuItem asChild>
+                    <Link href="/admin/sync-monitor" className="w-full cursor-pointer">
+                      <Activity className="mr-2 h-4 w-4" />
+                      Sync Monitor
                     </Link>
                   </DropdownMenuItem>
                 )}
