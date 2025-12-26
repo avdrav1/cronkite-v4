@@ -197,9 +197,9 @@ export function ArticleSheet({ article, isOpen, onClose }: ArticleSheetProps) {
         hideCloseButton
         className="w-full sm:max-w-xl md:max-w-2xl lg:max-w-3xl p-0 border-l border-border bg-background shadow-2xl sm:rounded-l-2xl overflow-hidden"
       >
-        <div className="h-full flex flex-col relative">
-          {/* Header Action Bar */}
-          <div className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between p-4 bg-background/80 backdrop-blur-md border-b border-border/40">
+        <div className="h-full flex flex-col">
+          {/* Header Action Bar - fixed at top, not inside scroll area */}
+          <div className="flex-shrink-0 flex items-center justify-between p-4 bg-background/80 backdrop-blur-md border-b border-border/40 relative z-10">
             <Button variant="ghost" size="sm" onClick={onClose} className="gap-1 text-muted-foreground hover:text-foreground">
               <ChevronLeft className="h-4 w-4" /> Back
             </Button>
@@ -222,8 +222,8 @@ export function ArticleSheet({ article, isOpen, onClose }: ArticleSheetProps) {
             </div>
           </div>
 
-          <ScrollArea className="h-full w-full">
-            <div className="flex flex-col pb-20 pt-20 px-6 md:px-12 max-w-3xl mx-auto">
+          <ScrollArea className="flex-1 w-full">
+            <div className="flex flex-col pb-20 pt-6 px-6 md:px-12 max-w-3xl mx-auto">
               {/* Hero Image inside content if available */}
               {imageUrl && (
                  <motion.div 
