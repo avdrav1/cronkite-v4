@@ -44,6 +44,7 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
 
   // Custom URL State
   const [customUrl, setCustomUrl] = useState("");
+  const [customCategory, setCustomCategory] = useState("");
   const [isValidating, setIsValidating] = useState(false);
   const [isValidFeed, setIsValidFeed] = useState(false);
   const [feedDetails, setFeedDetails] = useState<{ name: string; description?: string } | null>(null);
@@ -86,6 +87,13 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
     
     return sorted;
   }, [allFeeds]);
+
+  // Auto-select first category when feeds load
+  useEffect(() => {
+    if (dynamicCategories.length > 0 && !selectedCategory) {
+      setSelectedCategory(dynamicCategories[0].id);
+    }
+  }, [dynamicCategories, selectedCategory]);
 
   // Filter feeds based on search and category
   const filteredFeeds = useMemo(() => {
@@ -189,13 +197,14 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
 
   const handleAddCustomFeed = async () => {
     if (!feedDetails || !customUrl) return;
-    
+
     try {
       // Add the custom feed
       const response = await apiRequest('POST', '/api/feeds/custom', {
         url: customUrl,
         name: feedDetails.name,
-        description: feedDetails.description
+        description: feedDetails.description,
+        category: customCategory || dynamicCategories[0]?.id || 'Uncategorized'
       });
       
       const data = await response.json();
@@ -218,6 +227,7 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
       
       // Reset state
       setCustomUrl("");
+      setCustomCategory("");
       setIsValidFeed(false);
       setFeedDetails(null);
       
@@ -256,100 +266,87 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
 
         <div className="flex-1 overflow-hidden bg-background min-h-0">
           {activeTab === "browse" && (
-            <div className="flex-1 min-h-0 flex flex-col">
-              {/* Search & Filter Bar */}
-              <div className="p-4 space-y-4 border-b border-border bg-background shrink-0 z-10">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input 
-                    placeholder="Search feeds..." 
-                    className="pl-9 bg-muted/50"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                  />
-                  {searchQuery && (
-                    <button 
-                      onClick={() => setSearchQuery("")}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  )}
-                </div>
-
-                <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-                  <SelectTrigger className="w-full bg-muted/50">
-                    <SelectValue placeholder="Select a category">
-                      {selectedCategory && (
-                        <>
-                          {dynamicCategories.find(c => c.id === selectedCategory)?.label}
-                          <span className="text-muted-foreground ml-1">
-                            ({dynamicCategories.find(c => c.id === selectedCategory)?.count || 0})
-                          </span>
-                        </>
-                      )}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent className="max-h-[300px]">
+            <div className="flex h-[400px]">
+              {/* Left Panel: Categories */}
+              <div className="w-44 border-r border-border overflow-y-auto bg-muted/20">
+                {isLoadingFeeds ? (
+                  <div className="flex items-center justify-center h-full">
+                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                  </div>
+                ) : (
+                  <div className="py-2">
                     {dynamicCategories.map((cat) => (
-                      <SelectItem key={cat.id} value={cat.id}>
-                        <div className="flex items-center justify-between w-full gap-4">
-                          <span>{cat.label}</span>
-                          <span className="text-xs text-muted-foreground">({cat.count})</span>
-                        </div>
-                      </SelectItem>
+                      <button
+                        key={cat.id}
+                        onClick={() => {
+                          setSelectedCategory(cat.id);
+                          setSearchQuery("");
+                        }}
+                        className={cn(
+                          "w-full px-3 py-2 text-left text-sm flex items-center justify-between transition-colors",
+                          selectedCategory === cat.id
+                            ? "bg-primary/10 text-primary font-medium border-r-2 border-primary"
+                            : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                        )}
+                      >
+                        <span className="truncate">{cat.label}</span>
+                        <span className="text-xs opacity-60 ml-2">{cat.count}</span>
+                      </button>
                     ))}
-                  </SelectContent>
-                </Select>
+                  </div>
+                )}
               </div>
 
-              {/* Feed List */}
-              <div className="flex-1 overflow-y-auto overscroll-contain">
-                {isLoadingFeeds ? (
-                  <div className="flex flex-col items-center justify-center h-40 text-muted-foreground">
-                    <Loader2 className="h-8 w-8 animate-spin mb-2" />
-                    <p>Loading feeds...</p>
+              {/* Right Panel: Feeds */}
+              <div className="flex-1 flex flex-col min-w-0">
+                {/* Search Bar */}
+                <div className="p-3 border-b border-border shrink-0">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder={`Search ${selectedCategory || 'feeds'}...`}
+                      className="pl-9 bg-muted/50 h-9"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                    />
+                    {searchQuery && (
+                      <button
+                        onClick={() => setSearchQuery("")}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    )}
                   </div>
-                ) : feedsError ? (
-                  <div className="flex flex-col items-center justify-center h-40 text-muted-foreground">
-                    <p className="text-red-500 mb-2">{feedsError}</p>
-                    <Button variant="outline" onClick={fetchRecommendedFeeds}>
-                      <RefreshCw className="h-4 w-4 mr-2" /> Retry
-                    </Button>
-                  </div>
-                ) : filteredFeeds.length > 0 ? (
-                  <div className="p-3 sm:p-4">
-                    <div className="text-xs text-muted-foreground mb-2 flex items-center justify-between sticky top-0 bg-background py-1">
-                      <span>{filteredFeeds.length} feeds</span>
-                      {searchQuery && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-6 text-xs"
-                          onClick={() => setSearchQuery("")}
-                        >
-                          Clear search
-                        </Button>
-                      )}
+                </div>
+
+                {/* Feed List */}
+                <div className="flex-1 overflow-y-auto">
+                  {feedsError ? (
+                    <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
+                      <p className="text-red-500 mb-2">{feedsError}</p>
+                      <Button variant="outline" size="sm" onClick={fetchRecommendedFeeds}>
+                        <RefreshCw className="h-4 w-4 mr-2" /> Retry
+                      </Button>
                     </div>
-                    {/* Compact list view for better mobile scrolling */}
-                    <div className="space-y-1">
+                  ) : filteredFeeds.length > 0 ? (
+                    <div className="p-2">
                       {filteredFeeds.map((feed) => {
                         const isAdded = addedFeeds.includes(feed.id);
                         return (
-                          <div 
-                            key={feed.id} 
+                          <div
+                            key={feed.id}
                             className={cn(
-                              "flex items-center gap-3 p-2.5 sm:p-3 rounded-lg border transition-colors",
-                              isAdded 
-                                ? "bg-muted/50 border-transparent" 
-                                : "bg-card border-border hover:bg-muted/30 active:bg-muted/50"
+                              "flex items-center gap-2 px-3 py-2 rounded-md transition-colors",
+                              isAdded
+                                ? "bg-muted/30 opacity-60"
+                                : "hover:bg-muted/50"
                             )}
                           >
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-1.5">
                                 <span className={cn(
-                                  "font-medium text-sm truncate",
+                                  "text-sm truncate",
                                   isAdded ? "text-muted-foreground" : "text-foreground"
                                 )}>
                                   {feed.name}
@@ -371,10 +368,10 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
                             {isAdded ? (
                               <Check className="h-4 w-4 text-emerald-600 shrink-0" />
                             ) : (
-                              <Button 
-                                size="sm" 
-                                variant="ghost" 
-                                className="h-8 w-8 p-0 hover:bg-primary hover:text-primary-foreground shrink-0"
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 w-7 p-0 hover:bg-primary hover:text-primary-foreground shrink-0"
                                 onClick={() => handleQuickAdd(feed.id, feed.name, feed.category, feed.url)}
                               >
                                 <Plus className="h-4 w-4" />
@@ -384,22 +381,19 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
                         );
                       })}
                     </div>
-                  </div>
-                ) : !selectedCategory ? (
-                  <div className="flex flex-col items-center justify-center h-40 text-muted-foreground p-4 text-center">
-                    <p>Select a category above to browse feeds</p>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center h-40 text-muted-foreground p-4 text-center">
-                    <p>No feeds found matching "{searchQuery}"</p>
-                    <Button variant="link" size="sm" onClick={() => setSearchQuery("")}>
-                      Clear search
-                    </Button>
-                    <Button variant="link" size="sm" onClick={() => setActiveTab("custom")}>
-                      Or add a custom URL
-                    </Button>
-                  </div>
-                )}
+                  ) : searchQuery ? (
+                    <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4 text-center">
+                      <p className="text-sm">No feeds matching "{searchQuery}"</p>
+                      <Button variant="link" size="sm" onClick={() => setSearchQuery("")}>
+                        Clear search
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-center h-full text-muted-foreground">
+                      <p className="text-sm">No feeds in this category</p>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -460,36 +454,21 @@ export function AddFeedModal({ isOpen, onClose, onFeedAdded }: AddFeedModalProps
                          <Input defaultValue={feedDetails.name} />
                        </div>
 
-                       <div className="grid grid-cols-2 gap-4">
-                         <div className="space-y-2">
-                           <Label>Folder</Label>
-                           <Select defaultValue="tech">
+                       <div className="space-y-2">
+                           <Label>Category</Label>
+                           <Select value={customCategory || dynamicCategories[0]?.id || ''} onValueChange={setCustomCategory}>
                              <SelectTrigger>
-                               <SelectValue />
+                               <SelectValue placeholder="Select category" />
                              </SelectTrigger>
-                             <SelectContent>
-                               <SelectItem value="tech">Tech</SelectItem>
-                               <SelectItem value="news">News</SelectItem>
-                               <SelectItem value="gaming">Gaming</SelectItem>
-                               <SelectItem value="create">+ Create New</SelectItem>
+                             <SelectContent className="max-h-[200px]">
+                               {dynamicCategories.map((cat) => (
+                                 <SelectItem key={cat.id} value={cat.id}>
+                                   {cat.label}
+                                 </SelectItem>
+                               ))}
                              </SelectContent>
                            </Select>
                          </div>
-                         
-                         <div className="space-y-2">
-                           <Label>Priority</Label>
-                           <Select defaultValue="medium">
-                             <SelectTrigger>
-                               <SelectValue />
-                             </SelectTrigger>
-                             <SelectContent>
-                               <SelectItem value="high">High</SelectItem>
-                               <SelectItem value="medium">Medium</SelectItem>
-                               <SelectItem value="low">Low</SelectItem>
-                             </SelectContent>
-                           </Select>
-                         </div>
-                       </div>
 
                        <div className="pt-4 flex justify-end gap-2">
                          <Button variant="outline" onClick={onClose}>Cancel</Button>
