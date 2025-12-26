@@ -194,6 +194,7 @@ export function ArticleSheet({ article, isOpen, onClose }: ArticleSheetProps) {
     <Sheet open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <SheetContent
         side="right"
+        hideCloseButton
         className="w-full sm:max-w-xl md:max-w-2xl lg:max-w-3xl p-0 border-l border-border bg-background shadow-2xl sm:rounded-l-2xl overflow-hidden"
       >
         <div className="h-full flex flex-col relative">
