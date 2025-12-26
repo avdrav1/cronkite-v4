@@ -12,8 +12,11 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import { apiRequest, apiFetch } from "@/lib/queryClient";
-import { type Article } from "@shared/schema";
+import { type Article, type Feed } from "@shared/schema";
 import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
+import { useFeedsQuery } from "@/hooks/useFeedsQuery";
+import { groupFeedsByCategory } from "@/components/layout/FeedsList";
 
 // Extended article type with feed information and UI state
 interface ArticleWithFeed extends Article {
@@ -69,6 +72,9 @@ const CLUSTER_COLORS = [
 
 export default function Home() {
   const { logout } = useAuth();
+  const { toast } = useToast();
+  const { data: feedsData } = useFeedsQuery();
+  const feeds = feedsData?.feeds || [];
   const [selectedArticle, setSelectedArticle] = useState<ArticleWithFeed | null>(null);
   const [selectedCluster, setSelectedCluster] = useState<TrendingCluster | null>(null);
   const [activeFilter, setActiveFilter] = useState("all");
@@ -84,7 +90,8 @@ export default function Home() {
   const [isLoadingRead, setIsLoadingRead] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [feedsCount, setFeedsCount] = useState(0);
-  
+  const [isSyncing, setIsSyncing] = useState(false);
+
   // Track URL search params for filtering
   const [filterKey, setFilterKey] = useState(0); // Force re-render key
   
@@ -846,6 +853,62 @@ export default function Home() {
     setHistoryDepth(prev => prev + CHUNK_SIZE_DAYS);
   };
 
+  // Handle sync for current feed or category
+  const handleSync = async () => {
+    if (feeds.length === 0) return;
+
+    let feedsToSync: Feed[] = [];
+
+    if (sourceFilter) {
+      // Find single feed by name
+      const feed = feeds.find(f => f.name === sourceFilter);
+      if (feed) feedsToSync = [feed];
+    } else if (categoryFilter) {
+      // Get all feeds in category
+      const grouped = groupFeedsByCategory(feeds);
+      feedsToSync = grouped[categoryFilter] || [];
+    }
+
+    if (feedsToSync.length === 0) {
+      toast({ title: "No feeds to sync" });
+      return;
+    }
+
+    setIsSyncing(true);
+    let totalNew = 0;
+
+    try {
+      for (const feed of feedsToSync) {
+        try {
+          const res = await apiRequest('POST', '/api/feeds/sync', { feedIds: [feed.id] });
+          const result = await res.json();
+          if (result.results?.[0]) {
+            totalNew += result.results[0].articlesNew || 0;
+          }
+        } catch (e) {
+          console.error('Feed sync error:', e);
+        }
+      }
+
+      toast({
+        title: "Sync Complete",
+        description: `Found ${totalNew} new article${totalNew !== 1 ? 's' : ''}.`
+      });
+
+      // Trigger feed list refresh
+      window.dispatchEvent(new CustomEvent('feedsUpdated'));
+    } catch (e) {
+      console.error('Sync error:', e);
+      toast({
+        title: "Sync Failed",
+        description: "Failed to sync feeds.",
+        variant: "destructive"
+      });
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   // Loading state - Requirement 2.6
   if (isLoading || (activeFilter === "saved" && isLoadingStarred) || (activeFilter === "read" && isLoadingRead)) {
     return (
@@ -939,26 +1002,40 @@ export default function Home() {
         {/* Page Header */}
         <div className="flex flex-col gap-6">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <h1 className="text-3xl font-display font-bold tracking-tight mb-2">
-                {clusterFilter 
-                  ? clusters.find(c => c.id === clusterFilter)?.topic || "Trending Topic"
-                  : sourceFilter 
-                    ? sourceFilter 
-                    : categoryFilter 
-                      ? categoryFilter 
-                      : "For You"}
-              </h1>
-              <p className="text-muted-foreground">
-                {clusterFilter
-                  ? `${visibleFeed.length} articles about this trending topic`
-                  : sourceFilter 
-                    ? `Latest articles from ${sourceFilter}`
-                    : categoryFilter
-                      ? `Latest articles in ${categoryFilter}`
-                      : "Top stories curated by AI based on your interests."
-                }
-              </p>
+            <div className="flex items-start gap-3">
+              <div>
+                <h1 className="text-3xl font-display font-bold tracking-tight mb-2">
+                  {clusterFilter
+                    ? clusters.find(c => c.id === clusterFilter)?.topic || "Trending Topic"
+                    : sourceFilter
+                      ? sourceFilter
+                      : categoryFilter
+                        ? categoryFilter
+                        : "For You"}
+                </h1>
+                <p className="text-muted-foreground">
+                  {clusterFilter
+                    ? `${visibleFeed.length} articles about this trending topic`
+                    : sourceFilter
+                      ? `Latest articles from ${sourceFilter}`
+                      : categoryFilter
+                        ? `Latest articles in ${categoryFilter}`
+                        : "Top stories curated by AI based on your interests."
+                  }
+                </p>
+              </div>
+              {(sourceFilter || categoryFilter) && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleSync}
+                  disabled={isSyncing}
+                  className="shrink-0 gap-2 mt-1"
+                >
+                  <RefreshCw className={cn("h-4 w-4", isSyncing && "animate-spin")} />
+                  {isSyncing ? "Syncing..." : "Sync"}
+                </Button>
+              )}
             </div>
             
             <div className="flex items-center gap-2 bg-muted/30 p-1 rounded-lg border border-border/50 self-start">
