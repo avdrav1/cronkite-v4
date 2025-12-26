@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { useLocation, useSearch } from "wouter";
 import { cn } from "@/lib/utils";
-import { Folder, Rss, ChevronDown, ChevronRight, Plus, RefreshCw, Loader2, Newspaper } from "lucide-react";
+import { Rss, ChevronDown, ChevronRight, Plus, RefreshCw, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useFeedsQuery, useInvalidateFeedsQuery, useFeedCountQuery, useArticleCountsQuery } from "@/hooks/useFeedsQuery";
@@ -460,17 +460,16 @@ export function FeedsList({ onFeedSelect, onCategorySelect }: FeedsListProps) {
           type="button"
           onClick={handleAllArticlesClick}
           className={cn(
-            "w-full flex items-center justify-start gap-2 px-3 h-9 text-sm font-medium rounded-md transition-colors relative",
+            "w-full flex items-center justify-start gap-2 px-3 pr-3 h-9 text-sm font-medium rounded-md transition-colors relative",
             isAllArticlesActive
               ? "bg-primary/15 text-primary border-l-2 border-primary font-semibold"
               : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
           )}
         >
-          <Newspaper className={cn("h-4 w-4", isAllArticlesActive && "text-primary")} />
           <span className="flex-1 text-left">All Articles</span>
           {articleCountsData && (
             <span className={cn(
-              "text-xs tabular-nums ml-auto",
+              "text-xs tabular-nums w-12 text-right shrink-0",
               isAllArticlesActive ? "text-primary/70" : "text-muted-foreground/70"
             )}>
               {articleCountsData.totalArticles.toLocaleString()}
@@ -549,10 +548,10 @@ function CategoryFolder({
 
   return (
     <div className="space-y-1">
-      <div className="flex items-center">
+      <div className="flex items-center pr-3">
         <button
           type="button"
-          className="h-9 w-9 p-0 flex items-center justify-center hover:bg-muted/50 rounded-md"
+          className="h-9 w-9 p-0 flex items-center justify-center hover:bg-muted/50 rounded-md shrink-0"
           onClick={handleToggle}
         >
           {isExpanded ? (
@@ -571,18 +570,17 @@ function CategoryFolder({
           )}
           onClick={handleCategoryClick}
         >
-          <Folder className={cn("h-4 w-4", isActive ? "text-primary" : "text-muted-foreground/70")} />
           <span className="flex-1 text-left">{label}</span>
-          <span className={cn(
-            "text-xs tabular-nums ml-auto",
-            isActive ? "text-primary/70" : "text-muted-foreground/50"
-          )}>
-            {categoryArticleCount > 0 ? categoryArticleCount.toLocaleString() : feeds.length}
-          </span>
         </button>
+        <span className={cn(
+          "text-xs tabular-nums w-12 text-right shrink-0",
+          isActive ? "text-primary/70" : "text-muted-foreground/50"
+        )}>
+          {categoryArticleCount > 0 ? categoryArticleCount.toLocaleString() : feeds.length}
+        </span>
       </div>
       {isExpanded && (
-        <div className="pl-4 space-y-1 border-l border-border/50 ml-5">
+        <div className="pl-6 space-y-1">
           {feeds.map(feed => (
             <FeedItem
               key={feed.id}
@@ -620,7 +618,7 @@ function FeedItem({ feed, isActive, onClick, onSync, isSyncing, isDisabled, arti
   };
 
   return (
-    <div className="group flex items-center">
+    <div className="group flex items-center pr-3">
       <button
         type="button"
         onClick={handleClick}
@@ -631,31 +629,8 @@ function FeedItem({ feed, isActive, onClick, onSync, isSyncing, isDisabled, arti
             : "text-muted-foreground hover:text-primary hover:bg-muted/50"
         )}
       >
-        {feed.icon_url ? (
-          <img
-            src={feed.icon_url}
-            alt=""
-            className="h-4 w-4 rounded-sm object-cover"
-            onError={(e) => {
-              // Fallback to dot indicator if icon fails to load
-              e.currentTarget.style.display = 'none';
-              e.currentTarget.nextElementSibling?.classList.remove('hidden');
-            }}
-          />
-        ) : null}
-        <div className={cn(
-          "h-1.5 w-1.5 rounded-full bg-primary/40",
-          feed.icon_url && "hidden"
-        )} />
+        <span className="h-1.5 w-1.5 rounded-full bg-current opacity-40 shrink-0" />
         <span className="flex-1 text-left truncate">{feed.name}</span>
-        {articleCount !== undefined && articleCount > 0 && (
-          <span className={cn(
-            "text-xs tabular-nums ml-auto",
-            isActive ? "text-primary/70" : "text-muted-foreground/50"
-          )}>
-            {articleCount.toLocaleString()}
-          </span>
-        )}
       </button>
       {/* Sync button - Requirements: 1.4 (show loading state during sync) */}
       <button
@@ -663,7 +638,7 @@ function FeedItem({ feed, isActive, onClick, onSync, isSyncing, isDisabled, arti
         onClick={onSync}
         disabled={isDisabled}
         className={cn(
-          "h-6 w-6 flex items-center justify-center rounded-md transition-opacity",
+          "h-6 w-6 flex items-center justify-center rounded-md transition-opacity shrink-0",
           "text-muted-foreground hover:text-foreground hover:bg-muted/50",
           "opacity-0 group-hover:opacity-100",
           isSyncing && "opacity-100",
@@ -677,6 +652,14 @@ function FeedItem({ feed, isActive, onClick, onSync, isSyncing, isDisabled, arti
           <RefreshCw className="h-3 w-3" />
         )}
       </button>
+      {articleCount !== undefined && articleCount > 0 && (
+        <span className={cn(
+          "text-xs tabular-nums w-12 text-right shrink-0",
+          isActive ? "text-primary/70" : "text-muted-foreground/50"
+        )}>
+          {articleCount.toLocaleString()}
+        </span>
+      )}
     </div>
   );
 }
