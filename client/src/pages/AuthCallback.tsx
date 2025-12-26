@@ -158,13 +158,15 @@ export default function AuthCallback() {
           console.warn('⚠️ AuthCallback: Session may not be fully persisted, proceeding anyway');
         }
         
-        // Update auth context
+        // Update auth context and wait for it to complete
+        console.log('🔐 AuthCallback: Calling checkAuth to update context...');
         await checkAuth();
         
-        // Small delay to ensure state is propagated
-        await new Promise(resolve => setTimeout(resolve, 100));
+        // Wait for React state to propagate - this is critical to prevent
+        // the AppRouter from redirecting back to /auth before auth state updates
+        await new Promise(resolve => setTimeout(resolve, 800));
         
-        console.log('✅ AuthCallback: Redirecting to home');
+        console.log('✅ AuthCallback: Auth state updated, redirecting to home');
         setLocation('/');
         
       } catch (err) {

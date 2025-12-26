@@ -1191,10 +1191,32 @@ export async function registerRoutes(
       if (feedIds.length > availableSlots) {
         const result = await storage.subscribeToFeedsWithLimit(userId, feedIds, maxAllowed);
         
-        // Mark onboarding as completed after successful feed subscription
+        // Check if this is a new user (first-time subscription during onboarding)
         const user = req.user!;
+        const isNewUser = !user.onboarding_completed && currentCount === 0;
+        
+        // Mark onboarding as completed after successful feed subscription
         if (!user.onboarding_completed && result.subscribed.length > 0) {
           await storage.updateUser(userId, { onboarding_completed: true });
+        }
+        
+        // For new users, trigger immediate background sync
+        if (isNewUser && result.subscribed.length > 0) {
+          console.log(`🚀 New user ${userId} subscribed to ${result.subscribed.length} feeds (with limit) - triggering immediate sync`);
+          
+          const userFeeds = await storage.getUserFeeds(userId);
+          
+          syncFeedsWithIntegration(storage, userFeeds, {
+            maxArticles: 50,
+            respectEtag: true,
+            respectLastModified: true,
+            batchSize: 5,
+            delayMs: 1000
+          }).then(syncResult => {
+            console.log(`✅ Initial sync completed for new user ${userId}: ${syncResult.syncResults.filter(r => r.success).length} feeds synced`);
+          }).catch(error => {
+            console.error(`❌ Initial sync failed for new user ${userId}:`, error);
+          });
         }
         
         return res.status(result.rejected.length > 0 ? 207 : 200).json({
@@ -1204,22 +1226,48 @@ export async function registerRoutes(
           subscribed: result.subscribed,
           rejected: result.rejected,
           currentCount: currentCount + result.subscribed.length,
-          maxAllowed
+          maxAllowed,
+          sync_started: isNewUser && result.subscribed.length > 0
         });
       }
       
       // Normal subscription (within limits)
       await storage.subscribeToFeeds(userId, feedIds);
       
-      // Mark onboarding as completed after successful feed subscription
+      // Check if this is a new user (first-time subscription during onboarding)
       const user = req.user!;
+      const isNewUser = !user.onboarding_completed && currentCount === 0;
+      
+      // Mark onboarding as completed after successful feed subscription
       if (!user.onboarding_completed) {
         await storage.updateUser(userId, { onboarding_completed: true });
       }
       
+      // For new users, trigger immediate background sync so they don't see a blank feed
+      if (isNewUser) {
+        console.log(`🚀 New user ${userId} subscribed to ${feedIds.length} feeds - triggering immediate sync`);
+        
+        // Get the newly subscribed feeds and start sync in background
+        const userFeeds = await storage.getUserFeeds(userId);
+        
+        // Start sync in background (don't await)
+        syncFeedsWithIntegration(storage, userFeeds, {
+          maxArticles: 50,
+          respectEtag: true,
+          respectLastModified: true,
+          batchSize: 5, // Process more feeds at once for faster initial sync
+          delayMs: 1000 // Shorter delay for faster initial sync
+        }).then(result => {
+          console.log(`✅ Initial sync completed for new user ${userId}: ${result.syncResults.filter(r => r.success).length} feeds synced, ${result.totalEmbeddingsQueued} embeddings queued`);
+        }).catch(error => {
+          console.error(`❌ Initial sync failed for new user ${userId}:`, error);
+        });
+      }
+      
       res.json({
         message: 'Successfully subscribed to feeds',
-        subscribed_count: feedIds.length
+        subscribed_count: feedIds.length,
+        sync_started: isNewUser // Let client know sync was auto-started
       });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';

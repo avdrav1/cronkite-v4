@@ -229,11 +229,13 @@ export const clearBackupSession = (): void => {
  */
 export const getAccessToken = async (): Promise<string | null> => {
   if (!isSupabaseConfigured()) {
+    console.log('🔑 getAccessToken: Supabase not configured');
     return null;
   }
   
   const client = getSupabaseClient();
   if (!client) {
+    console.log('🔑 getAccessToken: No Supabase client');
     return null;
   }
   
@@ -242,17 +244,18 @@ export const getAccessToken = async (): Promise<string | null> => {
     const { data: { session } } = await client.auth.getSession();
     
     if (session?.access_token) {
+      console.log('🔑 getAccessToken: Got token from Supabase session');
       // Also backup the session for reliability
       backupSession(session);
       return session.access_token;
     }
     
     // Supabase session not found - try backup
-    console.log('⚠️ No Supabase session, checking backup...');
+    console.log('⚠️ getAccessToken: No Supabase session, checking backup...');
     const backup = getBackupSession();
     
     if (backup?.access_token) {
-      console.log('✅ Using backup session token');
+      console.log('✅ getAccessToken: Using backup session token');
       
       // Try to restore the session to Supabase client
       try {
@@ -262,7 +265,7 @@ export const getAccessToken = async (): Promise<string | null> => {
         });
         
         if (data.session && !error) {
-          console.log('✅ Session restored to Supabase client');
+          console.log('✅ getAccessToken: Session restored to Supabase client');
           backupSession(data.session); // Update backup with refreshed session
           return data.session.access_token;
         }
@@ -274,13 +277,18 @@ export const getAccessToken = async (): Promise<string | null> => {
       return backup.access_token;
     }
     
+    console.log('🔑 getAccessToken: No token available');
     return null;
   } catch (error) {
     console.warn('Error getting access token:', error);
     
     // Last resort - try backup
     const backup = getBackupSession();
-    return backup?.access_token || null;
+    if (backup?.access_token) {
+      console.log('🔑 getAccessToken: Using backup after error');
+      return backup.access_token;
+    }
+    return null;
   }
 };
 

@@ -293,6 +293,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   useEffect(() => {
+    // Skip initial auth check if we're on the OAuth callback page
+    // The AuthCallback component will handle authentication and call checkAuth when ready
+    if (typeof window !== 'undefined' && window.location.pathname === '/auth/callback') {
+      console.log('🔐 AuthContext: Skipping initial auth check - on callback page');
+      setIsLoading(false);
+      return;
+    }
+    
     // Add a global timeout for auth check to prevent infinite loading
     const authTimeout = setTimeout(() => {
       console.warn('⚠️ AuthContext: Auth check timed out after 10 seconds');

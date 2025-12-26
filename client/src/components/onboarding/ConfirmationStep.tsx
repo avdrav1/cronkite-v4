@@ -118,10 +118,8 @@ export function ConfirmationStep({ selectedInterests, selectedRegion, selectedFe
           onboarding_completed: true
         });
 
-        // Trigger initial feed synchronization for subscribed feeds (async, don't wait)
-        await apiRequest('POST', '/api/feeds/sync', { waitForResults: false });
-        
-        // Start polling for sync progress
+        // Feed sync was already triggered in FeedDiscovery when subscribing
+        // Just start polling for sync progress immediately
         pollingRef.current = setInterval(pollSyncStatus, 1500);
         
         // Initial poll

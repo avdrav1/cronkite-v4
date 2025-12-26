@@ -164,6 +164,13 @@ export function FeedDiscovery({
       await apiRequest('POST', '/api/feeds/subscribe', {
         feedIds: selectedFeeds
       });
+      
+      // Immediately trigger feed sync in background (don't wait for results)
+      // This starts fetching articles while user sees the confirmation screen
+      apiRequest('POST', '/api/feeds/sync', { waitForResults: false }).catch(err => {
+        console.error('Background feed sync failed to start:', err);
+      });
+      
       invalidateFeedsQuery();
       await checkAuth();
       onNext();

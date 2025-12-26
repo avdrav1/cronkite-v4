@@ -87,8 +87,9 @@ function AppRouter() {
             setLocation('/');
           }
         }
-      } else if (!isAuthenticated && location !== '/auth') {
-        // If not authenticated and not on auth page, redirect to auth
+      } else if (!isAuthenticated && location !== '/auth' && !location.startsWith('/auth/callback')) {
+        // If not authenticated and not on auth or callback page, redirect to auth
+        // Don't redirect from callback - it handles its own auth flow
         setLocation('/auth');
       }
     }
