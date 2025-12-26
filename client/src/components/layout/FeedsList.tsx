@@ -470,7 +470,7 @@ export function FeedsList({ onFeedSelect, onCategorySelect }: FeedsListProps) {
           <span className="flex-1 text-left">All Articles</span>
           {articleCountsData && (
             <span className={cn(
-              "text-xs tabular-nums w-8 text-right",
+              "text-xs tabular-nums ml-auto",
               isAllArticlesActive ? "text-primary/70" : "text-muted-foreground/70"
             )}>
               {articleCountsData.totalArticles.toLocaleString()}
@@ -574,7 +574,7 @@ function CategoryFolder({
           <Folder className={cn("h-4 w-4", isActive ? "text-primary" : "text-muted-foreground/70")} />
           <span className="flex-1 text-left">{label}</span>
           <span className={cn(
-            "text-xs tabular-nums w-8 text-right",
+            "text-xs tabular-nums ml-auto",
             isActive ? "text-primary/70" : "text-muted-foreground/50"
           )}>
             {categoryArticleCount > 0 ? categoryArticleCount.toLocaleString() : feeds.length}
@@ -650,7 +650,7 @@ function FeedItem({ feed, isActive, onClick, onSync, isSyncing, isDisabled, arti
         <span className="flex-1 text-left truncate">{feed.name}</span>
         {articleCount !== undefined && articleCount > 0 && (
           <span className={cn(
-            "text-xs tabular-nums w-8 text-right",
+            "text-xs tabular-nums ml-auto",
             isActive ? "text-primary/70" : "text-muted-foreground/50"
           )}>
             {articleCount.toLocaleString()}
