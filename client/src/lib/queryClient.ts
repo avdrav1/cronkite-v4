@@ -37,6 +37,34 @@ async function getAccessToken(): Promise<string | null> {
   }
 }
 
+/**
+ * Refresh the Supabase session and get a new token
+ * Used when a 401 is received to retry with fresh credentials
+ */
+async function refreshAndGetToken(): Promise<string | null> {
+  if (!isSupabaseConfigured()) {
+    return null;
+  }
+  
+  const client = getSupabaseClient();
+  if (!client) {
+    return null;
+  }
+  
+  try {
+    // Try to refresh the session
+    const { data: { session }, error } = await client.auth.refreshSession();
+    if (error || !session) {
+      console.warn('Failed to refresh session:', error?.message);
+      return null;
+    }
+    return session.access_token;
+  } catch (error) {
+    console.warn('Error refreshing session:', error);
+    return null;
+  }
+}
+
 export async function apiRequest(
   method: string,
   url: string,
@@ -49,17 +77,36 @@ export async function apiRequest(
   }
   
   // Add Supabase JWT token for serverless auth (production)
-  const token = await getAccessToken();
+  let token = await getAccessToken();
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
   
-  const res = await fetch(url, {
+  let res = await fetch(url, {
     method,
     headers,
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
   });
+
+  // If we get a 401, try refreshing the token and retry once
+  // This handles cases where the token expired or wasn't available on first try
+  if (res.status === 401 && isSupabaseConfigured()) {
+    console.log('🔄 apiRequest: Got 401, attempting token refresh and retry...');
+    const newToken = await refreshAndGetToken();
+    if (newToken) {
+      headers["Authorization"] = `Bearer ${newToken}`;
+      res = await fetch(url, {
+        method,
+        headers,
+        body: data ? JSON.stringify(data) : undefined,
+        credentials: "include",
+      });
+      if (res.ok) {
+        console.log('✅ apiRequest: Retry successful after token refresh');
+      }
+    }
+  }
 
   await throwIfResNotOk(res);
   return res;
@@ -103,15 +150,31 @@ export const getQueryFn: <T>(options: {
     const headers: Record<string, string> = {};
     
     // Add Supabase JWT token for serverless auth (production)
-    const token = await getAccessToken();
+    let token = await getAccessToken();
     if (token) {
       headers["Authorization"] = `Bearer ${token}`;
     }
     
-    const res = await fetch(queryKey.join("/") as string, {
+    let res = await fetch(queryKey.join("/") as string, {
       credentials: "include",
       headers,
     });
+
+    // If we get a 401 and behavior is "throw", try refreshing token and retry once
+    if (res.status === 401 && unauthorizedBehavior === "throw" && isSupabaseConfigured()) {
+      console.log('🔄 getQueryFn: Got 401, attempting token refresh and retry...');
+      const newToken = await refreshAndGetToken();
+      if (newToken) {
+        headers["Authorization"] = `Bearer ${newToken}`;
+        res = await fetch(queryKey.join("/") as string, {
+          credentials: "include",
+          headers,
+        });
+        if (res.ok) {
+          console.log('✅ getQueryFn: Retry successful after token refresh');
+        }
+      }
+    }
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {
       return null;

@@ -10,6 +10,32 @@ export default function AuthCallback() {
   const [error, setError] = useState<string | null>(null);
   const { checkAuth } = useAuth();
 
+  // Helper to establish backend session from Supabase session
+  const establishBackendSession = async (session: any): Promise<boolean> => {
+    try {
+      console.log('🔐 AuthCallback: Establishing backend session...');
+      const response = await fetch('/api/auth/oauth/callback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session }),
+        credentials: 'include'
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error('🔐 AuthCallback: Backend session error:', response.status, errorData);
+        throw new Error(errorData.message || 'Failed to establish session');
+      }
+      
+      const data = await response.json();
+      console.log('✅ AuthCallback: Backend session established for:', data.user?.email);
+      return true;
+    } catch (err) {
+      console.error('🔐 AuthCallback: Failed to establish backend session:', err);
+      throw err;
+    }
+  };
+
   useEffect(() => {
     const handleAuthCallback = async () => {
       try {
@@ -56,7 +82,19 @@ export default function AuthCallback() {
             console.log('✅ AuthCallback: Session obtained from code exchange');
             // Clear the URL to remove the code
             window.history.replaceState({}, document.title, window.location.pathname);
+            // Establish backend session BEFORE calling checkAuth
+            await establishBackendSession(sessionData.session);
             await checkAuth();
+            
+            // Wait for Supabase to persist the session and verify it's available
+            // This prevents 401s on the first API call after redirect
+            await new Promise(resolve => setTimeout(resolve, 300));
+            const { data: verifyData } = await supabase.auth.getSession();
+            if (!verifyData.session) {
+              console.warn('⚠️ AuthCallback: Session not persisted, waiting longer...');
+              await new Promise(resolve => setTimeout(resolve, 500));
+            }
+            
             setLocation('/');
             return;
           }
@@ -82,7 +120,18 @@ export default function AuthCallback() {
             console.log('✅ AuthCallback: Session set successfully from tokens');
             // Clear the URL hash
             window.history.replaceState({}, document.title, window.location.pathname);
+            // Establish backend session BEFORE calling checkAuth
+            await establishBackendSession(sessionData.session);
             await checkAuth();
+            
+            // Wait for Supabase to persist the session
+            await new Promise(resolve => setTimeout(resolve, 300));
+            const { data: verifyData } = await supabase.auth.getSession();
+            if (!verifyData.session) {
+              console.warn('⚠️ AuthCallback: Session not persisted, waiting longer...');
+              await new Promise(resolve => setTimeout(resolve, 500));
+            }
+            
             setLocation('/');
             return;
           }
@@ -101,7 +150,13 @@ export default function AuthCallback() {
 
         if (data.session) {
           console.log('✅ AuthCallback: Found existing session');
+          // Establish backend session BEFORE calling checkAuth
+          await establishBackendSession(data.session);
           await checkAuth();
+          
+          // Wait for session to be fully available
+          await new Promise(resolve => setTimeout(resolve, 300));
+          
           setLocation('/');
         } else {
           console.log('🔐 AuthCallback: No session found, no code, no tokens');
