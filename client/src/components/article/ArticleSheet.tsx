@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Star, Link2, ExternalLink, Sparkles, X, ChevronLeft, Clock, User, Loader2, AlertCircle, Check } from "lucide-react";
+import { Star, Copy, ExternalLink, Sparkles, X, ChevronLeft, Clock, User, Loader2, AlertCircle, Check } from "lucide-react";
 import { format } from "date-fns";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -161,14 +161,45 @@ export function ArticleSheet({ article, isOpen, onClose }: ArticleSheetProps) {
   const handleCopyLink = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!article) return;
+    if (!article?.url) return;
     
     try {
-      await navigator.clipboard.writeText(article.url);
+      // Use the Clipboard API
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(article.url);
+      } else {
+        // Fallback for older browsers
+        const textArea = document.createElement('textarea');
+        textArea.value = article.url;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
       setLinkCopied(true);
       setTimeout(() => setLinkCopied(false), 2000);
     } catch (error) {
       console.error('Failed to copy link:', error);
+      // Try fallback on error
+      try {
+        const textArea = document.createElement('textarea');
+        textArea.value = article.url;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        setLinkCopied(true);
+        setTimeout(() => setLinkCopied(false), 2000);
+      } catch (fallbackError) {
+        console.error('Fallback copy also failed:', fallbackError);
+      }
     }
   };
 
@@ -213,8 +244,9 @@ export function ArticleSheet({ article, isOpen, onClose }: ArticleSheetProps) {
                 type="button"
                 onClick={handleCopyLink} 
                 className={`h-9 w-9 inline-flex items-center justify-center rounded-md cursor-pointer transition-colors ${linkCopied ? 'text-green-500' : 'text-muted-foreground hover:text-primary'}`}
+                title="Copy link to clipboard"
               >
-                {linkCopied ? <Check className="h-4 w-4 pointer-events-none" /> : <Link2 className="h-4 w-4 pointer-events-none" />}
+                {linkCopied ? <Check className="h-4 w-4 pointer-events-none" /> : <Copy className="h-4 w-4 pointer-events-none" />}
               </button>
               <button 
                 type="button"
