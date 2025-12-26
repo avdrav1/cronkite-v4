@@ -111,6 +111,15 @@ export function ArticleSheet({ article, isOpen, onClose }: ArticleSheetProps) {
   const [summaryPoints, setSummaryPoints] = useState<string[]>([]);
   const [isLoadingSummary, setIsLoadingSummary] = useState(true);
   const [isAIPowered, setIsAIPowered] = useState(false);
+  const [isStarred, setIsStarred] = useState(article?.isStarred ?? false);
+  const [isStarring, setIsStarring] = useState(false);
+
+  // Sync starred state when article changes
+  useEffect(() => {
+    if (article) {
+      setIsStarred(article.isStarred ?? false);
+    }
+  }, [article?.id, article?.isStarred]);
 
   // Fetch AI summary when article changes
   useEffect(() => {
@@ -128,6 +137,48 @@ export function ArticleSheet({ article, isOpen, onClose }: ArticleSheetProps) {
         });
     }
   }, [article?.id, isOpen]);
+
+  const handleStar = async () => {
+    if (!article || isStarring) return;
+    
+    setIsStarring(true);
+    const newStarred = !isStarred;
+    setIsStarred(newStarred); // Optimistic update
+    
+    try {
+      await apiRequest('POST', `/api/articles/${article.id}/star`, { starred: newStarred });
+    } catch (error) {
+      console.error('Failed to star article:', error);
+      setIsStarred(!newStarred); // Revert on error
+    } finally {
+      setIsStarring(false);
+    }
+  };
+
+  const handleShare = async () => {
+    if (!article) return;
+    
+    const shareData = {
+      title: article.title,
+      text: article.excerpt || article.title,
+      url: article.url
+    };
+    
+    try {
+      if (navigator.share) {
+        await navigator.share(shareData);
+      } else {
+        // Fallback: copy URL to clipboard
+        await navigator.clipboard.writeText(article.url);
+        // Could add a toast notification here
+      }
+    } catch (error) {
+      // User cancelled or share failed - ignore
+      if ((error as Error).name !== 'AbortError') {
+        console.error('Share failed:', error);
+      }
+    }
+  };
 
   if (!article) return null;
 
@@ -152,10 +203,16 @@ export function ArticleSheet({ article, isOpen, onClose }: ArticleSheetProps) {
               <ChevronLeft className="h-4 w-4" /> Back
             </Button>
             <div className="flex items-center gap-2">
-               <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-yellow-500">
-                <Star className="h-4 w-4" />
+               <Button 
+                 variant="ghost" 
+                 size="icon" 
+                 onClick={handleStar}
+                 disabled={isStarring}
+                 className={`text-muted-foreground hover:text-yellow-500 ${isStarred ? 'text-yellow-500' : ''}`}
+               >
+                <Star className={`h-4 w-4 ${isStarred ? 'fill-current' : ''}`} />
               </Button>
-              <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-primary">
+              <Button variant="ghost" size="icon" onClick={handleShare} className="text-muted-foreground hover:text-primary">
                 <Share2 className="h-4 w-4" />
               </Button>
               <Button variant="ghost" size="icon" onClick={onClose}>
@@ -271,7 +328,7 @@ export function ArticleSheet({ article, isOpen, onClose }: ArticleSheetProps) {
               
               {/* Similar Articles Section - Requirements: 4.1, 4.5 */}
               {article.id && (
-                <div className="mb-12">
+                <div className="mb-8">
                   <SimilarArticles 
                     articleId={article.id} 
                     onArticleClick={(articleId) => {
@@ -282,9 +339,7 @@ export function ArticleSheet({ article, isOpen, onClose }: ArticleSheetProps) {
                 </div>
               )}
               
-              <Separator className="my-12" />
-              
-              <div className="flex justify-center">
+              <div className="flex justify-center pt-4">
                  <Button size="lg" className="rounded-full px-8 shadow-lg hover:shadow-primary/25 transition-all" asChild>
                    <a href={article.url} target="_blank" rel="noopener noreferrer">
                      Read Original on {source} <ExternalLink className="ml-2 h-4 w-4" />
