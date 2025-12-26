@@ -13,6 +13,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import { apiRequest, apiFetch } from "@/lib/queryClient";
 import { type Article } from "@shared/schema";
+import { useAuth } from "@/contexts/AuthContext";
 
 // Extended article type with feed information and UI state
 interface ArticleWithFeed extends Article {
@@ -67,11 +68,12 @@ const CLUSTER_COLORS = [
 ];
 
 export default function Home() {
+  const { logout } = useAuth();
   const [selectedArticle, setSelectedArticle] = useState<ArticleWithFeed | null>(null);
   const [selectedCluster, setSelectedCluster] = useState<TrendingCluster | null>(null);
   const [activeFilter, setActiveFilter] = useState("all");
   const [historyDepth, setHistoryDepth] = useState(CHUNK_SIZE_DAYS);
-  
+
   // Real data state
   const [articles, setArticles] = useState<ArticleWithFeed[]>([]);
   const [starredArticles, setStarredArticles] = useState<ArticleWithFeed[]>([]);
@@ -310,7 +312,16 @@ export default function Home() {
       }
     } catch (error) {
       console.error('Failed to fetch articles:', error);
-      setError(error instanceof Error ? error.message : 'Failed to load articles');
+      const errorMessage = error instanceof Error ? error.message : 'Failed to load articles';
+
+      // Check if this is a 401 authentication error - trigger logout and redirect
+      if (errorMessage.includes('401')) {
+        console.log('🔐 Session expired, logging out...');
+        await logout();
+        return; // logout will redirect to /auth
+      }
+
+      setError(errorMessage);
     } finally {
       setIsLoading(false);
     }
