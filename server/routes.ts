@@ -260,7 +260,8 @@ export async function registerRoutes(
             email: user.email,
             display_name: user.display_name,
             avatar_url: user.avatar_url,
-            onboarding_completed: user.onboarding_completed
+            onboarding_completed: user.onboarding_completed,
+            is_admin: user.is_admin
           }
         });
       });
@@ -350,7 +351,8 @@ export async function registerRoutes(
             email: user.email,
             display_name: user.display_name,
             avatar_url: user.avatar_url,
-            onboarding_completed: user.onboarding_completed
+            onboarding_completed: user.onboarding_completed,
+            is_admin: user.is_admin
           }
         });
       });
@@ -409,7 +411,8 @@ export async function registerRoutes(
             email: user.email,
             display_name: user.display_name,
             avatar_url: user.avatar_url,
-            onboarding_completed: user.onboarding_completed
+            onboarding_completed: user.onboarding_completed,
+            is_admin: user.is_admin
           }
         });
       });
@@ -561,7 +564,8 @@ export async function registerRoutes(
             email: user.email,
             display_name: user.display_name,
             avatar_url: user.avatar_url,
-            onboarding_completed: user.onboarding_completed
+            onboarding_completed: user.onboarding_completed,
+            is_admin: user.is_admin
           }
         });
       });
@@ -596,7 +600,8 @@ export async function registerRoutes(
         avatar_url: user.avatar_url,
         timezone: user.timezone,
         region_code: user.region_code,
-        onboarding_completed: user.onboarding_completed
+        onboarding_completed: user.onboarding_completed,
+        is_admin: user.is_admin
       }
     });
   });
@@ -633,6 +638,7 @@ export async function registerRoutes(
           timezone: user.timezone,
           region_code: user.region_code,
           onboarding_completed: user.onboarding_completed,
+          is_admin: user.is_admin,
           created_at: user.created_at,
           updated_at: user.updated_at
         }
@@ -664,6 +670,7 @@ export async function registerRoutes(
           timezone: updatedUser.timezone,
           region_code: updatedUser.region_code,
           onboarding_completed: updatedUser.onboarding_completed,
+          is_admin: updatedUser.is_admin,
           created_at: updatedUser.created_at,
           updated_at: updatedUser.updated_at
         }
