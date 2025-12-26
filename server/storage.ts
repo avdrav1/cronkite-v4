@@ -33,6 +33,16 @@ import {
 import { categoryMappingService } from "@shared/category-mapping";
 import { randomUUID } from "crypto";
 
+// Authentication result type with session tokens for JWT auth in production
+export interface AuthResult {
+  profile: Profile;
+  session: {
+    access_token: string;
+    refresh_token: string;
+    expires_at?: number;
+  };
+}
+
 // modify the interface with any CRUD methods
 // you might need
 
@@ -44,7 +54,7 @@ export interface IStorage {
   updateUser(id: string, updates: Partial<Profile>): Promise<Profile>;
   
   // Authentication Methods
-  authenticateUser(email: string, password: string): Promise<Profile | null>;
+  authenticateUser(email: string, password: string): Promise<AuthResult | null>;
   createUserWithPassword(user: InsertProfile, password: string): Promise<Profile>;
   updateUserPassword(userId: string, newPassword: string): Promise<void>;
   
@@ -378,18 +388,27 @@ export class MemStorage implements IStorage {
   }
 
   // Authentication Methods
-  async authenticateUser(email: string, password: string): Promise<Profile | null> {
+  async authenticateUser(email: string, password: string): Promise<AuthResult | null> {
     const user = await this.getUserByEmail(email);
     if (!user) {
       return null;
     }
-    
+
     const storedPassword = this.passwords.get(user.id);
     if (!storedPassword || storedPassword !== password) {
       return null;
     }
-    
-    return user;
+
+    // In development with MemStorage, create a mock session
+    // This allows the same code path to work, but Express sessions handle persistence
+    return {
+      profile: user,
+      session: {
+        access_token: 'dev-token-' + user.id,
+        refresh_token: 'dev-refresh-' + user.id,
+        expires_at: Math.floor(Date.now() / 1000) + 86400 // 24 hours
+      }
+    };
   }
 
   async createUserWithPassword(user: InsertProfile, password: string): Promise<Profile> {

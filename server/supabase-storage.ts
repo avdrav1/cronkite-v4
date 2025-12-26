@@ -25,7 +25,7 @@ import {
   type EngagementSignal
 } from "@shared/schema";
 import { categoryMappingService } from "@shared/category-mapping";
-import { type IStorage } from "./storage";
+import { type IStorage, type AuthResult } from "./storage";
 
 export class SupabaseStorage implements IStorage {
   private supabase;
@@ -223,20 +223,32 @@ export class SupabaseStorage implements IStorage {
   }
 
   // Authentication Methods
-  async authenticateUser(email: string, password: string): Promise<Profile | null> {
+  async authenticateUser(email: string, password: string): Promise<AuthResult | null> {
     // Use Supabase Auth for authentication
     const { data, error } = await this.supabase.auth.signInWithPassword({
       email,
       password
     });
-    
-    if (error || !data.user) {
+
+    if (error || !data.user || !data.session) {
       return null;
     }
-    
+
     // Get the user profile
     const profile = await this.getUser(data.user.id);
-    return profile || null;
+    if (!profile) {
+      return null;
+    }
+
+    // Return both the profile and session tokens for JWT auth in production
+    return {
+      profile,
+      session: {
+        access_token: data.session.access_token,
+        refresh_token: data.session.refresh_token,
+        expires_at: data.session.expires_at
+      }
+    };
   }
 
   async createUserWithPassword(user: InsertProfile, password: string): Promise<Profile> {

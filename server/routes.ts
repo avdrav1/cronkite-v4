@@ -338,13 +338,17 @@ export async function registerRoutes(
           });
         }
         
-        console.log('✅ Login successful:', { 
-          userId: user.id, 
+        // Get session tokens attached by Passport LocalStrategy
+        const supabaseSession = (req as any).supabaseSession;
+
+        console.log('✅ Login successful:', {
+          userId: user.id,
           email: user.email,
           sessionID: req.sessionID,
-          isAuthenticated: req.isAuthenticated()
+          isAuthenticated: req.isAuthenticated(),
+          hasSupabaseSession: !!supabaseSession
         });
-        
+
         res.json({
           user: {
             id: user.id,
@@ -353,7 +357,9 @@ export async function registerRoutes(
             avatar_url: user.avatar_url,
             onboarding_completed: user.onboarding_completed,
             is_admin: user.is_admin
-          }
+          },
+          // Include session tokens for JWT auth in production (serverless)
+          session: supabaseSession || null
         });
       });
     })(req, res, next);

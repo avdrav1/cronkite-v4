@@ -174,6 +174,18 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       
       const data = await response.json();
       console.log('✅ AuthContext: Login successful, setting user:', data.user?.email);
+
+      // If session tokens were returned, backup them for JWT auth in production (serverless)
+      if (data.session) {
+        console.log('🔑 AuthContext: Backing up session tokens for JWT auth');
+        backupSession({
+          access_token: data.session.access_token,
+          refresh_token: data.session.refresh_token,
+          expires_at: data.session.expires_at,
+          user: data.user
+        } as any);
+      }
+
       setUser(data.user);
     } catch (error) {
       console.error('❌ AuthContext: Login error:', error);

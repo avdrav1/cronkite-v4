@@ -48,16 +48,19 @@ console.log(`🔐 Session configured for ${isProduction ? 'production' : 'develo
 passport.use(new LocalStrategy(
   {
     usernameField: 'email',
-    passwordField: 'password'
+    passwordField: 'password',
+    passReqToCallback: true // Enable access to request object
   },
-  async (email: string, password: string, done) => {
+  async (req: Request, email: string, password: string, done) => {
     try {
       const storage = await getStorage();
-      const user = await storage.authenticateUser(email, password);
-      if (!user) {
+      const result = await storage.authenticateUser(email, password);
+      if (!result) {
         return done(null, false, { message: 'Invalid email or password' });
       }
-      return done(null, user);
+      // Attach session tokens to request for the route handler to include in response
+      (req as any).supabaseSession = result.session;
+      return done(null, result.profile);
     } catch (error) {
       console.error('Passport authentication error:', error);
       return done(error);
