@@ -138,7 +138,9 @@ export function ArticleSheet({ article, isOpen, onClose }: ArticleSheetProps) {
     }
   }, [article?.id, isOpen]);
 
-  const handleStar = async () => {
+  const handleStar = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
     if (!article || isStarring) return;
     
     setIsStarring(true);
@@ -155,7 +157,9 @@ export function ArticleSheet({ article, isOpen, onClose }: ArticleSheetProps) {
     }
   };
 
-  const handleShare = async () => {
+  const handleShare = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
     if (!article) return;
     
     const shareData = {
@@ -196,29 +200,41 @@ export function ArticleSheet({ article, isOpen, onClose }: ArticleSheetProps) {
         side="right"
         hideCloseButton
         className="w-full sm:max-w-xl md:max-w-2xl lg:max-w-3xl p-0 border-l border-border bg-background shadow-2xl sm:rounded-l-2xl overflow-hidden"
+        onOpenAutoFocus={(e) => e.preventDefault()}
       >
         <div className="h-full flex flex-col">
           {/* Header Action Bar - fixed at top, not inside scroll area */}
           <div className="flex-shrink-0 flex items-center justify-between p-4 bg-background/80 backdrop-blur-md border-b border-border/40 relative z-10">
-            <Button variant="ghost" size="sm" onClick={onClose} className="gap-1 text-muted-foreground hover:text-foreground">
+            <button 
+              type="button"
+              onClick={onClose} 
+              className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground px-3 py-2 rounded-md cursor-pointer"
+            >
               <ChevronLeft className="h-4 w-4" /> Back
-            </Button>
+            </button>
             <div className="flex items-center gap-2">
-               <Button 
-                 variant="ghost" 
-                 size="icon" 
+               <button 
+                 type="button"
                  onClick={handleStar}
                  disabled={isStarring}
-                 className={`text-muted-foreground hover:text-yellow-500 ${isStarred ? 'text-yellow-500' : ''}`}
+                 className={`h-9 w-9 inline-flex items-center justify-center rounded-md cursor-pointer text-muted-foreground hover:text-yellow-500 disabled:opacity-50 disabled:cursor-not-allowed ${isStarred ? 'text-yellow-500' : ''}`}
                >
-                <Star className={`h-4 w-4 ${isStarred ? 'fill-current' : ''}`} />
-              </Button>
-              <Button variant="ghost" size="icon" onClick={handleShare} className="text-muted-foreground hover:text-primary">
-                <Share2 className="h-4 w-4" />
-              </Button>
-              <Button variant="ghost" size="icon" onClick={onClose}>
-                <X className="h-5 w-5" />
-              </Button>
+                <Star className={`h-4 w-4 pointer-events-none ${isStarred ? 'fill-current' : ''}`} />
+              </button>
+              <button 
+                type="button"
+                onClick={handleShare} 
+                className="h-9 w-9 inline-flex items-center justify-center rounded-md cursor-pointer text-muted-foreground hover:text-primary"
+              >
+                <Share2 className="h-4 w-4 pointer-events-none" />
+              </button>
+              <button 
+                type="button"
+                onClick={onClose}
+                className="h-9 w-9 inline-flex items-center justify-center rounded-md cursor-pointer text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-5 w-5 pointer-events-none" />
+              </button>
             </div>
           </div>
 
