@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { type Profile } from '@shared/schema';
-import { isSupabaseConfigured, getSupabaseClient } from '@shared/supabase';
+import { isSupabaseConfigured, getSupabaseClient, clearBackupSession, backupSession } from '@shared/supabase';
 import { apiRequest } from '@/lib/queryClient';
 
 interface AuthContextType {
@@ -121,6 +121,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   // Handle OAuth session from Supabase
   const handleOAuthSession = async (session: any) => {
     try {
+      // Backup the session for reliability
+      backupSession(session);
+      
       const response = await apiRequest('POST', '/api/auth/oauth/callback', { session });
       const data = await response.json();
       setUser(data.user);
@@ -246,6 +249,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const logout = async () => {
     setIsLoading(true);
     try {
+      // Clear backup session first
+      clearBackupSession();
+      
       // Sign out from Supabase if configured
       if (isSupabaseConfigured()) {
         const client = getSupabaseClient();

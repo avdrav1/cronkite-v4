@@ -1,4 +1,7 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient, Session } from '@supabase/supabase-js'
+
+// Storage key for manual session backup (fallback when Supabase's built-in storage fails)
+const SESSION_BACKUP_KEY = 'cronkite_session_backup';
 
 // For client-side usage, we need to use Vite's import.meta.env
 // For server-side, we use process.env
@@ -149,3 +152,182 @@ export const createServiceClient = () => {
     }
   })
 }
+
+// ============================================================================
+// Session Backup Functions (Client-side only)
+// These provide a fallback when Supabase's built-in localStorage persistence fails
+// ============================================================================
+
+/**
+ * Backup session to localStorage as a fallback
+ * This is used when Supabase's built-in persistence doesn't work reliably
+ */
+export const backupSession = (session: Session | null): void => {
+  if (typeof window === 'undefined') return;
+  
+  try {
+    if (session) {
+      const backup = {
+        access_token: session.access_token,
+        refresh_token: session.refresh_token,
+        expires_at: session.expires_at,
+        user: session.user
+      };
+      localStorage.setItem(SESSION_BACKUP_KEY, JSON.stringify(backup));
+      console.log('✅ Session backed up to localStorage');
+    } else {
+      localStorage.removeItem(SESSION_BACKUP_KEY);
+      console.log('🗑️ Session backup cleared');
+    }
+  } catch (error) {
+    console.warn('Failed to backup session:', error);
+  }
+};
+
+/**
+ * Get backed up session from localStorage
+ */
+export const getBackupSession = (): { access_token: string; refresh_token: string; expires_at?: number } | null => {
+  if (typeof window === 'undefined') return null;
+  
+  try {
+    const backup = localStorage.getItem(SESSION_BACKUP_KEY);
+    if (!backup) return null;
+    
+    const parsed = JSON.parse(backup);
+    
+    // Check if session is expired (with 60 second buffer)
+    if (parsed.expires_at && parsed.expires_at < Math.floor(Date.now() / 1000) + 60) {
+      console.log('⚠️ Backup session expired, clearing');
+      localStorage.removeItem(SESSION_BACKUP_KEY);
+      return null;
+    }
+    
+    return parsed;
+  } catch (error) {
+    console.warn('Failed to get backup session:', error);
+    return null;
+  }
+};
+
+/**
+ * Clear the backup session
+ */
+export const clearBackupSession = (): void => {
+  if (typeof window === 'undefined') return;
+  
+  try {
+    localStorage.removeItem(SESSION_BACKUP_KEY);
+  } catch (error) {
+    console.warn('Failed to clear backup session:', error);
+  }
+};
+
+/**
+ * Get access token - tries Supabase first, falls back to backup
+ * This is the primary function to use when making authenticated API calls
+ */
+export const getAccessToken = async (): Promise<string | null> => {
+  if (!isSupabaseConfigured()) {
+    return null;
+  }
+  
+  const client = getSupabaseClient();
+  if (!client) {
+    return null;
+  }
+  
+  try {
+    // Try to get session from Supabase client
+    const { data: { session } } = await client.auth.getSession();
+    
+    if (session?.access_token) {
+      // Also backup the session for reliability
+      backupSession(session);
+      return session.access_token;
+    }
+    
+    // Supabase session not found - try backup
+    console.log('⚠️ No Supabase session, checking backup...');
+    const backup = getBackupSession();
+    
+    if (backup?.access_token) {
+      console.log('✅ Using backup session token');
+      
+      // Try to restore the session to Supabase client
+      try {
+        const { data, error } = await client.auth.setSession({
+          access_token: backup.access_token,
+          refresh_token: backup.refresh_token
+        });
+        
+        if (data.session && !error) {
+          console.log('✅ Session restored to Supabase client');
+          backupSession(data.session); // Update backup with refreshed session
+          return data.session.access_token;
+        }
+      } catch (restoreError) {
+        console.warn('Failed to restore session to Supabase:', restoreError);
+      }
+      
+      // Return backup token even if restore failed
+      return backup.access_token;
+    }
+    
+    return null;
+  } catch (error) {
+    console.warn('Error getting access token:', error);
+    
+    // Last resort - try backup
+    const backup = getBackupSession();
+    return backup?.access_token || null;
+  }
+};
+
+/**
+ * Refresh the session and get a new token
+ * Tries Supabase refresh first, falls back to backup token
+ */
+export const refreshAccessToken = async (): Promise<string | null> => {
+  if (!isSupabaseConfigured()) {
+    return null;
+  }
+  
+  const client = getSupabaseClient();
+  if (!client) {
+    return null;
+  }
+  
+  try {
+    // Try Supabase refresh
+    const { data: { session }, error } = await client.auth.refreshSession();
+    
+    if (session && !error) {
+      backupSession(session);
+      return session.access_token;
+    }
+    
+    // Supabase refresh failed - try using backup to restore session
+    console.log('⚠️ Supabase refresh failed, trying backup restore...');
+    const backup = getBackupSession();
+    
+    if (backup?.refresh_token) {
+      const { data, error: setError } = await client.auth.setSession({
+        access_token: backup.access_token,
+        refresh_token: backup.refresh_token
+      });
+      
+      if (data.session && !setError) {
+        console.log('✅ Session restored from backup');
+        backupSession(data.session);
+        return data.session.access_token;
+      }
+    }
+    
+    console.warn('Failed to refresh session:', error?.message || 'No backup available');
+    return null;
+  } catch (error) {
+    console.warn('Error refreshing session:', error);
+    return null;
+  }
+};

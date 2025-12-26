@@ -1,67 +1,10 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
-import { isSupabaseConfigured, getSupabaseClient } from '@shared/supabase';
+import { isSupabaseConfigured, getAccessToken, refreshAccessToken } from '@shared/supabase';
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     const text = (await res.text()) || res.statusText;
     throw new Error(`${res.status}: ${text}`);
-  }
-}
-
-/**
- * Get the current Supabase access token if available
- * Has a timeout to prevent hanging on network issues
- */
-async function getAccessToken(): Promise<string | null> {
-  if (!isSupabaseConfigured()) {
-    return null;
-  }
-  
-  const client = getSupabaseClient();
-  if (!client) {
-    return null;
-  }
-  
-  try {
-    // Add timeout to prevent hanging
-    const sessionPromise = client.auth.getSession();
-    const timeoutPromise = new Promise<{ data: { session: null } }>((resolve) => 
-      setTimeout(() => resolve({ data: { session: null } }), 2000)
-    );
-    
-    const { data: { session } } = await Promise.race([sessionPromise, timeoutPromise]);
-    return session?.access_token || null;
-  } catch (error) {
-    console.warn('Failed to get access token:', error);
-    return null;
-  }
-}
-
-/**
- * Refresh the Supabase session and get a new token
- * Used when a 401 is received to retry with fresh credentials
- */
-async function refreshAndGetToken(): Promise<string | null> {
-  if (!isSupabaseConfigured()) {
-    return null;
-  }
-  
-  const client = getSupabaseClient();
-  if (!client) {
-    return null;
-  }
-  
-  try {
-    // Try to refresh the session
-    const { data: { session }, error } = await client.auth.refreshSession();
-    if (error || !session) {
-      console.warn('Failed to refresh session:', error?.message);
-      return null;
-    }
-    return session.access_token;
-  } catch (error) {
-    console.warn('Error refreshing session:', error);
-    return null;
   }
 }
 
@@ -93,7 +36,7 @@ export async function apiRequest(
   // This handles cases where the token expired or wasn't available on first try
   if (res.status === 401 && isSupabaseConfigured()) {
     console.log('🔄 apiRequest: Got 401, attempting token refresh and retry...');
-    const newToken = await refreshAndGetToken();
+    const newToken = await refreshAccessToken();
     if (newToken) {
       headers["Authorization"] = `Bearer ${newToken}`;
       res = await fetch(url, {
@@ -163,7 +106,7 @@ export const getQueryFn: <T>(options: {
     // If we get a 401 and behavior is "throw", try refreshing token and retry once
     if (res.status === 401 && unauthorizedBehavior === "throw" && isSupabaseConfigured()) {
       console.log('🔄 getQueryFn: Got 401, attempting token refresh and retry...');
-      const newToken = await refreshAndGetToken();
+      const newToken = await refreshAccessToken();
       if (newToken) {
         headers["Authorization"] = `Bearer ${newToken}`;
         res = await fetch(queryKey.join("/") as string, {
