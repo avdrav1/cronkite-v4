@@ -29,6 +29,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -51,6 +52,7 @@ export function AppShell({ children }: AppShellProps) {
   const searchString = useSearch();
   const [isAddFeedOpen, setIsAddFeedOpen] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const [mobileNavTab, setMobileNavTab] = useState<'feeds' | 'trending'>('feeds');
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState({ current: 0, total: 0, newArticles: 0 });
   const { user, logout } = useAuth();
@@ -416,25 +418,25 @@ export function AppShell({ children }: AppShellProps) {
               </Button>
             </div>
 
-            {/* Feeds List */}
-            <div className="flex-1 overflow-y-auto p-4">
-              <h3 className="text-sm font-semibold text-muted-foreground mb-3">Your Feeds</h3>
-              <FeedsList onFeedSelect={() => setIsMobileNavOpen(false)} />
-            </div>
-
-            <Separator />
-
-            {/* Trending */}
-            <div className="p-4">
-              <h3 className="text-sm font-semibold text-muted-foreground mb-3">Trending</h3>
-              <TrendingClusters
-                onClusterClick={(clickedCluster) => {
-                  setIsMobileNavOpen(false);
-                  window.dispatchEvent(new CustomEvent('openTrendingCluster', { detail: clickedCluster }));
-                }}
-                activeClusterId={cluster || undefined}
-              />
-            </div>
+            {/* Tabbed Content */}
+            <Tabs value={mobileNavTab} onValueChange={(v) => setMobileNavTab(v as 'feeds' | 'trending')} className="flex-1 flex flex-col">
+              <TabsList className="mx-4 mt-4 grid grid-cols-2">
+                <TabsTrigger value="feeds">Feeds</TabsTrigger>
+                <TabsTrigger value="trending">Trending</TabsTrigger>
+              </TabsList>
+              <TabsContent value="feeds" className="flex-1 overflow-y-auto p-4 mt-0">
+                <FeedsList onFeedSelect={() => setIsMobileNavOpen(false)} />
+              </TabsContent>
+              <TabsContent value="trending" className="flex-1 overflow-y-auto p-4 mt-0">
+                <TrendingClusters
+                  onClusterClick={(clickedCluster) => {
+                    setIsMobileNavOpen(false);
+                    window.dispatchEvent(new CustomEvent('openTrendingCluster', { detail: clickedCluster }));
+                  }}
+                  activeClusterId={cluster || undefined}
+                />
+              </TabsContent>
+            </Tabs>
 
             <Separator />
 
