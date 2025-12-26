@@ -956,7 +956,12 @@ export default function Home() {
                  active={activeFilter === "all"} 
                  onClick={() => {
                    setActiveFilter("all");
-                   setLocation("/");
+                   // Preserve source/category filters when switching to "All"
+                   const params = new URLSearchParams();
+                   if (sourceFilter) params.set('source', sourceFilter);
+                   if (categoryFilter) params.set('category', categoryFilter);
+                   if (clusterFilter) params.set('cluster', clusterFilter);
+                   setLocation(params.toString() ? `/?${params.toString()}` : '/');
                  }} 
                />
                <FilterButton 
@@ -964,7 +969,13 @@ export default function Home() {
                  active={activeFilter === "unread"} 
                  onClick={() => {
                    setActiveFilter("unread");
-                   setLocation("/?filter=unread");
+                   // Preserve source/category filters when switching to "Unread"
+                   const params = new URLSearchParams();
+                   params.set('filter', 'unread');
+                   if (sourceFilter) params.set('source', sourceFilter);
+                   if (categoryFilter) params.set('category', categoryFilter);
+                   if (clusterFilter) params.set('cluster', clusterFilter);
+                   setLocation(`/?${params.toString()}`);
                  }} 
                />
                <FilterButton 
@@ -972,7 +983,13 @@ export default function Home() {
                  active={activeFilter === "read"} 
                  onClick={() => {
                    setActiveFilter("read");
-                   setLocation("/?filter=read");
+                   // Preserve source/category filters when switching to "Read"
+                   const params = new URLSearchParams();
+                   params.set('filter', 'read');
+                   if (sourceFilter) params.set('source', sourceFilter);
+                   if (categoryFilter) params.set('category', categoryFilter);
+                   if (clusterFilter) params.set('cluster', clusterFilter);
+                   setLocation(`/?${params.toString()}`);
                  }} 
                />
                <FilterButton 
@@ -980,7 +997,13 @@ export default function Home() {
                  active={activeFilter === "saved"} 
                  onClick={() => {
                    setActiveFilter("saved");
-                   setLocation("/?filter=starred");
+                   // Preserve source/category filters when switching to "Starred"
+                   const params = new URLSearchParams();
+                   params.set('filter', 'starred');
+                   if (sourceFilter) params.set('source', sourceFilter);
+                   if (categoryFilter) params.set('category', categoryFilter);
+                   if (clusterFilter) params.set('cluster', clusterFilter);
+                   setLocation(`/?${params.toString()}`);
                  }} 
                />
             </div>
