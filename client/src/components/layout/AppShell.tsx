@@ -27,6 +27,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Separator } from "@/components/ui/separator";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -48,6 +50,7 @@ export function AppShell({ children }: AppShellProps) {
   const [, setLocation] = useLocation();
   const searchString = useSearch();
   const [isAddFeedOpen, setIsAddFeedOpen] = useState(false);
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState({ current: 0, total: 0, newArticles: 0 });
   const { user, logout } = useAuth();
@@ -118,9 +121,72 @@ export function AppShell({ children }: AppShellProps) {
     <div className="h-screen bg-background text-foreground flex flex-col font-sans overflow-hidden">
       {/* Header */}
       <header className="border-b border-border bg-background/80 backdrop-blur-md shrink-0 z-50">
-        <div className="flex flex-col items-center justify-center py-6 gap-6 relative">
+        {/* Mobile Header */}
+        <div className="flex md:hidden flex-col">
+          <div className="flex items-center justify-between p-3">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setIsMobileNavOpen(true)}
+            >
+              <Menu className="h-6 w-6" />
+            </Button>
+            <Link href="/" className="flex flex-col items-center">
+              <span className="font-masthead font-bold text-2xl tracking-tight leading-none text-foreground">
+                Cronkite
+              </span>
+            </Link>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="rounded-full overflow-hidden">
+                  <Avatar className="h-8 w-8">
+                    <AvatarImage src={user?.avatar_url || undefined} alt={user?.display_name} />
+                    <AvatarFallback>{user?.display_name?.charAt(0).toUpperCase() || 'U'}</AvatarFallback>
+                  </Avatar>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>
+                  <div className="flex flex-col space-y-1">
+                    <p className="text-sm font-medium leading-none">{user?.display_name}</p>
+                    <p className="text-xs leading-none text-muted-foreground">{user?.email}</p>
+                  </div>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link href="/settings" className="w-full cursor-pointer">
+                    <Settings className="mr-2 h-4 w-4" />
+                    Settings
+                  </Link>
+                </DropdownMenuItem>
+                {user?.is_admin && (
+                  <DropdownMenuItem asChild>
+                    <Link href="/admin" className="w-full cursor-pointer">
+                      <Shield className="mr-2 h-4 w-4" />
+                      Feed Admin
+                    </Link>
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={handleLogout} className="cursor-pointer">
+                  <LogOut className="mr-2 h-4 w-4" />
+                  Log out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+          <div className="px-3 pb-3">
+            <SemanticSearch
+              placeholder="Search..."
+              onArticleClick={(articleId) => setLocation(`/?article=${articleId}`)}
+            />
+          </div>
+        </div>
+
+        {/* Desktop Header */}
+        <div className="hidden md:flex flex-col items-center justify-center py-6 gap-6 relative">
           <Link href="/" className="flex flex-col items-center gap-2 group">
-            <span className="font-masthead font-bold text-6xl md:text-8xl tracking-tight leading-none text-foreground text-center">
+            <span className="font-masthead font-bold text-8xl tracking-tight leading-none text-foreground text-center">
               Cronkite
             </span>
             <span className="text-xs uppercase tracking-[0.2em] text-muted-foreground font-medium">
@@ -129,15 +195,14 @@ export function AppShell({ children }: AppShellProps) {
           </Link>
 
           <div className="w-full max-w-xl mx-auto px-4">
-            <SemanticSearch 
+            <SemanticSearch
               placeholder="Search articles, feeds, or topics..."
               onArticleClick={(articleId) => setLocation(`/?article=${articleId}`)}
             />
           </div>
 
-          {/* Left side controls */}
-          <div className="absolute top-6 left-4 md:left-8 flex items-center gap-1">
-            {/* Hamburger Menu - Toggles BOTH panels */}
+          {/* Left side controls - Desktop only */}
+          <div className="absolute top-6 left-8 flex items-center gap-1">
             <Button
               variant="ghost"
               size="icon"
@@ -150,7 +215,6 @@ export function AppShell({ children }: AppShellProps) {
             >
               <Menu className="h-6 w-6" />
             </Button>
-            {/* Left Panel Toggle */}
             <Button
               variant="ghost"
               size="icon"
@@ -162,8 +226,8 @@ export function AppShell({ children }: AppShellProps) {
             </Button>
           </div>
 
-          {/* Right side controls */}
-          <div className="absolute top-6 right-4 md:right-8 flex items-center gap-2">
+          {/* Right side controls - Desktop only */}
+          <div className="absolute top-6 right-8 flex items-center gap-2">
             <Button
               variant="ghost"
               size="icon"
@@ -183,7 +247,7 @@ export function AppShell({ children }: AppShellProps) {
                 <Settings className="h-5 w-5" />
               </Button>
             </Link>
-            
+
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon" className="rounded-full overflow-hidden border border-transparent hover:border-border">
@@ -315,6 +379,88 @@ export function AppShell({ children }: AppShellProps) {
       </div>
 
       <AddFeedModal isOpen={isAddFeedOpen} onClose={() => setIsAddFeedOpen(false)} />
+
+      {/* Mobile Navigation Sheet */}
+      <Sheet open={isMobileNavOpen} onOpenChange={setIsMobileNavOpen}>
+        <SheetContent side="left" className="w-80 p-0">
+          <SheetHeader className="p-4 border-b">
+            <SheetTitle className="font-masthead text-xl">Cronkite</SheetTitle>
+          </SheetHeader>
+          <div className="flex flex-col h-full overflow-y-auto">
+            {/* Action Buttons */}
+            <div className="p-4 space-y-2 border-b">
+              {isFeedsFull ? (
+                <Button
+                  variant="destructive"
+                  className="w-full justify-start gap-2"
+                  onClick={() => { setIsMobileNavOpen(false); setLocation('/settings'); }}
+                >
+                  <Trash2 className="h-4 w-4" /> Delete Feed
+                </Button>
+              ) : (
+                <Button
+                  className="w-full justify-start gap-2"
+                  onClick={() => { setIsMobileNavOpen(false); setIsAddFeedOpen(true); }}
+                >
+                  <Plus className="h-4 w-4" /> Add New Feed
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                className="w-full justify-start gap-2"
+                onClick={() => { setIsMobileNavOpen(false); handleSyncAll(); }}
+                disabled={isSyncing}
+              >
+                <RefreshCw className={cn("h-4 w-4", isSyncing && "animate-spin")} />
+                {isSyncing ? `Syncing...` : 'Sync All Feeds'}
+              </Button>
+            </div>
+
+            {/* Feeds List */}
+            <div className="flex-1 overflow-y-auto p-4">
+              <h3 className="text-sm font-semibold text-muted-foreground mb-3">Your Feeds</h3>
+              <FeedsList onFeedSelect={() => setIsMobileNavOpen(false)} />
+            </div>
+
+            <Separator />
+
+            {/* Trending */}
+            <div className="p-4">
+              <h3 className="text-sm font-semibold text-muted-foreground mb-3">Trending</h3>
+              <TrendingClusters
+                onClusterClick={(clickedCluster) => {
+                  setIsMobileNavOpen(false);
+                  window.dispatchEvent(new CustomEvent('openTrendingCluster', { detail: clickedCluster }));
+                }}
+                activeClusterId={cluster || undefined}
+              />
+            </div>
+
+            <Separator />
+
+            {/* Navigation Links */}
+            <div className="p-4 space-y-1">
+              <Link href="/settings" onClick={() => setIsMobileNavOpen(false)}>
+                <Button variant="ghost" className="w-full justify-start gap-2">
+                  <Settings className="h-4 w-4" /> Settings
+                </Button>
+              </Link>
+              <Link href="/onboarding" onClick={() => setIsMobileNavOpen(false)}>
+                <Button variant="ghost" className="w-full justify-start gap-2">
+                  <Sparkles className="h-4 w-4" /> Customize Feeds
+                </Button>
+              </Link>
+              {user?.is_admin && (
+                <Link href="/admin" onClick={() => setIsMobileNavOpen(false)}>
+                  <Button variant="ghost" className="w-full justify-start gap-2">
+                    <Shield className="h-4 w-4" /> Feed Admin
+                  </Button>
+                </Link>
+              )}
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
