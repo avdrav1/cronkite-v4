@@ -148,7 +148,7 @@ export function ArticleSheet({ article, isOpen, onClose }: ArticleSheetProps) {
     setIsStarred(newStarred); // Optimistic update
     
     try {
-      await apiRequest('POST', `/api/articles/${article.id}/star`, { starred: newStarred });
+      await apiRequest('PUT', `/api/articles/${article.id}/star`, { isStarred: newStarred });
     } catch (error) {
       console.error('Failed to star article:', error);
       setIsStarred(!newStarred); // Revert on error
