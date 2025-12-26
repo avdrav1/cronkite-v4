@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Star, Share2, ExternalLink, Sparkles, X, ChevronLeft, Clock, User, Loader2, AlertCircle } from "lucide-react";
+import { Star, Link2, ExternalLink, Sparkles, X, ChevronLeft, Clock, User, Loader2, AlertCircle, Check } from "lucide-react";
 import { format } from "date-fns";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -113,6 +113,7 @@ export function ArticleSheet({ article, isOpen, onClose }: ArticleSheetProps) {
   const [isAIPowered, setIsAIPowered] = useState(false);
   const [isStarred, setIsStarred] = useState(article?.isStarred ?? false);
   const [isStarring, setIsStarring] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   // Sync starred state when article changes
   useEffect(() => {
@@ -157,30 +158,17 @@ export function ArticleSheet({ article, isOpen, onClose }: ArticleSheetProps) {
     }
   };
 
-  const handleShare = async (e: React.MouseEvent) => {
+  const handleCopyLink = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     if (!article) return;
     
-    const shareData = {
-      title: article.title,
-      text: article.excerpt || article.title,
-      url: article.url
-    };
-    
     try {
-      if (navigator.share) {
-        await navigator.share(shareData);
-      } else {
-        // Fallback: copy URL to clipboard
-        await navigator.clipboard.writeText(article.url);
-        // Could add a toast notification here
-      }
+      await navigator.clipboard.writeText(article.url);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
     } catch (error) {
-      // User cancelled or share failed - ignore
-      if ((error as Error).name !== 'AbortError') {
-        console.error('Share failed:', error);
-      }
+      console.error('Failed to copy link:', error);
     }
   };
 
@@ -223,10 +211,10 @@ export function ArticleSheet({ article, isOpen, onClose }: ArticleSheetProps) {
               </button>
               <button 
                 type="button"
-                onClick={handleShare} 
-                className="h-9 w-9 inline-flex items-center justify-center rounded-md cursor-pointer text-muted-foreground hover:text-primary"
+                onClick={handleCopyLink} 
+                className={`h-9 w-9 inline-flex items-center justify-center rounded-md cursor-pointer transition-colors ${linkCopied ? 'text-green-500' : 'text-muted-foreground hover:text-primary'}`}
               >
-                <Share2 className="h-4 w-4 pointer-events-none" />
+                {linkCopied ? <Check className="h-4 w-4 pointer-events-none" /> : <Link2 className="h-4 w-4 pointer-events-none" />}
               </button>
               <button 
                 type="button"
