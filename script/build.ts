@@ -137,8 +137,8 @@ async function buildAll() {
       entryPoints: ["netlify/functions/ai-scheduler.ts"],
       platform: "node",
       bundle: true,
-      format: "cjs",
-      outfile: "dist/functions/ai-scheduler.js",
+      format: "esm",
+      outfile: "dist/functions/ai-scheduler.mjs",
       define: {
         "process.env.NODE_ENV": '"production"',
       },
@@ -158,8 +158,8 @@ async function buildAll() {
       entryPoints: ["netlify/functions/feed-sync-scheduler.ts"],
       platform: "node",
       bundle: true,
-      format: "cjs",
-      outfile: "dist/functions/feed-sync-scheduler.js",
+      format: "esm",
+      outfile: "dist/functions/feed-sync-scheduler.mjs",
       define: {
         "process.env.NODE_ENV": '"production"',
       },
