@@ -6,6 +6,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Spinner } from "@/components/ui/spinner";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { WebSocketProvider } from "@/contexts/WebSocketContext";
 import Home from "@/pages/Home";
 import SettingsPage from "@/pages/Settings";
 import Onboarding from "@/pages/Onboarding";
@@ -143,8 +144,10 @@ function App() {
       <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
         <TooltipProvider>
           <AuthProvider>
-            <AppRouter />
-            <Toaster />
+            <WebSocketProvider>
+              <AppRouter />
+              <Toaster />
+            </WebSocketProvider>
           </AuthProvider>
         </TooltipProvider>
       </ThemeProvider>

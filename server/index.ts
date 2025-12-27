@@ -11,6 +11,7 @@ import {
   startAIScheduler, 
   stopAIScheduler 
 } from "./ai-background-scheduler";
+import { webSocketService } from "./websocket-service";
 
 const app = express();
 const httpServer = createServer(app);
@@ -73,9 +74,12 @@ async function findAvailablePort(startPort: number, maxAttempts: number = 10): P
       app.use("*", async (req, res, next) => {
         const url = req.originalUrl;
 
-        // Skip HTML fallback for API routes
+        // Skip HTML fallback for API routes - let them 404 if not found
         if (url.startsWith("/api")) {
-          return next();
+          return res.status(404).json({ 
+            error: 'API endpoint not found',
+            message: `The API endpoint ${url} was not found`
+          });
         }
 
         // Skip HTML fallback for module requests
@@ -165,7 +169,7 @@ async function findAvailablePort(startPort: number, maxAttempts: number = 10): P
       host: "0.0.0.0",
       reusePort: true,
     },
-    () => {
+    async () => {
       logSuccess(`🚀 Development server started successfully!`);
       logSuccess(`📍 Server Details:`);
       logSuccess(`   • Local:    http://localhost:${port}`);
@@ -176,6 +180,16 @@ async function findAvailablePort(startPort: number, maxAttempts: number = 10): P
         logSuccess(`   • HMR WebSocket: ws://localhost:${port}/vite-hmr`);
         logSuccess(`   • API routes:    http://localhost:${port}/api`);
         logSuccess(`   • Hot reload:    ✅ Enabled`);
+      }
+
+      // Initialize WebSocket service after server is listening
+      try {
+        log("🔌 Initializing WebSocket service...");
+        await webSocketService.initialize(httpServer);
+        logSuccess(`   • WebSocket:     ws://localhost:${port}/ws`);
+      } catch (error) {
+        logError("Failed to initialize WebSocket service", error as Error);
+        // Don't exit - server can still function without WebSocket
       }
     },
   );
@@ -194,20 +208,24 @@ async function findAvailablePort(startPort: number, maxAttempts: number = 10): P
   });
 
   // Handle graceful shutdown
-  process.on('SIGTERM', () => {
+  process.on('SIGTERM', async () => {
     log('Received SIGTERM, shutting down gracefully...');
     // Stop AI scheduler first
     stopAIScheduler();
+    // Shutdown WebSocket service
+    await webSocketService.shutdown();
     httpServer.close(() => {
       log('Server closed successfully');
       process.exit(0);
     });
   });
 
-  process.on('SIGINT', () => {
+  process.on('SIGINT', async () => {
     log('Received SIGINT, shutting down gracefully...');
     // Stop AI scheduler first
     stopAIScheduler();
+    // Shutdown WebSocket service
+    await webSocketService.shutdown();
     httpServer.close(() => {
       log('Server closed successfully');
       process.exit(0);

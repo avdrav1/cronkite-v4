@@ -3600,6 +3600,1574 @@ export async function registerRoutes(
   });
 
   // ============================================================================
+  // Social Friend System API Routes
+  // Requirements: 1.2, 1.4, 1.5, 2.4, 2.3, 2.5, 3.1, 3.2, 3.3, 4.1, 7.1, 6.1, 8.1, 8.2
+  // ============================================================================
+
+  // Friend Management API Endpoints
+  // Requirements: 1.2, 1.4, 1.5, 2.4, 2.3, 2.5
+
+  // POST /api/friends/request - Send friend request
+  // Requirements: 1.2 - Friend request creation and notification
+  app.post('/api/friends/request', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const fromUserId = req.user!.id;
+      const { toUserId } = req.body;
+
+      if (!toUserId || typeof toUserId !== 'string') {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_INPUT',
+          message: 'toUserId is required and must be a string'
+        });
+      }
+
+      if (fromUserId === toUserId) {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_REQUEST',
+          message: 'Cannot send friend request to yourself'
+        });
+      }
+
+      const { friendService } = await import('./friend-service');
+      const friendRequest = await friendService.sendFriendRequest(fromUserId, toUserId);
+
+      res.status(201).json({
+        success: true,
+        message: 'Friend request sent successfully',
+        friendRequest: {
+          id: friendRequest.id,
+          fromUser: {
+            id: friendRequest.fromUser.id,
+            displayName: friendRequest.fromUser.display_name,
+            avatarUrl: friendRequest.fromUser.avatar_url
+          },
+          toUser: {
+            id: friendRequest.toUser.id,
+            displayName: friendRequest.toUser.display_name,
+            avatarUrl: friendRequest.toUser.avatar_url
+          },
+          status: friendRequest.status,
+          requestedAt: friendRequest.requestedAt.toISOString()
+        }
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Send friend request error:', errorMessage);
+
+      // Handle specific error cases
+      if (errorMessage.includes('privacy settings')) {
+        return res.status(403).json({
+          success: false,
+          error: 'PRIVACY_RESTRICTION',
+          message: 'Cannot send friend request due to privacy settings'
+        });
+      }
+
+      if (errorMessage.includes('already friends')) {
+        return res.status(409).json({
+          success: false,
+          error: 'ALREADY_FRIENDS',
+          message: 'Users are already friends'
+        });
+      }
+
+      if (errorMessage.includes('already exists')) {
+        return res.status(409).json({
+          success: false,
+          error: 'REQUEST_EXISTS',
+          message: 'Friend request already exists'
+        });
+      }
+
+      res.status(500).json({
+        success: false,
+        error: 'FRIEND_REQUEST_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // PUT /api/friends/request/:id/accept - Accept friend request
+  // Requirements: 1.4, 2.1 - Accept friend request and establish mutual confirmation
+  app.put('/api/friends/request/:id/accept', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const requestId = req.params.id;
+
+      if (!requestId) {
+        return res.status(400).json({
+          success: false,
+          error: 'MISSING_REQUEST_ID',
+          message: 'Friend request ID is required'
+        });
+      }
+
+      const { friendService } = await import('./friend-service');
+      const acceptedRequest = await friendService.acceptFriendRequest(requestId, userId);
+
+      res.json({
+        success: true,
+        message: 'Friend request accepted successfully',
+        friendship: {
+          id: acceptedRequest.id,
+          fromUser: {
+            id: acceptedRequest.fromUser.id,
+            displayName: acceptedRequest.fromUser.display_name,
+            avatarUrl: acceptedRequest.fromUser.avatar_url
+          },
+          toUser: {
+            id: acceptedRequest.toUser.id,
+            displayName: acceptedRequest.toUser.display_name,
+            avatarUrl: acceptedRequest.toUser.avatar_url
+          },
+          status: acceptedRequest.status,
+          requestedAt: acceptedRequest.requestedAt.toISOString(),
+          confirmedAt: acceptedRequest.confirmedAt?.toISOString()
+        }
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Accept friend request error:', errorMessage);
+
+      if (errorMessage.includes('not found')) {
+        return res.status(404).json({
+          success: false,
+          error: 'REQUEST_NOT_FOUND',
+          message: 'Friend request not found'
+        });
+      }
+
+      if (errorMessage.includes('not authorized')) {
+        return res.status(403).json({
+          success: false,
+          error: 'NOT_AUTHORIZED',
+          message: 'Not authorized to accept this friend request'
+        });
+      }
+
+      if (errorMessage.includes('no longer pending')) {
+        return res.status(409).json({
+          success: false,
+          error: 'REQUEST_NOT_PENDING',
+          message: 'Friend request is no longer pending'
+        });
+      }
+
+      res.status(500).json({
+        success: false,
+        error: 'ACCEPT_REQUEST_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // PUT /api/friends/request/:id/decline - Decline friend request
+  // Requirements: 1.5 - Decline friend request and remove from system
+  app.put('/api/friends/request/:id/decline', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const requestId = req.params.id;
+
+      if (!requestId) {
+        return res.status(400).json({
+          success: false,
+          error: 'MISSING_REQUEST_ID',
+          message: 'Friend request ID is required'
+        });
+      }
+
+      const { friendService } = await import('./friend-service');
+      await friendService.declineFriendRequest(requestId, userId);
+
+      res.json({
+        success: true,
+        message: 'Friend request declined successfully'
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Decline friend request error:', errorMessage);
+
+      if (errorMessage.includes('not found')) {
+        return res.status(404).json({
+          success: false,
+          error: 'REQUEST_NOT_FOUND',
+          message: 'Friend request not found'
+        });
+      }
+
+      if (errorMessage.includes('not authorized')) {
+        return res.status(403).json({
+          success: false,
+          error: 'NOT_AUTHORIZED',
+          message: 'Not authorized to decline this friend request'
+        });
+      }
+
+      if (errorMessage.includes('no longer pending')) {
+        return res.status(409).json({
+          success: false,
+          error: 'REQUEST_NOT_PENDING',
+          message: 'Friend request is no longer pending'
+        });
+      }
+
+      res.status(500).json({
+        success: false,
+        error: 'DECLINE_REQUEST_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // GET /api/friends - Get friends list
+  // Requirements: 2.4 - Provide friends list showing all confirmed friendships
+  app.get('/api/friends', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+
+      const { friendService } = await import('./friend-service');
+      const friends = await friendService.getFriends(userId);
+
+      res.json({
+        success: true,
+        friends: friends.map(friend => ({
+          id: friend.id,
+          profile: {
+            id: friend.profile.id,
+            displayName: friend.profile.display_name,
+            email: friend.profile.email,
+            avatarUrl: friend.profile.avatar_url
+          },
+          friendshipId: friend.friendshipId,
+          confirmedAt: friend.confirmedAt.toISOString()
+        })),
+        total: friends.length
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Get friends error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'GET_FRIENDS_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // GET /api/friends/requests - Get friend requests (sent and received)
+  // Requirements: 1.3 - Display friend requests with options to accept or decline
+  app.get('/api/friends/requests', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+
+      const { friendService } = await import('./friend-service');
+      const requests = await friendService.getFriendRequests(userId);
+
+      res.json({
+        success: true,
+        sent: requests.sent.map(request => ({
+          id: request.id,
+          fromUser: {
+            id: request.fromUser.id,
+            displayName: request.fromUser.display_name,
+            avatarUrl: request.fromUser.avatar_url
+          },
+          toUser: {
+            id: request.toUser.id,
+            displayName: request.toUser.display_name,
+            avatarUrl: request.toUser.avatar_url
+          },
+          status: request.status,
+          requestedAt: request.requestedAt.toISOString()
+        })),
+        received: requests.received.map(request => ({
+          id: request.id,
+          fromUser: {
+            id: request.fromUser.id,
+            displayName: request.fromUser.display_name,
+            avatarUrl: request.fromUser.avatar_url
+          },
+          toUser: {
+            id: request.toUser.id,
+            displayName: request.toUser.display_name,
+            avatarUrl: request.toUser.avatar_url
+          },
+          status: request.status,
+          requestedAt: request.requestedAt.toISOString()
+        })),
+        totalSent: requests.sent.length,
+        totalReceived: requests.received.length
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Get friend requests error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'GET_REQUESTS_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // DELETE /api/friends/:id - Unfriend user
+  // Requirements: 2.3 - Unfriend operation with permission cleanup
+  app.delete('/api/friends/:id', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const friendId = req.params.id;
+
+      if (!friendId) {
+        return res.status(400).json({
+          success: false,
+          error: 'MISSING_FRIEND_ID',
+          message: 'Friend ID is required'
+        });
+      }
+
+      const { friendService } = await import('./friend-service');
+      await friendService.unfriend(userId, friendId);
+
+      res.json({
+        success: true,
+        message: 'User unfriended successfully'
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Unfriend user error:', errorMessage);
+
+      if (errorMessage.includes('not found')) {
+        return res.status(404).json({
+          success: false,
+          error: 'FRIENDSHIP_NOT_FOUND',
+          message: 'Friendship not found'
+        });
+      }
+
+      res.status(500).json({
+        success: false,
+        error: 'UNFRIEND_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // POST /api/users/block - Block user
+  // Requirements: 2.5 - User blocking functionality with bidirectional enforcement
+  app.post('/api/users/block', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const blockerId = req.user!.id;
+      const { blockedUserId } = req.body;
+
+      if (!blockedUserId || typeof blockedUserId !== 'string') {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_INPUT',
+          message: 'blockedUserId is required and must be a string'
+        });
+      }
+
+      const { friendService } = await import('./friend-service');
+      await friendService.blockUser(blockerId, blockedUserId);
+
+      res.status(201).json({
+        success: true,
+        message: 'User blocked successfully'
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Block user error:', errorMessage);
+
+      if (errorMessage.includes('Cannot block yourself')) {
+        return res.status(400).json({
+          success: false,
+          error: 'CANNOT_BLOCK_SELF',
+          message: 'Cannot block yourself'
+        });
+      }
+
+      if (errorMessage.includes('already blocked')) {
+        return res.status(409).json({
+          success: false,
+          error: 'ALREADY_BLOCKED',
+          message: 'User is already blocked'
+        });
+      }
+
+      res.status(500).json({
+        success: false,
+        error: 'BLOCK_USER_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // DELETE /api/users/block/:id - Unblock user
+  // Requirements: 2.5 - Allow users to manage blocked users
+  app.delete('/api/users/block/:id', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const blockerId = req.user!.id;
+      const blockedUserId = req.params.id;
+
+      if (!blockedUserId) {
+        return res.status(400).json({
+          success: false,
+          error: 'MISSING_USER_ID',
+          message: 'Blocked user ID is required'
+        });
+      }
+
+      const { friendService } = await import('./friend-service');
+      await friendService.unblockUser(blockerId, blockedUserId);
+
+      res.json({
+        success: true,
+        message: 'User unblocked successfully'
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Unblock user error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'UNBLOCK_USER_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // GET /api/users/blocked - Get list of blocked users
+  // Requirements: 2.5 - Allow users to manage blocked users
+  app.get('/api/users/blocked', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+
+      const { friendService } = await import('./friend-service');
+      const blockedUsers = await friendService.getBlockedUsers(userId);
+
+      res.json({
+        success: true,
+        blockedUsers: blockedUsers.map(user => ({
+          id: user.id,
+          displayName: user.display_name,
+          email: user.email,
+          avatarUrl: user.avatar_url
+        })),
+        total: blockedUsers.length
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Get blocked users error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'GET_BLOCKED_USERS_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // Comment System API Endpoints
+  // Requirements: 3.1, 3.2, 3.3, 4.1
+
+  // GET /api/articles/:id/comments - Get article comments
+  // Requirements: 3.1, 3.4 - Display existing comments from friends and maintain privacy
+  app.get('/api/articles/:id/comments', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const articleId = req.params.id;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
+
+      if (!articleId) {
+        return res.status(400).json({
+          success: false,
+          error: 'MISSING_ARTICLE_ID',
+          message: 'Article ID is required'
+        });
+      }
+
+      if (limit < 1 || limit > 100) {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_LIMIT',
+          message: 'Limit must be between 1 and 100'
+        });
+      }
+
+      const { commentService } = await import('./comment-service');
+      const comments = await commentService.getComments(articleId, userId, limit);
+
+      res.json({
+        success: true,
+        comments: comments.map(comment => ({
+          id: comment.id,
+          articleId: comment.articleId,
+          content: comment.content,
+          author: {
+            id: comment.author.id,
+            displayName: comment.author.display_name,
+            avatarUrl: comment.author.avatar_url
+          },
+          taggedUsers: comment.taggedUsers.map(user => ({
+            id: user.id,
+            displayName: user.display_name,
+            avatarUrl: user.avatar_url
+          })),
+          createdAt: comment.createdAt.toISOString(),
+          updatedAt: comment.updatedAt.toISOString()
+        })),
+        total: comments.length,
+        articleId
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Get article comments error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'GET_COMMENTS_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // POST /api/articles/:id/comments - Add comment
+  // Requirements: 3.2 - Validate comment content and save with proper attribution
+  app.post('/api/articles/:id/comments', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const articleId = req.params.id;
+      const { content, taggedUserIds = [] } = req.body;
+
+      if (!articleId) {
+        return res.status(400).json({
+          success: false,
+          error: 'MISSING_ARTICLE_ID',
+          message: 'Article ID is required'
+        });
+      }
+
+      if (!content || typeof content !== 'string') {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_CONTENT',
+          message: 'Comment content is required and must be a string'
+        });
+      }
+
+      if (!Array.isArray(taggedUserIds)) {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_TAGGED_USERS',
+          message: 'taggedUserIds must be an array'
+        });
+      }
+
+      const { commentService } = await import('./comment-service');
+      const comment = await commentService.addComment({
+        articleId,
+        userId,
+        content,
+        taggedUserIds
+      });
+
+      res.status(201).json({
+        success: true,
+        message: 'Comment added successfully',
+        comment: {
+          id: comment.id,
+          articleId: comment.articleId,
+          content: comment.content,
+          author: {
+            id: comment.author.id,
+            displayName: comment.author.display_name,
+            avatarUrl: comment.author.avatar_url
+          },
+          taggedUsers: comment.taggedUsers.map(user => ({
+            id: user.id,
+            displayName: user.display_name,
+            avatarUrl: user.avatar_url
+          })),
+          createdAt: comment.createdAt.toISOString(),
+          updatedAt: comment.updatedAt.toISOString()
+        }
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Add comment error:', errorMessage);
+
+      if (errorMessage.includes('cannot be empty')) {
+        return res.status(400).json({
+          success: false,
+          error: 'EMPTY_CONTENT',
+          message: 'Comment content cannot be empty'
+        });
+      }
+
+      if (errorMessage.includes('cannot exceed')) {
+        return res.status(400).json({
+          success: false,
+          error: 'CONTENT_TOO_LONG',
+          message: 'Comment content cannot exceed 2000 characters'
+        });
+      }
+
+      if (errorMessage.includes('permission to comment')) {
+        return res.status(403).json({
+          success: false,
+          error: 'COMMENT_PERMISSION_DENIED',
+          message: 'You do not have permission to comment on this article'
+        });
+      }
+
+      if (errorMessage.includes('cannot tag')) {
+        return res.status(403).json({
+          success: false,
+          error: 'TAG_PERMISSION_DENIED',
+          message: 'You can only tag confirmed friends'
+        });
+      }
+
+      if (errorMessage.includes('Cannot tag more than')) {
+        return res.status(400).json({
+          success: false,
+          error: 'TOO_MANY_TAGS',
+          message: 'Cannot tag more than 10 users in a single comment'
+        });
+      }
+
+      res.status(500).json({
+        success: false,
+        error: 'ADD_COMMENT_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // POST /api/articles/:id/comments/with-mentions - Add comment with automatic mention processing
+  // Requirements: 4.1, 4.4, 4.5 - Process mentions and enforce tag permissions
+  app.post('/api/articles/:id/comments/with-mentions', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const articleId = req.params.id;
+      const { content } = req.body;
+
+      if (!articleId) {
+        return res.status(400).json({
+          success: false,
+          error: 'MISSING_ARTICLE_ID',
+          message: 'Article ID is required'
+        });
+      }
+
+      if (!content || typeof content !== 'string') {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_CONTENT',
+          message: 'Comment content is required and must be a string'
+        });
+      }
+
+      const { commentService } = await import('./comment-service');
+      const comment = await commentService.addCommentWithMentions(articleId, userId, content);
+
+      res.status(201).json({
+        success: true,
+        message: 'Comment added successfully with processed mentions',
+        comment: {
+          id: comment.id,
+          articleId: comment.articleId,
+          content: comment.content,
+          author: {
+            id: comment.author.id,
+            displayName: comment.author.display_name,
+            avatarUrl: comment.author.avatar_url
+          },
+          taggedUsers: comment.taggedUsers.map(user => ({
+            id: user.id,
+            displayName: user.display_name,
+            avatarUrl: user.avatar_url
+          })),
+          createdAt: comment.createdAt.toISOString(),
+          updatedAt: comment.updatedAt.toISOString()
+        }
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Add comment with mentions error:', errorMessage);
+
+      if (errorMessage.includes('cannot be empty')) {
+        return res.status(400).json({
+          success: false,
+          error: 'EMPTY_CONTENT',
+          message: 'Comment content cannot be empty'
+        });
+      }
+
+      if (errorMessage.includes('permission to comment')) {
+        return res.status(403).json({
+          success: false,
+          error: 'COMMENT_PERMISSION_DENIED',
+          message: 'You do not have permission to comment on this article'
+        });
+      }
+
+      res.status(500).json({
+        success: false,
+        error: 'ADD_COMMENT_WITH_MENTIONS_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // DELETE /api/comments/:id - Delete comment
+  // Requirements: 3.3 - Delete comment and update display
+  app.delete('/api/comments/:id', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const commentId = req.params.id;
+
+      if (!commentId) {
+        return res.status(400).json({
+          success: false,
+          error: 'MISSING_COMMENT_ID',
+          message: 'Comment ID is required'
+        });
+      }
+
+      const { commentService } = await import('./comment-service');
+      await commentService.deleteComment(commentId, userId);
+
+      res.json({
+        success: true,
+        message: 'Comment deleted successfully'
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Delete comment error:', errorMessage);
+
+      if (errorMessage.includes('not found')) {
+        return res.status(404).json({
+          success: false,
+          error: 'COMMENT_NOT_FOUND',
+          message: 'Comment not found'
+        });
+      }
+
+      if (errorMessage.includes('already been deleted')) {
+        return res.status(409).json({
+          success: false,
+          error: 'COMMENT_ALREADY_DELETED',
+          message: 'Comment has already been deleted'
+        });
+      }
+
+      if (errorMessage.includes('only delete your own')) {
+        return res.status(403).json({
+          success: false,
+          error: 'DELETE_PERMISSION_DENIED',
+          message: 'You can only delete your own comments'
+        });
+      }
+
+      res.status(500).json({
+        success: false,
+        error: 'DELETE_COMMENT_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // GET /api/users/search - Search users for tagging
+  // Requirements: 4.1 - Create autocomplete functionality for friend tagging
+  app.get('/api/users/search', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const query = req.query.q as string;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 10;
+
+      if (!query || typeof query !== 'string') {
+        return res.status(400).json({
+          success: false,
+          error: 'MISSING_QUERY',
+          message: 'Search query is required'
+        });
+      }
+
+      if (query.length < 1) {
+        return res.json({
+          success: true,
+          suggestions: [],
+          total: 0,
+          query
+        });
+      }
+
+      if (limit < 1 || limit > 50) {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_LIMIT',
+          message: 'Limit must be between 1 and 50'
+        });
+      }
+
+      const { commentService } = await import('./comment-service');
+      const suggestions = await commentService.getTagSuggestions(query, userId, limit);
+
+      res.json({
+        success: true,
+        suggestions: suggestions.map(suggestion => ({
+          userId: suggestion.userId,
+          username: suggestion.username,
+          displayName: suggestion.displayName,
+          avatarUrl: suggestion.avatarUrl
+        })),
+        total: suggestions.length,
+        query
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Search users for tagging error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'USER_SEARCH_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // GET /api/comments/validate-mentions - Validate mentions in comment content
+  // Requirements: 4.5 - Validate that tagged usernames correspond to actual friends
+  app.get('/api/comments/validate-mentions', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const content = req.query.content as string;
+
+      if (!content || typeof content !== 'string') {
+        return res.status(400).json({
+          success: false,
+          error: 'MISSING_CONTENT',
+          message: 'Comment content is required for validation'
+        });
+      }
+
+      const { commentService } = await import('./comment-service');
+      const validation = await commentService.validateTaggedUsernames(content, userId);
+
+      res.json({
+        success: true,
+        isValid: validation.isValid,
+        invalidMentions: validation.invalidMentions,
+        content
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Validate mentions error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'VALIDATE_MENTIONS_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // GET /api/articles/:id/comments/count - Get comment count for an article
+  // Requirements: 3.1 - Display comment information
+  app.get('/api/articles/:id/comments/count', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const articleId = req.params.id;
+
+      if (!articleId) {
+        return res.status(400).json({
+          success: false,
+          error: 'MISSING_ARTICLE_ID',
+          message: 'Article ID is required'
+        });
+      }
+
+      const { commentService } = await import('./comment-service');
+      const count = await commentService.getCommentCount(articleId, userId);
+
+      res.json({
+        success: true,
+        count,
+        articleId
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Get comment count error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'GET_COMMENT_COUNT_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // GET /api/users/comments - Get user's own comments
+  // Requirements: 3.1 - Allow users to see their own comments
+  app.get('/api/users/comments', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
+
+      if (limit < 1 || limit > 100) {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_LIMIT',
+          message: 'Limit must be between 1 and 100'
+        });
+      }
+
+      const { commentService } = await import('./comment-service');
+      const comments = await commentService.getCommentsByUser(userId, limit);
+
+      res.json({
+        success: true,
+        comments: comments.map(comment => ({
+          id: comment.id,
+          articleId: comment.articleId,
+          content: comment.content,
+          author: {
+            id: comment.author.id,
+            displayName: comment.author.display_name,
+            avatarUrl: comment.author.avatar_url
+          },
+          taggedUsers: comment.taggedUsers.map(user => ({
+            id: user.id,
+            displayName: user.display_name,
+            avatarUrl: user.avatar_url
+          })),
+          createdAt: comment.createdAt.toISOString(),
+          updatedAt: comment.updatedAt.toISOString()
+        })),
+        total: comments.length
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Get user comments error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'GET_USER_COMMENTS_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // Notification and Privacy API Endpoints
+  // Requirements: 7.1, 6.1, 8.1, 8.2
+
+  // GET /api/notifications - Get user notifications
+  // Requirements: 7.1 - Display notifications to users
+  app.get('/api/notifications', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
+      const includeRead = req.query.includeRead === 'true';
+
+      if (limit < 1 || limit > 100) {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_LIMIT',
+          message: 'Limit must be between 1 and 100'
+        });
+      }
+
+      const { notificationService } = await import('./notification-service');
+      const notifications = await notificationService.getNotifications(userId, limit, includeRead);
+      const unreadCount = await notificationService.getUnreadCount(userId);
+
+      res.json({
+        success: true,
+        notifications: notifications.map(notification => ({
+          id: notification.id,
+          type: notification.type,
+          title: notification.title,
+          message: notification.message,
+          data: notification.data,
+          readAt: notification.readAt?.toISOString(),
+          createdAt: notification.createdAt.toISOString(),
+          expiresAt: notification.expiresAt?.toISOString()
+        })),
+        total: notifications.length,
+        unreadCount
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Get notifications error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'GET_NOTIFICATIONS_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // PUT /api/notifications/:id/read - Mark notification as read
+  // Requirements: 7.1 - Allow users to mark notifications as read
+  app.put('/api/notifications/:id/read', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const notificationId = req.params.id;
+
+      if (!notificationId) {
+        return res.status(400).json({
+          success: false,
+          error: 'MISSING_NOTIFICATION_ID',
+          message: 'Notification ID is required'
+        });
+      }
+
+      const { notificationService } = await import('./notification-service');
+      await notificationService.markAsRead(notificationId, userId);
+
+      res.json({
+        success: true,
+        message: 'Notification marked as read'
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Mark notification as read error:', errorMessage);
+
+      if (errorMessage.includes('not found')) {
+        return res.status(404).json({
+          success: false,
+          error: 'NOTIFICATION_NOT_FOUND',
+          message: 'Notification not found'
+        });
+      }
+
+      if (errorMessage.includes('not authorized')) {
+        return res.status(403).json({
+          success: false,
+          error: 'NOT_AUTHORIZED',
+          message: 'Not authorized to mark this notification as read'
+        });
+      }
+
+      res.status(500).json({
+        success: false,
+        error: 'MARK_READ_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // PUT /api/notifications/read-all - Mark all notifications as read
+  // Requirements: 7.1 - Bulk notification management
+  app.put('/api/notifications/read-all', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+
+      const { notificationService } = await import('./notification-service');
+      const markedCount = await notificationService.markAllAsRead(userId);
+
+      res.json({
+        success: true,
+        message: 'All notifications marked as read',
+        markedCount
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Mark all notifications as read error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'MARK_ALL_READ_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // GET /api/notifications/preferences - Get notification preferences
+  // Requirements: 7.4 - Allow users to view their notification preferences
+  app.get('/api/notifications/preferences', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+
+      const { notificationService } = await import('./notification-service');
+      const preferences = await notificationService.getPreferences(userId);
+
+      res.json({
+        success: true,
+        preferences
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Get notification preferences error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'GET_PREFERENCES_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // PUT /api/notifications/preferences - Update notification preferences
+  // Requirements: 7.4 - Provide notification preferences to control frequency and types
+  app.put('/api/notifications/preferences', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const { 
+        emailNotifications, 
+        pushNotifications, 
+        friendRequestNotifications, 
+        commentTagNotifications, 
+        commentReplyNotifications 
+      } = req.body;
+
+      // Validate boolean values
+      const updates: any = {};
+      if (typeof emailNotifications === 'boolean') {
+        updates.emailNotifications = emailNotifications;
+      }
+      if (typeof pushNotifications === 'boolean') {
+        updates.pushNotifications = pushNotifications;
+      }
+      if (typeof friendRequestNotifications === 'boolean') {
+        updates.friendRequestNotifications = friendRequestNotifications;
+      }
+      if (typeof commentTagNotifications === 'boolean') {
+        updates.commentTagNotifications = commentTagNotifications;
+      }
+      if (typeof commentReplyNotifications === 'boolean') {
+        updates.commentReplyNotifications = commentReplyNotifications;
+      }
+
+      if (Object.keys(updates).length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'NO_VALID_UPDATES',
+          message: 'No valid notification preference updates provided'
+        });
+      }
+
+      const { notificationService } = await import('./notification-service');
+      await notificationService.updatePreferences(userId, updates);
+
+      // Get updated preferences to return
+      const updatedPreferences = await notificationService.getPreferences(userId);
+
+      res.json({
+        success: true,
+        message: 'Notification preferences updated successfully',
+        preferences: updatedPreferences
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Update notification preferences error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'UPDATE_PREFERENCES_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // GET /api/notifications/unread-count - Get unread notification count
+  // Requirements: 7.1 - Display notification indicators
+  app.get('/api/notifications/unread-count', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+
+      const { notificationService } = await import('./notification-service');
+      const unreadCount = await notificationService.getUnreadCount(userId);
+
+      res.json({
+        success: true,
+        unreadCount
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Get unread count error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'GET_UNREAD_COUNT_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // PUT /api/users/privacy - Update privacy settings
+  // Requirements: 6.1 - Allow users to control privacy settings
+  app.put('/api/users/privacy', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const { 
+        discoverable, 
+        allowFriendRequestsFrom, 
+        showActivityTo, 
+        emailNotifications, 
+        pushNotifications 
+      } = req.body;
+
+      // Validate inputs
+      const updates: any = {};
+      
+      if (typeof discoverable === 'boolean') {
+        updates.discoverable = discoverable;
+      }
+      
+      if (allowFriendRequestsFrom && ['everyone', 'friends', 'nobody'].includes(allowFriendRequestsFrom)) {
+        updates.allow_friend_requests_from = allowFriendRequestsFrom;
+      }
+      
+      if (showActivityTo && ['everyone', 'friends', 'nobody'].includes(showActivityTo)) {
+        updates.show_activity_to = showActivityTo;
+      }
+      
+      if (typeof emailNotifications === 'boolean') {
+        updates.email_notifications = emailNotifications;
+      }
+      
+      if (typeof pushNotifications === 'boolean') {
+        updates.push_notifications = pushNotifications;
+      }
+
+      if (Object.keys(updates).length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'NO_VALID_UPDATES',
+          message: 'No valid privacy setting updates provided'
+        });
+      }
+
+      const { privacyService } = await import('./privacy-service');
+      const updatedSettings = await privacyService.updatePrivacySettings(userId, updates);
+
+      res.json({
+        success: true,
+        message: 'Privacy settings updated successfully',
+        settings: {
+          discoverable: updatedSettings.discoverable,
+          allowFriendRequestsFrom: updatedSettings.allow_friend_requests_from,
+          showActivityTo: updatedSettings.show_activity_to,
+          emailNotifications: updatedSettings.email_notifications,
+          pushNotifications: updatedSettings.push_notifications,
+          updatedAt: updatedSettings.updated_at.toISOString()
+        }
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Update privacy settings error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'UPDATE_PRIVACY_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // GET /api/users/privacy - Get privacy settings
+  // Requirements: 6.1, 6.2 - Allow users to view their privacy settings
+  app.get('/api/users/privacy', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+
+      const { privacyService } = await import('./privacy-service');
+      const settings = await privacyService.getUserPrivacySettings(userId);
+
+      res.json({
+        success: true,
+        settings: {
+          discoverable: settings.discoverable,
+          allowFriendRequestsFrom: settings.allow_friend_requests_from,
+          showActivityTo: settings.show_activity_to,
+          emailNotifications: settings.email_notifications,
+          pushNotifications: settings.push_notifications,
+          createdAt: settings.created_at.toISOString(),
+          updatedAt: settings.updated_at.toISOString()
+        }
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Get privacy settings error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'GET_PRIVACY_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // GET /api/users/discover - User discovery and search
+  // Requirements: 8.1, 8.2 - User search with privacy compliance
+  app.get('/api/users/discover', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const query = req.query.q as string;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
+
+      if (limit < 1 || limit > 50) {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_LIMIT',
+          message: 'Limit must be between 1 and 50'
+        });
+      }
+
+      // If no query provided, return empty results
+      if (!query || typeof query !== 'string' || query.trim().length === 0) {
+        return res.json({
+          success: true,
+          users: [],
+          total: 0,
+          query: query || ''
+        });
+      }
+
+      const { friendService } = await import('./friend-service');
+      const users = await friendService.searchUsers(query.trim(), userId, limit);
+
+      res.json({
+        success: true,
+        users: users.map(user => ({
+          id: user.id,
+          displayName: user.display_name,
+          email: user.email,
+          avatarUrl: user.avatar_url
+        })),
+        total: users.length,
+        query: query.trim()
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('User discovery error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'USER_DISCOVERY_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // GET /api/users/suggestions - Get friend suggestions based on mutual connections
+  // Requirements: 8.2 - Friend suggestion algorithms based on mutual connections
+  app.get('/api/users/suggestions', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 10;
+
+      if (limit < 1 || limit > 20) {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_LIMIT',
+          message: 'Limit must be between 1 and 20'
+        });
+      }
+
+      const { friendService } = await import('./friend-service');
+      const suggestions = await friendService.getFriendSuggestions(userId, limit);
+
+      res.json({
+        success: true,
+        suggestions: suggestions.map(user => ({
+          id: user.id,
+          displayName: user.display_name,
+          email: user.email,
+          avatarUrl: user.avatar_url
+        })),
+        total: suggestions.length
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Get friend suggestions error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'GET_SUGGESTIONS_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // POST /api/users/find-by-emails - Find users by email addresses (contact import)
+  // Requirements: 8.4 - Implement contact import functionality
+  app.post('/api/users/find-by-emails', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const { emails } = req.body;
+
+      if (!Array.isArray(emails)) {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_INPUT',
+          message: 'Emails must be an array'
+        });
+      }
+
+      if (emails.length === 0) {
+        return res.json({
+          success: true,
+          users: [],
+          total: 0
+        });
+      }
+
+      if (emails.length > 100) {
+        return res.status(400).json({
+          success: false,
+          error: 'TOO_MANY_EMAILS',
+          message: 'Maximum 100 email addresses allowed'
+        });
+      }
+
+      const { friendService } = await import('./friend-service');
+      const users = await friendService.findUsersByEmails(emails, userId);
+
+      res.json({
+        success: true,
+        users: users.map(user => ({
+          id: user.id,
+          displayName: user.display_name,
+          email: user.email,
+          avatarUrl: user.avatar_url
+        })),
+        total: users.length
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Find users by emails error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'FIND_USERS_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // GET /api/users/profile-link - Generate shareable profile link
+  // Requirements: 8.5 - Create profile link sharing for easy connections
+  app.get('/api/users/profile-link', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+
+      const { friendService } = await import('./friend-service');
+      const profileLink = await friendService.generateProfileLink(userId);
+
+      res.json({
+        success: true,
+        profileLink,
+        message: 'Share this link to let others easily connect with you'
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Generate profile link error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'PROFILE_LINK_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // GET /api/users/profile-from-link/:userId - Get user profile from shareable link
+  // Requirements: 8.5 - Allow users to share their profile link for easy friend connections
+  app.get('/api/users/profile-from-link/:userId', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const viewerId = req.user!.id;
+      const linkUserId = req.params.userId;
+
+      if (!linkUserId) {
+        return res.status(400).json({
+          success: false,
+          error: 'MISSING_USER_ID',
+          message: 'User ID is required'
+        });
+      }
+
+      const { friendService } = await import('./friend-service');
+      const userProfile = await friendService.getProfileFromLink(linkUserId, viewerId);
+
+      if (!userProfile) {
+        return res.status(404).json({
+          success: false,
+          error: 'PROFILE_NOT_FOUND',
+          message: 'Profile not found or not accessible'
+        });
+      }
+
+      // Check if users are already friends
+      const areFriends = await friendService.areUsersFriends(viewerId, linkUserId);
+      
+      // Check if there's a pending friend request
+      const { sent, received } = await friendService.getFriendRequests(viewerId);
+      const hasPendingRequest = sent.some(req => req.toUser.id === linkUserId) || 
+                               received.some(req => req.fromUser.id === linkUserId);
+
+      res.json({
+        success: true,
+        user: {
+          id: userProfile.id,
+          displayName: userProfile.display_name,
+          avatarUrl: userProfile.avatar_url
+        },
+        relationship: {
+          areFriends,
+          hasPendingRequest,
+          canSendFriendRequest: !areFriends && !hasPendingRequest && viewerId !== linkUserId
+        }
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Get profile from link error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'PROFILE_FROM_LINK_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // ============================================================================
   // Admin Routes - Feed Management
   // ============================================================================
 
@@ -4180,6 +5748,845 @@ export async function registerRoutes(
         success: false,
         error: 'SYNC_HISTORY_ERROR',
         message: 'Failed to retrieve sync history'
+      });
+    }
+  });
+
+  // Social Friend System API Routes
+  
+  // Notification System Routes
+  
+  // GET /api/notifications - Get user notifications
+  // Requirements: 7.1 - Get user notifications
+  app.get('/api/notifications', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const limit = parseInt(req.query.limit as string) || 50;
+      const includeRead = req.query.includeRead !== 'false';
+      
+      const { notificationService } = await import('./notification-service');
+      
+      const notifications = await notificationService.getNotifications(userId, limit, includeRead);
+      const unreadCount = await notificationService.getUnreadCount(userId);
+      
+      res.json({
+        notifications,
+        unreadCount,
+        total: notifications.length
+      });
+    } catch (error) {
+      console.error('Get notifications error:', error);
+      res.status(500).json({
+        error: 'Failed to get notifications',
+        message: error instanceof Error ? error.message : 'An error occurred while retrieving notifications'
+      });
+    }
+  });
+  
+  // PUT /api/notifications/:id/read - Mark notification as read
+  // Requirements: 7.1 - Mark notification as read
+  app.put('/api/notifications/:id/read', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const notificationId = req.params.id;
+      
+      if (!notificationId) {
+        return res.status(400).json({
+          error: 'Validation error',
+          message: 'Notification ID is required'
+        });
+      }
+      
+      const { notificationService } = await import('./notification-service');
+      
+      await notificationService.markAsRead(notificationId, userId);
+      
+      res.json({
+        success: true,
+        message: 'Notification marked as read'
+      });
+    } catch (error) {
+      console.error('Mark notification as read error:', error);
+      
+      if (error instanceof Error) {
+        if (error.message === 'Notification not found') {
+          return res.status(404).json({
+            error: 'Notification not found',
+            message: 'The requested notification was not found'
+          });
+        }
+        
+        if (error.message === 'Not authorized to mark this notification as read') {
+          return res.status(403).json({
+            error: 'Not authorized',
+            message: 'You are not authorized to mark this notification as read'
+          });
+        }
+      }
+      
+      res.status(500).json({
+        error: 'Failed to mark notification as read',
+        message: error instanceof Error ? error.message : 'An error occurred while marking notification as read'
+      });
+    }
+  });
+  
+  // Privacy Settings Routes
+  
+  // PUT /api/users/privacy - Update privacy settings
+  // Requirements: 6.1 - Update privacy settings
+  app.put('/api/users/privacy', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const updates = req.body;
+      
+      // Validate privacy settings updates
+      const allowedFields = [
+        'discoverable',
+        'allow_friend_requests_from',
+        'show_activity_to',
+        'email_notifications',
+        'push_notifications'
+      ];
+      
+      const validUpdates: any = {};
+      for (const [key, value] of Object.entries(updates)) {
+        if (allowedFields.includes(key)) {
+          validUpdates[key] = value;
+        }
+      }
+      
+      if (Object.keys(validUpdates).length === 0) {
+        return res.status(400).json({
+          error: 'Validation error',
+          message: 'No valid privacy settings provided'
+        });
+      }
+      
+      // Validate privacy level values
+      const validPrivacyLevels = ['everyone', 'friends', 'nobody'];
+      if (validUpdates.allow_friend_requests_from && !validPrivacyLevels.includes(validUpdates.allow_friend_requests_from)) {
+        return res.status(400).json({
+          error: 'Validation error',
+          message: 'Invalid value for allow_friend_requests_from. Must be one of: everyone, friends, nobody'
+        });
+      }
+      
+      if (validUpdates.show_activity_to && !validPrivacyLevels.includes(validUpdates.show_activity_to)) {
+        return res.status(400).json({
+          error: 'Validation error',
+          message: 'Invalid value for show_activity_to. Must be one of: everyone, friends, nobody'
+        });
+      }
+      
+      const { privacyService } = await import('./privacy-service');
+      
+      const updatedSettings = await privacyService.updatePrivacySettings(userId, validUpdates);
+      
+      res.json({
+        success: true,
+        message: 'Privacy settings updated successfully',
+        settings: updatedSettings
+      });
+    } catch (error) {
+      console.error('Update privacy settings error:', error);
+      res.status(500).json({
+        error: 'Failed to update privacy settings',
+        message: error instanceof Error ? error.message : 'An error occurred while updating privacy settings'
+      });
+    }
+  });
+  
+  // GET /api/users/privacy - Get current privacy settings
+  // Requirements: 6.1 - Get privacy settings
+  app.get('/api/users/privacy', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      
+      const { privacyService } = await import('./privacy-service');
+      
+      const settings = await privacyService.getUserPrivacySettings(userId);
+      
+      res.json({
+        settings
+      });
+    } catch (error) {
+      console.error('Get privacy settings error:', error);
+      res.status(500).json({
+        error: 'Failed to get privacy settings',
+        message: error instanceof Error ? error.message : 'An error occurred while retrieving privacy settings'
+      });
+    }
+  });
+  
+  // User Discovery Routes
+  
+  // GET /api/users/discover - User discovery and search
+  // Requirements: 8.1, 8.2 - User discovery and search
+  app.get('/api/users/discover', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const query = req.query.q as string;
+      const limit = parseInt(req.query.limit as string) || 20;
+      
+      const { friendService } = await import('./friend-service');
+      
+      let users: any[] = [];
+      
+      if (query && query.trim().length > 0) {
+        // Search for users by query
+        users = await friendService.searchUsers(query.trim(), userId, limit);
+      } else {
+        // TODO: Implement friend suggestions based on mutual connections
+        // For now, return empty array when no query is provided
+        users = [];
+      }
+      
+      // Add friendship status for each user
+      const usersWithStatus = await Promise.all(
+        users.map(async (user) => {
+          let friendshipStatus = 'none';
+          
+          // Check if users are friends
+          const areFriends = await friendService.areUsersFriends(userId, user.id);
+          if (areFriends) {
+            friendshipStatus = 'confirmed';
+          } else {
+            // Check for pending friend requests
+            const friendRequests = await friendService.getFriendRequests(userId);
+            
+            // Check if current user sent a request to this user
+            const sentRequest = friendRequests.sent.find(req => 
+              req.toUser.id === user.id
+            );
+            
+            // Check if this user sent a request to current user
+            const receivedRequest = friendRequests.received.find(req => 
+              req.fromUser.id === user.id
+            );
+            
+            if (sentRequest) {
+              friendshipStatus = 'pending_sent';
+            } else if (receivedRequest) {
+              friendshipStatus = 'pending_received';
+            }
+          }
+          
+          return {
+            id: user.id,
+            email: user.email,
+            display_name: user.display_name,
+            avatar_url: user.avatar_url,
+            friendshipStatus
+          };
+        })
+      );
+      
+      res.json({
+        users: usersWithStatus,
+        total: usersWithStatus.length,
+        query: query || null
+      });
+    } catch (error) {
+      console.error('User discovery error:', error);
+      res.status(500).json({
+        error: 'Failed to discover users',
+        message: error instanceof Error ? error.message : 'An error occurred during user discovery'
+      });
+    }
+  });
+
+  // Social Feed Integration Routes
+  // Requirements: 5.1, 5.2, 5.3, 5.4, 5.5
+
+  // GET /api/feed/social - Get social feed with friend activity
+  // Requirements: 5.1, 5.2 - Display articles that friends have commented on and surface friend activity
+  app.get('/api/feed/social', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const socialOnly = req.query.socialOnly === 'true';
+      const includeRegularFeed = req.query.includeRegularFeed !== 'false'; // Default to true
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
+      const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : 0;
+
+      if (limit < 1 || limit > 100) {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_LIMIT',
+          message: 'Limit must be between 1 and 100'
+        });
+      }
+
+      if (offset < 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_OFFSET',
+          message: 'Offset must be non-negative'
+        });
+      }
+
+      const { socialFeedService } = await import('./social-feed-service');
+      
+      const socialFeedItems = await socialFeedService.getSocialFeed({
+        userId,
+        socialOnly,
+        includeRegularFeed,
+        limit,
+        offset
+      });
+
+      res.json({
+        success: true,
+        articles: socialFeedItems.map(item => ({
+          ...item.article,
+          socialActivity: {
+            friendsWhoCommented: item.socialActivity.friendsWhoCommented.map(friend => ({
+              id: friend.id,
+              displayName: friend.display_name,
+              avatarUrl: friend.avatar_url
+            })),
+            commentCount: item.socialActivity.commentCount,
+            latestCommentAt: item.socialActivity.latestCommentAt?.toISOString(),
+            hasUserCommented: item.socialActivity.hasUserCommented
+          }
+        })),
+        total: socialFeedItems.length,
+        hasMore: socialFeedItems.length === limit,
+        filters: {
+          socialOnly,
+          includeRegularFeed,
+          limit,
+          offset
+        }
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Get social feed error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'GET_SOCIAL_FEED_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // GET /api/articles/:id/social-activity - Get social activity for a specific article
+  // Requirements: 5.2 - Surface friend activity for specific articles
+  app.get('/api/articles/:id/social-activity', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const articleId = req.params.id;
+
+      if (!articleId) {
+        return res.status(400).json({
+          success: false,
+          error: 'MISSING_ARTICLE_ID',
+          message: 'Article ID is required'
+        });
+      }
+
+      const { socialFeedService } = await import('./social-feed-service');
+      
+      const socialActivity = await socialFeedService.getArticleSocialActivity(articleId, userId);
+
+      res.json({
+        success: true,
+        articleId,
+        socialActivity: {
+          friendsWhoCommented: socialActivity.friendsWhoCommented.map(friend => ({
+            id: friend.id,
+            displayName: friend.display_name,
+            avatarUrl: friend.avatar_url
+          })),
+          commentCount: socialActivity.commentCount,
+          latestCommentAt: socialActivity.latestCommentAt?.toISOString(),
+          hasUserCommented: socialActivity.hasUserCommented
+        }
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Get article social activity error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'GET_SOCIAL_ACTIVITY_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // GET /api/articles/:id/social-activity - Get social activity for a specific article
+  // Requirements: 5.2 - Surface friend activity for specific articles
+  app.get('/api/articles/:id/social-activity', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const articleId = req.params.id;
+
+      if (!articleId) {
+        return res.status(400).json({
+          success: false,
+          error: 'MISSING_ARTICLE_ID',
+          message: 'Article ID is required'
+        });
+      }
+
+      const { socialFeedService } = await import('./social-feed-service');
+      
+      const socialActivity = await socialFeedService.getArticleSocialActivity(articleId, userId);
+
+      res.json({
+        success: true,
+        articleId,
+        socialActivity: {
+          friendsWhoCommented: socialActivity.friendsWhoCommented.map(friend => ({
+            id: friend.id,
+            displayName: friend.display_name,
+            avatarUrl: friend.avatar_url
+          })),
+          commentCount: socialActivity.commentCount,
+          latestCommentAt: socialActivity.latestCommentAt?.toISOString(),
+          hasUserCommented: socialActivity.hasUserCommented
+        }
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Get article social activity error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'GET_SOCIAL_ACTIVITY_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // Social Feed Preferences Routes
+  // Requirements: 5.4, 5.5
+
+  // GET /api/users/social-preferences - Get user's social feed preferences
+  // Requirements: 5.5 - Allow users to control social feed features
+  app.get('/api/users/social-preferences', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+
+      const { socialFeedPreferencesService } = await import('./social-feed-preferences-service');
+      
+      const preferences = await socialFeedPreferencesService.getSocialFeedPreferences(userId);
+
+      res.json({
+        success: true,
+        preferences: {
+          socialFeedEnabled: preferences.socialFeedEnabled,
+          showFriendActivity: preferences.showFriendActivity,
+          socialFeedPriority: preferences.socialFeedPriority,
+          shareReadingActivity: preferences.shareReadingActivity
+        }
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Get social feed preferences error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'GET_SOCIAL_PREFERENCES_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // PUT /api/users/social-preferences - Update user's social feed preferences
+  // Requirements: 5.4 - Privacy controls for activity sharing
+  // Requirements: 5.5 - Feed customization options
+  app.put('/api/users/social-preferences', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const { 
+        socialFeedEnabled, 
+        showFriendActivity, 
+        socialFeedPriority, 
+        shareReadingActivity 
+      } = req.body;
+
+      // Validate input types
+      if (socialFeedEnabled !== undefined && typeof socialFeedEnabled !== 'boolean') {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_INPUT',
+          message: 'socialFeedEnabled must be a boolean'
+        });
+      }
+
+      if (showFriendActivity !== undefined && typeof showFriendActivity !== 'boolean') {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_INPUT',
+          message: 'showFriendActivity must be a boolean'
+        });
+      }
+
+      if (shareReadingActivity !== undefined && typeof shareReadingActivity !== 'boolean') {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_INPUT',
+          message: 'shareReadingActivity must be a boolean'
+        });
+      }
+
+      if (socialFeedPriority !== undefined && 
+          !['social_only', 'mixed', 'regular_only'].includes(socialFeedPriority)) {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_INPUT',
+          message: 'socialFeedPriority must be social_only, mixed, or regular_only'
+        });
+      }
+
+      const { socialFeedPreferencesService } = await import('./social-feed-preferences-service');
+      
+      const updatedPreferences = await socialFeedPreferencesService.updateSocialFeedPreferences(userId, {
+        socialFeedEnabled,
+        showFriendActivity,
+        socialFeedPriority,
+        shareReadingActivity
+      });
+
+      res.json({
+        success: true,
+        preferences: {
+          socialFeedEnabled: updatedPreferences.socialFeedEnabled,
+          showFriendActivity: updatedPreferences.showFriendActivity,
+          socialFeedPriority: updatedPreferences.socialFeedPriority,
+          shareReadingActivity: updatedPreferences.shareReadingActivity
+        },
+        message: 'Social feed preferences updated successfully'
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Update social feed preferences error:', errorMessage);
+
+      if (errorMessage.includes('Invalid social feed priority')) {
+        return res.status(400).json({
+          success: false,
+          error: 'INVALID_PRIORITY',
+          message: errorMessage
+        });
+      }
+
+      res.status(500).json({
+        success: false,
+        error: 'UPDATE_SOCIAL_PREFERENCES_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // Data Export and Privacy Compliance Routes
+  
+  // GET /api/users/data/summary - Get summary of user data for deletion preview
+  // Requirements: 6.5 - Allow users to understand what data will be deleted
+  app.get('/api/users/data/summary', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      
+      const { dataExportService } = await import('./data-export-service');
+      const summary = await dataExportService.getUserDataSummary(userId);
+      
+      res.json({
+        success: true,
+        summary
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Get user data summary error:', errorMessage);
+      
+      res.status(500).json({
+        success: false,
+        error: 'Failed to get data summary',
+        message: errorMessage
+      });
+    }
+  });
+
+  // GET /api/users/data/export - Export all user data
+  // Requirements: 6.5 - Allow users to export all their social data
+  app.get('/api/users/data/export', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const user = req.user!;
+      
+      const { dataExportService } = await import('./data-export-service');
+      const exportData = await dataExportService.exportUserData(userId);
+      
+      // Set headers for file download
+      const filename = `cronkite-data-export-${user.display_name.replace(/[^a-zA-Z0-9]/g, '-')}-${new Date().toISOString().split('T')[0]}.json`;
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      
+      res.json(exportData);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Export user data error:', errorMessage);
+      
+      res.status(500).json({
+        success: false,
+        error: 'Failed to export data',
+        message: errorMessage
+      });
+    }
+  });
+
+  // DELETE /api/users/data - Delete all user data permanently
+  // Requirements: 6.5 - Implement complete data deletion functionality
+  app.delete('/api/users/data', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const { confirmDeletion } = req.body;
+      
+      // Require explicit confirmation
+      if (confirmDeletion !== 'DELETE_ALL_MY_DATA') {
+        return res.status(400).json({
+          success: false,
+          error: 'Confirmation required',
+          message: 'You must provide confirmDeletion: "DELETE_ALL_MY_DATA" to proceed with data deletion'
+        });
+      }
+      
+      const { dataExportService } = await import('./data-export-service');
+      const deletionResult = await dataExportService.deleteUserData(userId);
+      
+      // Log out the user since their account is deleted
+      req.logout((err) => {
+        if (err) {
+          console.error('Logout error after data deletion:', err);
+        }
+      });
+      
+      res.json({
+        success: true,
+        message: 'All user data has been permanently deleted',
+        deletionResult
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Delete user data error:', errorMessage);
+      
+      res.status(500).json({
+        success: false,
+        error: 'Failed to delete data',
+        message: errorMessage
+      });
+    }
+  });
+
+  // Reporting and Moderation Routes
+  
+  // POST /api/reports - Report inappropriate content or behavior
+  // Requirements: 6.4 - Provide reporting mechanisms for inappropriate comments or behavior
+  app.post('/api/reports', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const reporterId = req.user!.id;
+      const reportData = req.body;
+      
+      // Validate required fields
+      if (!reportData.reported_user_id || !reportData.content_type || !reportData.reason) {
+        return res.status(400).json({
+          success: false,
+          error: 'Validation error',
+          message: 'reported_user_id, content_type, and reason are required'
+        });
+      }
+      
+      // Validate reason
+      const validReasons = ['spam', 'harassment', 'inappropriate_content', 'fake_account', 'other'];
+      if (!validReasons.includes(reportData.reason)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Validation error',
+          message: 'Invalid reason. Must be one of: ' + validReasons.join(', ')
+        });
+      }
+      
+      // Validate content type
+      const validContentTypes = ['comment', 'profile', 'message'];
+      if (!validContentTypes.includes(reportData.content_type)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Validation error',
+          message: 'Invalid content_type. Must be one of: ' + validContentTypes.join(', ')
+        });
+      }
+      
+      const { reportingModerationService } = await import('./reporting-moderation-service');
+      const report = await reportingModerationService.reportContent(reporterId, {
+        reported_user_id: reportData.reported_user_id,
+        content_type: reportData.content_type,
+        content_id: reportData.content_id,
+        reason: reportData.reason,
+        description: reportData.description || ''
+      });
+      
+      res.json({
+        success: true,
+        message: 'Report submitted successfully',
+        report_id: report.id
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Submit report error:', errorMessage);
+      
+      // Handle specific error cases
+      if (errorMessage.includes('cannot report yourself')) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid report',
+          message: 'You cannot report yourself'
+        });
+      }
+      
+      if (errorMessage.includes('already reported')) {
+        return res.status(409).json({
+          success: false,
+          error: 'Duplicate report',
+          message: 'You have already reported this content'
+        });
+      }
+      
+      if (errorMessage.includes('not found')) {
+        return res.status(404).json({
+          success: false,
+          error: 'Content not found',
+          message: 'The reported content was not found or is no longer available'
+        });
+      }
+      
+      res.status(500).json({
+        success: false,
+        error: 'Failed to submit report',
+        message: errorMessage
+      });
+    }
+  });
+
+  // GET /api/reports - Get reports for moderation (admin only)
+  // Requirements: 6.4 - Moderation tools for inappropriate behavior
+  app.get('/api/reports', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const { status, limit } = req.query;
+      
+      const { reportingModerationService } = await import('./reporting-moderation-service');
+      const reports = await reportingModerationService.getReports(
+        status as any,
+        limit ? parseInt(limit as string) : 50
+      );
+      
+      res.json({
+        success: true,
+        reports,
+        total: reports.length
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Get reports error:', errorMessage);
+      
+      res.status(500).json({
+        success: false,
+        error: 'Failed to get reports',
+        message: errorMessage
+      });
+    }
+  });
+
+  // PUT /api/reports/:reportId/resolve - Resolve a content report (admin only)
+  // Requirements: 6.4 - Moderation tools for inappropriate behavior
+  app.put('/api/reports/:reportId/resolve', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const { reportId } = req.params;
+      const resolverId = req.user!.id;
+      const resolution = req.body;
+      
+      // Validate required fields
+      if (!resolution.action || !resolution.notes) {
+        return res.status(400).json({
+          success: false,
+          error: 'Validation error',
+          message: 'action and notes are required'
+        });
+      }
+      
+      // Validate action
+      const validActions = ['no_action', 'warning', 'remove_content', 'block_user', 'ban_user'];
+      if (!validActions.includes(resolution.action)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Validation error',
+          message: 'Invalid action. Must be one of: ' + validActions.join(', ')
+        });
+      }
+      
+      const { reportingModerationService } = await import('./reporting-moderation-service');
+      const resolvedReport = await reportingModerationService.resolveReport(
+        reportId,
+        resolverId,
+        resolution
+      );
+      
+      res.json({
+        success: true,
+        message: 'Report resolved successfully',
+        report: resolvedReport
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Resolve report error:', errorMessage);
+      
+      res.status(500).json({
+        success: false,
+        error: 'Failed to resolve report',
+        message: errorMessage
+      });
+    }
+  });
+
+  // GET /api/audit-logs - Get audit logs (admin only)
+  // Requirements: 6.4 - Audit logging for privacy-sensitive operations
+  app.get('/api/audit-logs', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const { user_id, event_type, limit } = req.query;
+      
+      const { reportingModerationService } = await import('./reporting-moderation-service');
+      
+      let auditLogs;
+      if (user_id) {
+        auditLogs = await reportingModerationService.getUserAuditLogs(
+          user_id as string,
+          limit ? parseInt(limit as string) : 100
+        );
+      } else {
+        auditLogs = await reportingModerationService.getSystemAuditLogs(
+          event_type as any,
+          limit ? parseInt(limit as string) : 100
+        );
+      }
+      
+      res.json({
+        success: true,
+        auditLogs,
+        total: auditLogs.length
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Get audit logs error:', errorMessage);
+      
+      res.status(500).json({
+        success: false,
+        error: 'Failed to get audit logs',
+        message: errorMessage
       });
     }
   });

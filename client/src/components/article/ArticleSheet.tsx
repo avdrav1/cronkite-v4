@@ -17,6 +17,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useState, useEffect } from "react";
 import { apiRequest } from "@/lib/queryClient";
 import { SimilarArticles } from "./SimilarArticles";
+import { CommentList } from "@/components/comments";
+import { useAuth } from "@/contexts/AuthContext";
 
 // Extended article interface for UI compatibility
 interface ArticleWithUIState extends Article {
@@ -114,6 +116,7 @@ export function ArticleSheet({ article, isOpen, onClose }: ArticleSheetProps) {
   const [isStarred, setIsStarred] = useState(article?.isStarred ?? false);
   const [isStarring, setIsStarring] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const { user } = useAuth();
 
   // Sync starred state when article changes
   useEffect(() => {
@@ -372,6 +375,16 @@ export function ArticleSheet({ article, isOpen, onClose }: ArticleSheetProps) {
                       // Could navigate to the similar article or open it in a new sheet
                       console.log('Similar article clicked:', articleId);
                     }}
+                  />
+                </div>
+              )}
+              
+              {/* Comment System Integration - Requirements: 3.1, 3.2, 3.3, 4.1, 4.2, 4.3 */}
+              {article.id && user && (
+                <div className="mb-8">
+                  <CommentList 
+                    articleId={article.id} 
+                    currentUserId={user.id} 
                   />
                 </div>
               )}

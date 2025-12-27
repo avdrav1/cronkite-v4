@@ -43,6 +43,11 @@ export const userSettings = pgTable("user_settings", {
   accent_color: text("accent_color").notNull().default("blue"),
   compact_view: boolean("compact_view").notNull().default(false),
   show_images: boolean("show_images").notNull().default(true),
+  // Social feed preferences
+  social_feed_enabled: boolean("social_feed_enabled").notNull().default(true),
+  show_friend_activity: boolean("show_friend_activity").notNull().default(true),
+  social_feed_priority: text("social_feed_priority").notNull().default("mixed"), // 'social_only', 'mixed', 'regular_only'
+  share_reading_activity: boolean("share_reading_activity").notNull().default(true),
   created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updated_at: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -411,4 +416,100 @@ export type InsertDeadLetterQueue = typeof deadLetterQueue.$inferInsert;
 // Request queue types (Requirements: 8.4)
 export type RequestQueue = typeof requestQueue.$inferSelect;
 export type InsertRequestQueue = typeof requestQueue.$inferInsert;
+
+// Social friend system enums
+export const friendshipStatusEnum = pgEnum("friendship_status", ["pending", "confirmed", "declined"]);
+export const notificationTypeEnum = pgEnum("notification_type", ["friend_request", "friend_accepted", "comment_tag", "comment_reply"]);
+export const privacyLevelEnum = pgEnum("privacy_level", ["everyone", "friends", "nobody"]);
+
+// Friendships table for managing friend relationships
+export const friendships = pgTable("friendships", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  user1_id: uuid("user1_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+  user2_id: uuid("user2_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+  status: friendshipStatusEnum("status").notNull().default("pending"),
+  requested_by: uuid("requested_by").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+  requested_at: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+  confirmed_at: timestamp("confirmed_at", { withTimezone: true }),
+  created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updated_at: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Article comments table for friend discussions
+export const articleComments = pgTable("article_comments", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  article_id: uuid("article_id").notNull().references(() => articles.id, { onDelete: "cascade" }),
+  user_id: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+  content: text("content").notNull(),
+  tagged_users: uuid("tagged_users").array().default(sql`'{}'`),
+  created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updated_at: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  deleted_at: timestamp("deleted_at", { withTimezone: true }),
+});
+
+// User blocks table for privacy control
+export const userBlocks = pgTable("user_blocks", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  blocker_id: uuid("blocker_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+  blocked_id: uuid("blocked_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+  created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Notifications table for social events
+export const notifications = pgTable("notifications", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  user_id: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+  type: notificationTypeEnum("type").notNull(),
+  title: text("title").notNull(),
+  message: text("message").notNull(),
+  data: text("data").default("{}"), // JSON string
+  read_at: timestamp("read_at", { withTimezone: true }),
+  created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  expires_at: timestamp("expires_at", { withTimezone: true }),
+});
+
+// User privacy settings table for granular privacy control
+export const userPrivacySettings = pgTable("user_privacy_settings", {
+  user_id: uuid("user_id").primaryKey().references(() => profiles.id, { onDelete: "cascade" }),
+  discoverable: boolean("discoverable").notNull().default(true),
+  allow_friend_requests_from: privacyLevelEnum("allow_friend_requests_from").notNull().default("everyone"),
+  show_activity_to: privacyLevelEnum("show_activity_to").notNull().default("friends"),
+  email_notifications: boolean("email_notifications").notNull().default(true),
+  push_notifications: boolean("push_notifications").notNull().default(true),
+  created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updated_at: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Zod schemas for social friend system
+export const insertFriendshipSchema = createInsertSchema(friendships);
+export const selectFriendshipSchema = createSelectSchema(friendships);
+
+export const insertArticleCommentSchema = createInsertSchema(articleComments);
+export const selectArticleCommentSchema = createSelectSchema(articleComments);
+
+export const insertUserBlockSchema = createInsertSchema(userBlocks);
+export const selectUserBlockSchema = createSelectSchema(userBlocks);
+
+export const insertNotificationSchema = createInsertSchema(notifications);
+export const selectNotificationSchema = createSelectSchema(notifications);
+
+export const insertUserPrivacySettingsSchema = createInsertSchema(userPrivacySettings);
+export const selectUserPrivacySettingsSchema = createSelectSchema(userPrivacySettings);
+
+// Social friend system types
+export type Friendship = typeof friendships.$inferSelect;
+export type InsertFriendship = typeof friendships.$inferInsert;
+export type ArticleComment = typeof articleComments.$inferSelect;
+export type InsertArticleComment = typeof articleComments.$inferInsert;
+export type UserBlock = typeof userBlocks.$inferSelect;
+export type InsertUserBlock = typeof userBlocks.$inferInsert;
+export type Notification = typeof notifications.$inferSelect;
+export type InsertNotification = typeof notifications.$inferInsert;
+export type UserPrivacySettings = typeof userPrivacySettings.$inferSelect;
+export type InsertUserPrivacySettings = typeof userPrivacySettings.$inferInsert;
+
+// Social friend system type aliases for convenience
+export type FriendshipStatus = "pending" | "confirmed" | "declined";
+export type NotificationType = "friend_request" | "friend_accepted" | "comment_tag" | "comment_reply";
+export type PrivacyLevel = "everyone" | "friends" | "nobody";
 

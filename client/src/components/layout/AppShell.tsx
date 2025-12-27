@@ -16,6 +16,7 @@ import {
   Activity,
   RefreshCw,
   Trash2,
+  Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -34,6 +35,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { Progress } from "@/components/ui/progress";
+import { WebSocketStatusIcon } from "@/components/ui/websocket-status";
 
 import { AddFeedModal } from "@/components/feed/AddFeedModal";
 import { FeedsList } from "@/components/layout/FeedsList";
@@ -230,6 +232,7 @@ export function AppShell({ children }: AppShellProps) {
 
           {/* Right side controls - Desktop only */}
           <div className="absolute top-6 right-8 flex items-center gap-2">
+            <WebSocketStatusIcon />
             <Button
               variant="ghost"
               size="icon"
@@ -242,6 +245,11 @@ export function AppShell({ children }: AppShellProps) {
             <Link href="/onboarding">
               <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground">
                 <Sparkles className="h-5 w-5" />
+              </Button>
+            </Link>
+            <Link href="/settings?tab=friends">
+              <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground" title="Friends">
+                <Users className="h-5 w-5" />
               </Button>
             </Link>
             <Link href="/settings">
@@ -445,6 +453,11 @@ export function AppShell({ children }: AppShellProps) {
               <Link href="/settings" onClick={() => setIsMobileNavOpen(false)}>
                 <Button variant="ghost" className="w-full justify-start gap-2">
                   <Settings className="h-4 w-4" /> Settings
+                </Button>
+              </Link>
+              <Link href="/settings?tab=friends" onClick={() => setIsMobileNavOpen(false)}>
+                <Button variant="ghost" className="w-full justify-start gap-2">
+                  <Users className="h-4 w-4" /> Friends
                 </Button>
               </Link>
               <Link href="/onboarding" onClick={() => setIsMobileNavOpen(false)}>

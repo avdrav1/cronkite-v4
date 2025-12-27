@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { AppShell } from "@/components/layout/AppShell";
 import { cn } from "@/lib/utils";
 import {
@@ -8,10 +8,14 @@ import {
   Mail,
   Sparkles,
   User,
+  Users,
   ChevronRight,
   ChevronLeft,
   Plus,
-  Search
+  Search,
+  Shield,
+  Download,
+  Flag
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,7 +23,10 @@ import { AppearanceSettings } from "@/components/settings/AppearanceSettings";
 import { FeedManagement } from "@/components/settings/FeedManagement";
 import { AIUsageSettings } from "@/components/settings/AIUsageSettings";
 import { ScheduleSettings } from "@/components/settings/ScheduleSettings";
-import { Link, useLocation } from "wouter";
+import { DataExportSettings } from "@/components/settings/DataExportSettings";
+import { ReportingSettings } from "@/components/settings/ReportingSettings";
+import { FriendManagement } from "@/components/friends/FriendManagement";
+import { Link, useLocation, useSearch } from "wouter";
 
 const SETTINGS_TABS = [
   { id: 'feeds', label: 'Feeds', icon: Rss },
@@ -28,11 +35,48 @@ const SETTINGS_TABS = [
   { id: 'digest', label: 'Digest', icon: Mail },
   { id: 'ai', label: 'AI', icon: Sparkles },
   { id: 'account', label: 'Account', icon: User },
+  { id: 'friends', label: 'Friends', icon: Users },
+  { id: 'privacy', label: 'Privacy & Data', icon: Shield },
+  { id: 'safety', label: 'Safety & Reporting', icon: Flag },
 ];
 
 export default function SettingsPage() {
   const [location, setLocation] = useLocation();
-  const [activeTab, setActiveTab] = useState('feeds');
+  const searchString = useSearch();
+  
+  // Parse URL params to get the tab parameter
+  const urlTabParam = useMemo(() => {
+    const params = new URLSearchParams(searchString);
+    return params.get('tab');
+  }, [searchString]);
+  
+  // Initialize activeTab based on URL parameter or default to 'feeds'
+  const [activeTab, setActiveTab] = useState(() => {
+    const validTabs = SETTINGS_TABS.map(tab => tab.id);
+    return urlTabParam && validTabs.includes(urlTabParam) ? urlTabParam : 'feeds';
+  });
+  
+  // Update activeTab when URL changes
+  useEffect(() => {
+    const validTabs = SETTINGS_TABS.map(tab => tab.id);
+    if (urlTabParam && validTabs.includes(urlTabParam)) {
+      setActiveTab(urlTabParam);
+    } else if (urlTabParam === null) {
+      // No tab parameter in URL, keep current tab or default to feeds
+      setActiveTab(prev => prev || 'feeds');
+    }
+    // If urlTabParam is invalid, we keep the current activeTab
+  }, [urlTabParam]);
+  
+  // Optional: Update URL when tab changes (enhancement)
+  const handleTabChange = (tabId: string) => {
+    setActiveTab(tabId);
+    
+    // Update URL with new tab parameter
+    const params = new URLSearchParams(searchString);
+    params.set('tab', tabId);
+    setLocation(`/settings?${params.toString()}`);
+  };
 
   const renderContent = () => {
     switch (activeTab) {
@@ -48,6 +92,12 @@ export default function SettingsPage() {
         return <AIUsageSettings />;
       case 'account':
         return <div className="p-8 text-muted-foreground">Account settings coming soon...</div>;
+      case 'friends':
+        return <FriendManagement />;
+      case 'privacy':
+        return <DataExportSettings />;
+      case 'safety':
+        return <ReportingSettings />;
       default:
         return <FeedManagement />;
     }
@@ -83,7 +133,7 @@ export default function SettingsPage() {
             return (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => handleTabChange(tab.id)}
                 className={cn(
                   "flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 text-left",
                   isActive 
