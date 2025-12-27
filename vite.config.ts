@@ -62,16 +62,15 @@ export default defineConfig(({ mode }) => {
       outDir: path.resolve(import.meta.dirname, "dist/public"),
       emptyOutDir: true,
     },
-    // Remove server config when in middleware mode - it's handled by Express
-    ...(process.env.NODE_ENV === "production" && {
-      server: {
-        host: "0.0.0.0",
-        allowedHosts: true,
-        fs: {
-          strict: true,
-          deny: ["**/.*"],
-        },
+    // Configure server and HMR settings
+    server: {
+      host: "0.0.0.0",
+      port: parseInt(process.env.PORT || "5000"),
+      hmr: false, // Disable HMR to fix WebSocket issues
+      fs: {
+        strict: false,
+        allow: [".."],
       },
-    }),
+    },
   };
 });

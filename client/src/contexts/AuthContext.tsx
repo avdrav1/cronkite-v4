@@ -33,19 +33,18 @@ interface AuthProviderProps {
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<Profile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [authCheckCompleted, setAuthCheckCompleted] = useState(false);
 
   const isAuthenticated = user !== null;
 
-  // Check authentication status on mount
+  // Check authentication status
   const checkAuth = async () => {
     console.log('🔐 AuthContext: Starting auth check...');
     
     try {
       // First, try to check if we have an existing backend session
-      // This is faster than going through Supabase OAuth flow
-      // Add timeout to prevent hanging on stale sessions
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const timeoutId = setTimeout(() => controller.abort(), 5000); // Reduced timeout
       
       let response: Response;
       try {
@@ -57,12 +56,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         clearTimeout(timeoutId);
       } catch (fetchError) {
         clearTimeout(timeoutId);
-        if (fetchError instanceof Error && fetchError.name === 'AbortError') {
-          console.warn('⚠️ AuthContext: /api/auth/me request timed out');
-        } else {
-          console.error('❌ AuthContext: /api/auth/me fetch error:', fetchError);
-        }
-        // On timeout or network error, assume not authenticated
+        console.warn('⚠️ AuthContext: /api/auth/me request failed or timed out');
         setUser(null);
         return;
       }
@@ -73,36 +67,30 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         const data = await response.json();
         console.log('✅ AuthContext: Authenticated via backend session:', data.user?.email);
         setUser(data.user);
-        return; // Already authenticated via backend session
+        return;
       }
       
       // No backend session - check if there's a Supabase session (for OAuth)
-      // This handles the case where user logged in via OAuth but backend session expired
       if (response.status === 401 && isSupabaseConfigured()) {
         console.log('🔐 AuthContext: Checking Supabase session...');
         try {
           const client = getSupabaseClient();
           if (client) {
-            // Add timeout to prevent hanging
             const sessionPromise = client.auth.getSession();
             const timeoutPromise = new Promise<{ data: { session: null }, error: Error }>((_, reject) => 
-              setTimeout(() => reject(new Error('Supabase session check timeout')), 3000)
+              setTimeout(() => reject(new Error('Supabase session check timeout')), 2000)
             );
             
             const { data: { session }, error } = await Promise.race([sessionPromise, timeoutPromise]);
             
             if (session && !error) {
-              // We have a Supabase session but no backend session
-              // Re-authenticate with the backend
               console.log('🔐 Re-authenticating with backend using Supabase session');
               await handleOAuthSession(session);
               return;
             }
-            console.log('🔐 AuthContext: No Supabase session found');
           }
         } catch (supabaseError) {
-          // Supabase not configured, unavailable, or timed out
-          console.log('Supabase session check skipped:', supabaseError instanceof Error ? supabaseError.message : 'Unknown error');
+          console.log('Supabase session check failed:', supabaseError instanceof Error ? supabaseError.message : 'Unknown error');
         }
       }
       
@@ -112,18 +100,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     } catch (error) {
       console.error('Auth check failed:', error);
       setUser(null);
-    } finally {
-      console.log('🔐 AuthContext: Auth check complete, setting isLoading to false');
-      setIsLoading(false);
     }
   };
 
   // Handle OAuth session from Supabase
   const handleOAuthSession = async (session: any) => {
     try {
-      // Backup the session for reliability
       backupSession(session);
-      
       const response = await apiRequest('POST', '/api/auth/oauth/callback', { session });
       const data = await response.json();
       setUser(data.user);
@@ -139,11 +122,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     console.log('🔐 AuthContext: Starting login attempt for:', email);
     
     try {
-      console.log('🔐 AuthContext: Sending login request...');
-      
-      // Use direct fetch to avoid Supabase token check delay
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
       
       let response: Response;
       try {
@@ -165,8 +145,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         throw fetchError;
       }
       
-      console.log('🔐 AuthContext: Login response status:', response.status);
-      
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ message: 'Login failed' }));
         throw new Error(errorData.message || errorData.error || 'Login failed');
@@ -175,9 +153,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const data = await response.json();
       console.log('✅ AuthContext: Login successful, setting user:', data.user?.email);
 
-      // If session tokens were returned, backup them for JWT auth in production (serverless)
       if (data.session) {
-        console.log('🔑 AuthContext: Backing up session tokens for JWT auth');
         backupSession({
           access_token: data.session.access_token,
           refresh_token: data.session.refresh_token,
@@ -191,7 +167,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       console.error('❌ AuthContext: Login error:', error);
       throw error;
     } finally {
-      console.log('🔐 AuthContext: Login attempt complete, setting isLoading to false');
       setIsLoading(false);
     }
   };
@@ -218,9 +193,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const register = async (email: string, password: string, displayName: string) => {
     setIsLoading(true);
     try {
-      // Use direct fetch to avoid Supabase token check delay
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
       
       let response: Response;
       try {
@@ -261,10 +235,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const logout = async () => {
     setIsLoading(true);
     try {
-      // Clear backup session first
       clearBackupSession();
       
-      // Sign out from Supabase if configured
       if (isSupabaseConfigured()) {
         const client = getSupabaseClient();
         if (client) {
@@ -272,7 +244,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         }
       }
 
-      // Also logout from our backend (ignore errors)
       try {
         await apiRequest('POST', '/api/auth/logout');
       } catch {
@@ -304,25 +275,44 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
+  // Handle authentication errors (like session expiry)
+  const handleAuthError = (response: Response): boolean => {
+    if (response.status === 401) {
+      setUser(null);
+      return true;
+    }
+    return false;
+  };
+
+  // Fixed useEffect with proper dependencies and error handling
   useEffect(() => {
+    // Prevent multiple auth checks
+    if (authCheckCompleted) {
+      return;
+    }
+
     // Skip initial auth check if we're on the OAuth callback page
-    // The AuthCallback component will handle authentication and call checkAuth when ready
     if (typeof window !== 'undefined' && window.location.pathname === '/auth/callback') {
       console.log('🔐 AuthContext: Skipping initial auth check - on callback page');
       setIsLoading(false);
+      setAuthCheckCompleted(true);
       return;
     }
     
     // Add a global timeout for auth check to prevent infinite loading
     const authTimeout = setTimeout(() => {
-      console.warn('⚠️ AuthContext: Auth check timed out after 10 seconds');
+      console.warn('⚠️ AuthContext: Auth check timed out after 8 seconds');
       setIsLoading(false);
       setUser(null);
-    }, 10000);
+      setAuthCheckCompleted(true);
+    }, 8000);
     
-    checkAuth().finally(() => {
-      clearTimeout(authTimeout);
-    });
+    checkAuth()
+      .finally(() => {
+        clearTimeout(authTimeout);
+        setIsLoading(false);
+        setAuthCheckCompleted(true);
+      });
 
     // Listen for auth state changes from Supabase (only if properly configured)
     let subscription: { unsubscribe: () => void } | null = null;
@@ -335,7 +325,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             if (event === 'SIGNED_IN' && session) {
               await handleOAuthSession(session);
             } else if (event === 'TOKEN_REFRESHED' && session) {
-              // Update backup session with refreshed tokens to prevent stale token issues
               backupSession(session);
               console.log('🔄 Token refreshed, backup session updated');
             } else if (event === 'SIGNED_OUT') {
@@ -347,8 +336,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       } catch (error) {
         console.log('Supabase auth listener not available:', error instanceof Error ? error.message : 'Unknown error');
       }
-    } else {
-      console.log('Supabase not configured - auth listener not set up');
     }
 
     return () => {
@@ -357,17 +344,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         subscription.unsubscribe();
       }
     };
-  }, []);
-
-  // Handle authentication errors (like session expiry)
-  const handleAuthError = (response: Response): boolean => {
-    if (response.status === 401) {
-      // Session expired, clear user state
-      setUser(null);
-      return true; // Indicates auth error was handled
-    }
-    return false; // Not an auth error
-  };
+  }, []); // Empty dependency array - only run once on mount
 
   const value: AuthContextType = {
     user,

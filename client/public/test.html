@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cronkite Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; }
+        .success { color: green; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Cronkite Server Test</h1>
+        <p class="success">✅ If you can see this page, the server is working correctly!</p>
+        <p>This is a static HTML file served by the Express server.</p>
+        <p>Current time: <span id="time"></span></p>
+        <script>
+            document.getElementById('time').textContent = new Date().toLocaleTimeString();
+        </script>
+    </div>
+</body>
+</html>

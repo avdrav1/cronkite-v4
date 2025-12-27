@@ -5080,6 +5080,184 @@ export async function registerRoutes(
     }
   });
 
+  // GET /api/users/search - Search for users by name or email
+  // Requirements: Search functionality for adding friends
+  app.get('/api/users/search', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const { q: query } = req.query;
+
+      if (!query || typeof query !== 'string') {
+        return res.status(400).json({
+          success: false,
+          error: 'MISSING_QUERY',
+          message: 'Search query is required'
+        });
+      }
+
+      if (query.length < 2) {
+        return res.status(400).json({
+          success: false,
+          error: 'QUERY_TOO_SHORT',
+          message: 'Search query must be at least 2 characters'
+        });
+      }
+
+      const storage = await getStorage();
+      
+      // Search for users by display name or email
+      const users = await storage.db
+        .select({
+          id: storage.profiles.id,
+          display_name: storage.profiles.display_name,
+          email: storage.profiles.email,
+          avatar_url: storage.profiles.avatar_url
+        })
+        .from(storage.profiles)
+        .where(
+          storage.or(
+            storage.ilike(storage.profiles.display_name, `%${query}%`),
+            storage.ilike(storage.profiles.email, `%${query}%`)
+          )
+        )
+        .limit(20);
+
+      // Filter out current user and check friendship status
+      const { friendService } = await import('./friend-service');
+      const results = [];
+
+      for (const user of users) {
+        if (user.id === userId) continue; // Skip current user
+
+        // Check if already friends or has pending request
+        const friendshipStatus = await friendService.getFriendshipStatus(userId, user.id);
+        
+        results.push({
+          id: user.id,
+          userId: user.id,
+          name: user.display_name,
+          email: user.email,
+          avatarUrl: user.avatar_url,
+          isOnPlatform: true,
+          canSendRequest: friendshipStatus.status === 'none',
+          alreadyFriend: friendshipStatus.status === 'friends'
+        });
+      }
+
+      res.json({
+        success: true,
+        users: results,
+        total: results.length
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Search users error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'SEARCH_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
+  // POST /api/friends/upload-contacts - Upload and process contact list
+  // Requirements: Contact book integration for friend discovery
+  app.post('/api/friends/upload-contacts', requireAuth, (app as any).upload.single('contacts'), async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      
+      // Check if file was uploaded
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          error: 'NO_FILE',
+          message: 'No contact file uploaded'
+        });
+      }
+
+      const file = req.file;
+      
+      // Parse contacts from file
+      const { parseContactFile } = await import('./contact-parser');
+      const contacts = await parseContactFile(file);
+      
+      if (contacts.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'NO_CONTACTS',
+          message: 'No valid contacts found in file'
+        });
+      }
+
+      // Find which contacts are on the platform
+      const storage = await getStorage();
+      const { friendService } = await import('./friend-service');
+      const processedContacts = [];
+      let foundOnPlatform = 0;
+
+      for (const contact of contacts) {
+        if (!contact.email) {
+          processedContacts.push({
+            ...contact,
+            isOnPlatform: false
+          });
+          continue;
+        }
+
+        // Look up user by email
+        const user = await storage.db
+          .select({
+            id: storage.profiles.id,
+            display_name: storage.profiles.display_name,
+            avatar_url: storage.profiles.avatar_url
+          })
+          .from(storage.profiles)
+          .where(storage.eq(storage.profiles.email, contact.email))
+          .limit(1);
+
+        if (user.length > 0 && user[0].id !== userId) {
+          // Check friendship status
+          const friendshipStatus = await friendService.getFriendshipStatus(userId, user[0].id);
+          
+          processedContacts.push({
+            ...contact,
+            isOnPlatform: true,
+            userId: user[0].id,
+            avatarUrl: user[0].avatar_url,
+            canSendRequest: friendshipStatus.status === 'none',
+            alreadyFriend: friendshipStatus.status === 'friends'
+          });
+          foundOnPlatform++;
+        } else {
+          processedContacts.push({
+            ...contact,
+            isOnPlatform: false
+          });
+        }
+      }
+
+      res.json({
+        success: true,
+        contacts: processedContacts,
+        totalProcessed: contacts.length,
+        foundOnPlatform,
+        message: `Found ${foundOnPlatform} friends on Cronkite from ${contacts.length} contacts`
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Upload contacts error:', errorMessage);
+
+      res.status(500).json({
+        success: false,
+        error: 'UPLOAD_ERROR',
+        message: errorMessage
+      });
+    }
+  });
+
   // GET /api/users/profile-link - Generate shareable profile link
   // Requirements: 8.5 - Create profile link sharing for easy connections
   app.get('/api/users/profile-link', requireAuth, async (req: Request, res: Response) => {

@@ -3,7 +3,7 @@ import { Users, UserPlus, Search } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FriendRequestList } from "./FriendRequestList";
 import { FriendsList } from "./FriendsList";
-import { UserSearch } from "./UserSearch";
+import { AddFriendFlow } from "./AddFriendFlow";
 import { UserDiscovery } from "./UserDiscovery";
 
 /**
@@ -30,9 +30,9 @@ export function FriendManagement() {
             <UserPlus className="h-4 w-4" />
             Requests
           </TabsTrigger>
-          <TabsTrigger value="search" className="gap-2">
+          <TabsTrigger value="add-friends" className="gap-2">
             <Search className="h-4 w-4" />
-            Find Friends
+            Add Friends
           </TabsTrigger>
           <TabsTrigger value="discover" className="gap-2">
             <Users className="h-4 w-4" />
@@ -48,8 +48,8 @@ export function FriendManagement() {
           <FriendRequestList />
         </TabsContent>
 
-        <TabsContent value="search" className="mt-6">
-          <UserSearch />
+        <TabsContent value="add-friends" className="mt-6">
+          <AddFriendFlow />
         </TabsContent>
 
         <TabsContent value="discover" className="mt-6">

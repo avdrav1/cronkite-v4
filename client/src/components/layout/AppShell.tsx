@@ -317,7 +317,7 @@ export function AppShell({ children }: AppShellProps) {
           )}
         >
           <div className={cn(
-            "flex flex-col p-4 gap-6 h-full overflow-y-auto scrollbar-none",
+            "flex flex-col p-6 gap-6 h-full overflow-y-auto scrollbar-none",
             !isLeftSidebarOpen && "p-0 opacity-0"
           )}>
             {isFeedsFull ? (
@@ -360,7 +360,7 @@ export function AppShell({ children }: AppShellProps) {
 
         {/* Main Content */}
         <main className="flex-1 overflow-y-auto scrollbar-none bg-background/50">
-          <div className="max-w-[1600px] mx-auto p-4 md:p-8">
+          <div className="max-w-[1600px] mx-auto p-6 md:p-12 lg:p-16">
             {children}
           </div>
         </main>
@@ -373,7 +373,7 @@ export function AppShell({ children }: AppShellProps) {
           )}
         >
           <div className={cn(
-            "flex flex-col p-4 gap-6 h-full overflow-y-auto scrollbar-none w-72",
+            "flex flex-col p-6 gap-6 h-full overflow-y-auto scrollbar-none w-72",
             !isRightSidebarOpen && "p-0 opacity-0"
           )}>
             <TrendingClusters 

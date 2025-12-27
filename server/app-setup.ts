@@ -2,6 +2,7 @@
 import express, { type Request, Response, NextFunction } from "express";
 import passport from "passport";
 import cors from "cors";
+import multer from "multer";
 import { registerRoutes } from "./routes";
 import { sessionConfig, authMiddleware } from "./auth-middleware";
 import { performStartupValidation, logValidationReport } from "./startup-validation";
@@ -65,6 +66,29 @@ export async function setupApp(app: express.Application): Promise<void> {
   );
 
   app.use(express.urlencoded({ extended: false }));
+
+  // File upload middleware (multer)
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+      fileSize: 5 * 1024 * 1024, // 5MB limit
+      files: 1 // Only allow 1 file at a time
+    },
+    fileFilter: (req, file, cb) => {
+      // Allow only specific file types for contact uploads
+      const allowedTypes = ['.csv', '.vcf', '.txt'];
+      const fileExtension = '.' + (file.originalname?.split('.').pop()?.toLowerCase() || '');
+      
+      if (allowedTypes.includes(fileExtension)) {
+        cb(null, true);
+      } else {
+        cb(new Error(`Invalid file type. Allowed types: ${allowedTypes.join(', ')}`));
+      }
+    }
+  });
+
+  // Make multer available to routes
+  (app as any).upload = upload;
 
   // CORS configuration
   if (env.NODE_ENV !== "production") {

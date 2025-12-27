@@ -15,6 +15,7 @@ import { log, logError } from './app-setup';
 export class SocialCacheService {
   private client: RedisClientType | null = null;
   private isConnected = false;
+  private hasLoggedError = false;
 
   constructor() {
     this.initializeRedis();
@@ -26,24 +27,42 @@ export class SocialCacheService {
    */
   private async initializeRedis(): Promise<void> {
     try {
+      // Check if Redis is explicitly disabled
+      if (process.env.DISABLE_REDIS === 'true') {
+        log('📦 Redis cache disabled by environment variable');
+        return;
+      }
+
       // Use Redis URL from environment or default to localhost
       const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
       
       this.client = createClient({
         url: redisUrl,
         socket: {
-          reconnectStrategy: (retries) => Math.min(retries * 50, 1000)
+          reconnectStrategy: (retries) => {
+            // Limit reconnection attempts to avoid spam
+            if (retries > 5) {
+              log('📦 Redis cache connection failed after 5 attempts, disabling cache');
+              return false; // Stop reconnecting
+            }
+            return Math.min(retries * 50, 1000);
+          }
         }
       });
 
       this.client.on('error', (err) => {
-        logError('Redis Client Error', err);
+        // Only log the first few errors to avoid spam
+        if (!this.hasLoggedError) {
+          logError('Redis Client Error - cache will be disabled', err);
+          this.hasLoggedError = true;
+        }
         this.isConnected = false;
       });
 
       this.client.on('connect', () => {
         log('📦 Redis cache connected');
         this.isConnected = true;
+        this.hasLoggedError = false;
       });
 
       this.client.on('disconnect', () => {
@@ -51,9 +70,22 @@ export class SocialCacheService {
         this.isConnected = false;
       });
 
+      // Set a timeout for connection attempt
+      const connectionTimeout = setTimeout(() => {
+        if (!this.isConnected) {
+          log('📦 Redis connection timeout - continuing without cache');
+          this.client?.disconnect().catch(() => {});
+          this.client = null;
+        }
+      }, 2000); // 2 second timeout
+
       await this.client.connect();
+      clearTimeout(connectionTimeout);
     } catch (error) {
-      logError('Failed to initialize Redis cache', error as Error);
+      if (!this.hasLoggedError) {
+        log('📦 Redis cache not available - continuing without cache');
+        this.hasLoggedError = true;
+      }
       // Continue without cache if Redis is not available
       this.client = null;
       this.isConnected = false;
