@@ -334,6 +334,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           const { data } = client.auth.onAuthStateChange(async (event, session) => {
             if (event === 'SIGNED_IN' && session) {
               await handleOAuthSession(session);
+            } else if (event === 'TOKEN_REFRESHED' && session) {
+              // Update backup session with refreshed tokens to prevent stale token issues
+              backupSession(session);
+              console.log('🔄 Token refreshed, backup session updated');
             } else if (event === 'SIGNED_OUT') {
               setUser(null);
             }
