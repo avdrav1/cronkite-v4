@@ -1199,7 +1199,7 @@ export default function Home() {
         cluster={selectedCluster}
         isOpen={!!selectedCluster}
         onClose={() => setSelectedCluster(null)}
-        allArticles={articles}
+        subscribedFeedIds={feeds.map(f => f.id)}
         onArticleClick={(articleId) => {
           // Find the article and open it
           const article = articles.find(a => a.id === articleId);
