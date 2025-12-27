@@ -151,6 +151,48 @@ async function buildAll() {
     console.log("⚠️ AI scheduler function not found, skipping");
   }
 
+  // Build the feed-sync-scheduler scheduled function
+  console.log("⚡ Building feed-sync-scheduler (Netlify Scheduled Function)...");
+  if (existsSync("netlify/functions/feed-sync-scheduler.ts")) {
+    await esbuild({
+      entryPoints: ["netlify/functions/feed-sync-scheduler.ts"],
+      platform: "node",
+      bundle: true,
+      format: "cjs",
+      outfile: "dist/functions/feed-sync-scheduler.js",
+      define: {
+        "process.env.NODE_ENV": '"production"',
+      },
+      minify: true,
+      external: externals,
+      logLevel: "info",
+    });
+    console.log("✅ Feed-sync-scheduler function built");
+  } else {
+    console.log("⚠️ Feed-sync-scheduler function not found, skipping");
+  }
+
+  // Build the diagnostic function
+  console.log("⚡ Building diagnostic (Netlify Diagnostic Function)...");
+  if (existsSync("netlify/functions/diagnostic.ts")) {
+    await esbuild({
+      entryPoints: ["netlify/functions/diagnostic.ts"],
+      platform: "node",
+      bundle: true,
+      format: "cjs",
+      outfile: "dist/functions/diagnostic.js",
+      define: {
+        "process.env.NODE_ENV": '"production"',
+      },
+      minify: true,
+      external: externals,
+      logLevel: "info",
+    });
+    console.log("✅ Diagnostic function built");
+  } else {
+    console.log("⚠️ Diagnostic function not found, skipping");
+  }
+
   // Build the test-clustering diagnostic function
   console.log("⚡ Building test-clustering (Netlify Diagnostic Function)...");
   if (existsSync("netlify/functions/test-clustering.ts")) {
