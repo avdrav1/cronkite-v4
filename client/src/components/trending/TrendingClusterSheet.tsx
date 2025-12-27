@@ -89,8 +89,13 @@ export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick,
           feed_category: article.feed_category
         }));
 
-        setArticles(validArticles);
-        console.log(`📊 Loaded ${validArticles.length} articles by ID for cluster "${cluster.topic}"`);
+        // Deduplicate articles by URL (same article content may exist in multiple feeds)
+        const uniqueArticles = validArticles.filter((article, index, self) =>
+          index === self.findIndex(a => a.url === article.url)
+        );
+
+        setArticles(uniqueArticles);
+        console.log(`📊 Loaded ${uniqueArticles.length} articles by ID for cluster "${cluster.topic}" (${validArticles.length - uniqueArticles.length} duplicates removed)`);
       } else {
         console.log(`📊 No articleIds for cluster "${cluster.topic}"`);
         setArticles([]);
@@ -164,7 +169,9 @@ export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick,
           <div className="flex items-center gap-2 flex-wrap">
             <div className="flex items-center gap-1.5 text-xs font-medium text-primary bg-primary/10 px-2 py-1 rounded-full">
               <Newspaper className="h-3 w-3" />
-              <span>{cluster.articleCount} articles</span>
+              <span>
+                {isLoading ? 'Loading...' : `${articles.length} article${articles.length !== 1 ? 's' : ''}`}
+              </span>
             </div>
             {cluster.sources.slice(0, 4).map((source, i) => (
               <span 
