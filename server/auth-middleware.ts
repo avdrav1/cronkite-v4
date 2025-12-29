@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import session from 'express-session';
 import createMemoryStore from 'memorystore';
+import connectPgSimple from 'connect-pg-simple';
 import passport from 'passport';
 import { Strategy as LocalStrategy } from 'passport-local';
 import { createClient } from '@supabase/supabase-js';
@@ -15,18 +16,40 @@ declare global {
 }
 
 const MemoryStore = createMemoryStore(session);
+const PgSession = connectPgSimple(session);
 
 // Determine if we're in production
 const isProduction = process.env.NODE_ENV === 'production';
+
+// Create session store based on environment
+function createSessionStore() {
+  // Use PostgreSQL store if DATABASE_URL is available (recommended for persistence)
+  if (process.env.DATABASE_URL) {
+    console.log('🔐 Using PostgreSQL session store for persistence');
+    return new PgSession({
+      conString: process.env.DATABASE_URL,
+      tableName: 'user_sessions', // Custom table name
+      createTableIfMissing: true, // Auto-create table
+      pruneSessionInterval: 60 * 15, // Prune expired sessions every 15 minutes
+      errorLog: (error) => {
+        console.error('🔐 Session store error:', error);
+      }
+    });
+  }
+  
+  // Fallback to memory store (sessions won't persist across restarts)
+  console.log('⚠️  Using memory session store - sessions will not persist across server restarts');
+  return new MemoryStore({
+    checkPeriod: 86400000 // prune expired entries every 24h
+  });
+}
 
 // Session configuration with environment-aware cookie settings
 export const sessionConfig = session({
   secret: process.env.SESSION_SECRET || 'your-secret-key',
   resave: false,
   saveUninitialized: false,
-  store: new MemoryStore({
-    checkPeriod: 86400000 // prune expired entries every 24h
-  }),
+  store: createSessionStore(),
   name: 'cronkite.sid', // Explicit session name
   proxy: isProduction, // Trust proxy in production (Netlify, etc.)
   cookie: {

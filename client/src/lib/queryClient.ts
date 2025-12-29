@@ -19,22 +19,27 @@ export async function apiRequest(
     headers["Content-Type"] = "application/json";
   }
   
-  // Add Supabase JWT token for serverless auth (production)
-  let token = await getAccessToken();
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
+  // In development, prioritize session cookies over Supabase tokens
+  // This ensures compatibility with Express session authentication
+  const isDevelopment = import.meta.env?.DEV || import.meta.env?.NODE_ENV === 'development';
+  
+  if (!isDevelopment) {
+    // Only use Supabase JWT token in production/serverless environments
+    let token = await getAccessToken();
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
   }
   
   let res = await fetch(url, {
     method,
     headers,
     body: data ? JSON.stringify(data) : undefined,
-    credentials: "include",
+    credentials: "include", // Always include cookies for session auth
   });
 
-  // If we get a 401, try refreshing the token and retry once
-  // This handles cases where the token expired or wasn't available on first try
-  if (res.status === 401 && isSupabaseConfigured()) {
+  // If we get a 401 in production, try refreshing the token and retry once
+  if (res.status === 401 && !isDevelopment && isSupabaseConfigured()) {
     console.log('🔄 apiRequest: Got 401, attempting token refresh and retry...');
     const newToken = await refreshAccessToken();
     if (newToken) {
@@ -70,17 +75,22 @@ export async function apiFetch(
     headers["Content-Type"] = "application/json";
   }
   
-  // Add Supabase JWT token for serverless auth (production)
-  const token = await getAccessToken();
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
+  // In development, prioritize session cookies over Supabase tokens
+  const isDevelopment = import.meta.env?.DEV || import.meta.env?.NODE_ENV === 'development';
+  
+  if (!isDevelopment) {
+    // Only use Supabase JWT token in production/serverless environments
+    const token = await getAccessToken();
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
   }
   
   return fetch(url, {
     method,
     headers,
     body: data ? JSON.stringify(data) : undefined,
-    credentials: "include",
+    credentials: "include", // Always include cookies for session auth
   });
 }
 
@@ -92,19 +102,24 @@ export const getQueryFn: <T>(options: {
   async ({ queryKey }) => {
     const headers: Record<string, string> = {};
     
-    // Add Supabase JWT token for serverless auth (production)
-    let token = await getAccessToken();
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
+    // In development, prioritize session cookies over Supabase tokens
+    const isDevelopment = import.meta.env?.DEV || import.meta.env?.NODE_ENV === 'development';
+    
+    if (!isDevelopment) {
+      // Only use Supabase JWT token in production/serverless environments
+      let token = await getAccessToken();
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
     }
     
     let res = await fetch(queryKey.join("/") as string, {
-      credentials: "include",
+      credentials: "include", // Always include cookies for session auth
       headers,
     });
 
-    // If we get a 401 and behavior is "throw", try refreshing token and retry once
-    if (res.status === 401 && unauthorizedBehavior === "throw" && isSupabaseConfigured()) {
+    // If we get a 401 and behavior is "throw", try refreshing token and retry once (production only)
+    if (res.status === 401 && unauthorizedBehavior === "throw" && !isDevelopment && isSupabaseConfigured()) {
       console.log('🔄 getQueryFn: Got 401, attempting token refresh and retry...');
       const newToken = await refreshAccessToken();
       if (newToken) {

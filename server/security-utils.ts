@@ -57,16 +57,19 @@ export function sanitizeString(input: string): string {
 
   let sanitized = input;
 
-  // Replace sensitive patterns
-  for (const pattern of SENSITIVE_PATTERNS) {
-    sanitized = sanitized.replace(pattern, (match) => {
-      // Keep the key part, hide the value part
-      const parts = match.split(/[=:]/);
-      if (parts.length >= 2) {
-        return `${parts[0]}=${parts[0].includes('://') ? '[REDACTED_URL]' : '[REDACTED]'}`;
-      }
-      return '[REDACTED]';
-    });
+  // Replace sensitive patterns - create new regex instances to avoid state issues
+  for (const originalPattern of SENSITIVE_PATTERNS) {
+    try {
+      // Create a new regex instance to avoid lastIndex state issues
+      const pattern = new RegExp(originalPattern.source, originalPattern.flags);
+      
+      // Simple replace without callback to avoid recursion
+      sanitized = sanitized.replace(pattern, '[REDACTED]');
+    } catch (error) {
+      // If regex fails, continue with other patterns
+      console.warn('Regex pattern failed in sanitizeString:', error);
+      continue;
+    }
   }
 
   return sanitized;
@@ -191,10 +194,14 @@ export function validateEnvironmentSecurity(): {
 
       if (!isSensitiveVar) {
         // Check if non-sensitive var contains sensitive data (only check for actual secret patterns)
-        const hasSensitivePattern = SENSITIVE_PATTERNS.some(pattern => {
-          // Reset regex lastIndex to ensure proper matching
-          pattern.lastIndex = 0;
-          return pattern.test(value);
+        const hasSensitivePattern = SENSITIVE_PATTERNS.some(originalPattern => {
+          try {
+            // Create new regex instance to avoid state issues
+            const pattern = new RegExp(originalPattern.source, originalPattern.flags);
+            return pattern.test(value);
+          } catch (error) {
+            return false;
+          }
         });
 
         if (hasSensitivePattern) {
@@ -259,7 +266,15 @@ export function containsSensitiveData(input: string): boolean {
     return false;
   }
 
-  return SENSITIVE_PATTERNS.some(pattern => pattern.test(input));
+  return SENSITIVE_PATTERNS.some(originalPattern => {
+    try {
+      // Create new regex instance to avoid state issues
+      const pattern = new RegExp(originalPattern.source, originalPattern.flags);
+      return pattern.test(input);
+    } catch (error) {
+      return false;
+    }
+  });
 }
 
 /**
@@ -328,18 +343,28 @@ export function validateClientCodeSecurity(clientCode: string): {
   }
 
   // Check for actual secrets using client-specific patterns
-  for (const pattern of CLIENT_SECRET_PATTERNS) {
-    pattern.lastIndex = 0;
-    const matches = clientCode.match(pattern);
-    if (matches) {
-      // Filter out matches that are in safe patterns
-      const realSecrets = matches.filter(match => {
-        return !SAFE_PATTERNS.some(safePattern => {
-          safePattern.lastIndex = 0;
-          return safePattern.test(match);
+  for (const originalPattern of CLIENT_SECRET_PATTERNS) {
+    try {
+      // Create new regex instance to avoid state issues
+      const pattern = new RegExp(originalPattern.source, originalPattern.flags);
+      const matches = clientCode.match(pattern);
+      if (matches) {
+        // Filter out matches that are in safe patterns
+        const realSecrets = matches.filter(match => {
+          return !SAFE_PATTERNS.some(originalSafePattern => {
+            try {
+              const safePattern = new RegExp(originalSafePattern.source, originalSafePattern.flags);
+              return safePattern.test(match);
+            } catch (error) {
+              return false;
+            }
+          });
         });
-      });
-      exposedSecrets.push(...realSecrets);
+        exposedSecrets.push(...realSecrets);
+      }
+    } catch (error) {
+      // If regex fails, continue with other patterns
+      continue;
     }
   }
 

@@ -1868,7 +1868,7 @@ export class MemStorage implements IStorage {
         site_url: "https://www.dezeen.com",
         description: "Architecture and design magazine",
         icon_url: "https://www.dezeen.com/favicon.ico",
-        category: "Interior Design",
+        category: "Interior",
         country: "UK",
         language: "en",
         tags: ["interior", "design", "architecture"],
@@ -3046,10 +3046,10 @@ function validateSupabaseConfiguration(url?: string, serviceKey?: string): { isV
   } else if (url === 'your_supabase_project_url') {
     issues.push('SUPABASE_URL is set to placeholder value');
     console.log('❌ SUPABASE_URL contains placeholder value');
-  } else if (!url.startsWith('https://')) {
-    issues.push('SUPABASE_URL does not start with https://');
+  } else if (!url.startsWith('https://') && !url.startsWith('http://127.0.0.1') && !url.startsWith('http://localhost')) {
+    issues.push('SUPABASE_URL does not start with https:// (or local development URL)');
     console.log('❌ SUPABASE_URL protocol is invalid');
-  } else if (!url.includes('.supabase.co')) {
+  } else if (!url.includes('.supabase.co') && !url.includes('127.0.0.1') && !url.includes('localhost')) {
     issues.push('SUPABASE_URL does not appear to be a valid Supabase URL');
     console.log('❌ SUPABASE_URL domain is invalid');
   } else {
