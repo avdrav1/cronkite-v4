@@ -7,9 +7,6 @@ import express from 'express';
 // Import environment configuration
 import './env';
 
-// Import the main application setup
-import { setupApp } from './app-setup';
-
 let app: express.Application | null = null;
 let serverlessHandler: any = null;
 
@@ -18,28 +15,87 @@ async function getServerlessHandler() {
   if (!serverlessHandler) {
     console.log('🚀 Initializing Netlify function handler...');
     
-    app = express();
-    
-    // Trust proxy for Netlify
-    app.set('trust proxy', 1);
-    
-    await setupApp(app);
-    
-    // Note: AI background scheduler is NOT started in serverless environment
-    // because serverless functions don't persist between requests.
-    // Clustering will use on-demand text-based fallback instead.
-    console.log('ℹ️ AI background scheduler disabled in serverless mode - using on-demand clustering');
-    
-    // Create serverless handler
-    // The redirect in netlify.toml sends /api/* to /.netlify/functions/api/:splat
-    // So /api/clusters/123 becomes /.netlify/functions/api/clusters/123
-    // We need to strip /.netlify/functions/api but keep /api for Express routes
-    serverlessHandler = serverless(app, {
-      // Don't strip /api - Express routes expect it
-      basePath: '/.netlify/functions'
-    });
-    
-    console.log('✅ Netlify function handler initialized');
+    try {
+      app = express();
+      
+      // Trust proxy for Netlify
+      app.set('trust proxy', 1);
+      
+      // Add basic middleware first
+      app.use(express.json());
+      
+      // Add a simple health check that doesn't require complex setup
+      app.get('/api/health-basic', (req, res) => {
+        res.json({
+          status: 'healthy',
+          timestamp: new Date().toISOString(),
+          message: 'Basic health check - no complex initialization'
+        });
+      });
+      
+      // Try to import and setup the main app
+      try {
+        console.log('🔧 Attempting to import app-setup...');
+        const { setupApp } = await import('./app-setup');
+        
+        console.log('🔧 Running setupApp...');
+        await setupApp(app);
+        
+        console.log('✅ App setup completed successfully');
+      } catch (setupError) {
+        console.error('❌ App setup failed, using minimal fallback:', setupError);
+        
+        // Add minimal fallback routes
+        app.get('/api/health', (req, res) => {
+          res.status(500).json({
+            status: 'degraded',
+            timestamp: new Date().toISOString(),
+            error: 'App setup failed',
+            message: setupError instanceof Error ? setupError.message : 'Unknown setup error'
+          });
+        });
+        
+        app.post('/api/auth/oauth/callback', (req, res) => {
+          res.status(500).json({
+            error: 'Authentication unavailable',
+            message: 'Server initialization failed',
+            timestamp: new Date().toISOString()
+          });
+        });
+      }
+      
+      // Note: AI background scheduler is NOT started in serverless environment
+      // because serverless functions don't persist between requests.
+      // Clustering will use on-demand text-based fallback instead.
+      console.log('ℹ️ AI background scheduler disabled in serverless mode - using on-demand clustering');
+      
+      // Create serverless handler
+      // The redirect in netlify.toml sends /api/* to /.netlify/functions/api/:splat
+      // So /api/clusters/123 becomes /.netlify/functions/api/clusters/123
+      // We need to strip /.netlify/functions/api but keep /api for Express routes
+      serverlessHandler = serverless(app, {
+        // Don't strip /api - Express routes expect it
+        basePath: '/.netlify/functions'
+      });
+      
+      console.log('✅ Netlify function handler initialized');
+    } catch (error) {
+      console.error('❌ Critical: Failed to initialize Netlify function handler:', error);
+      
+      // Create a minimal error handler
+      const errorApp = express();
+      errorApp.use('*', (req, res) => {
+        res.status(500).json({
+          error: 'Server initialization failed',
+          message: error instanceof Error ? error.message : 'Unknown error',
+          timestamp: new Date().toISOString()
+        });
+      });
+      
+      serverlessHandler = serverless(errorApp, {
+        basePath: '/.netlify/functions'
+      });
+    }
   }
   return serverlessHandler;
 }
@@ -68,7 +124,8 @@ export const handler = async (event: any, context: any) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
         error: 'Internal server error',
-        message: error instanceof Error ? error.message : 'Unknown error'
+        message: error instanceof Error ? error.message : 'Unknown error',
+        timestamp: new Date().toISOString()
       })
     };
   }
