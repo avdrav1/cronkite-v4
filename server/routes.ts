@@ -90,15 +90,40 @@ export async function registerRoutes(
 ): Promise<Server | null> {
   
   // Health Check Route (for deployment validation)
-  app.get('/api/health', (req: Request, res: Response) => {
-    res.json({
-      status: 'healthy',
-      timestamp: new Date().toISOString(),
-      version: process.env.npm_package_version || '1.0.0',
-      environment: process.env.NODE_ENV || 'development',
-      uptime: process.uptime(),
-      memory: process.memoryUsage()
-    });
+  app.get('/api/health', async (req: Request, res: Response) => {
+    try {
+      const storage = await getStorage();
+      
+      // Test storage connectivity
+      let storageHealthy = false;
+      let storageError = null;
+      try {
+        // Try a simple operation to test storage
+        const feeds = await storage.getRecommendedFeeds();
+        storageHealthy = feeds.length > 0;
+      } catch (error) {
+        storageError = error instanceof Error ? error.message : 'Unknown storage error';
+      }
+      
+      res.json({
+        status: 'healthy',
+        timestamp: new Date().toISOString(),
+        version: process.env.npm_package_version || '1.0.0',
+        environment: process.env.NODE_ENV || 'development',
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+        storage: {
+          healthy: storageHealthy,
+          error: storageError
+        }
+      });
+    } catch (error) {
+      res.status(500).json({
+        status: 'unhealthy',
+        timestamp: new Date().toISOString(),
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
   });
 
   // Debug endpoint for read state (temporary - for debugging)
@@ -462,11 +487,21 @@ export async function registerRoutes(
         provider: supabaseUser.app_metadata?.provider 
       });
       
+      console.log('🔐 OAuth callback: Getting storage instance...');
       const storage = await getStorage();
+      console.log('🔐 OAuth callback: Storage instance obtained');
       
       // Get or create user profile from Supabase user data
       // Note: Supabase may have already created the profile via trigger on auth.users insert
-      let user = await storage.getUser(supabaseUser.id);
+      console.log('🔐 OAuth callback: Attempting to get user from storage...');
+      let user;
+      try {
+        user = await storage.getUser(supabaseUser.id);
+        console.log('🔐 OAuth callback: getUser completed, result:', user ? 'found' : 'not found');
+      } catch (getUserError) {
+        console.error('❌ OAuth callback: getUser failed:', getUserError);
+        throw getUserError;
+      }
       
       if (!user) {
         // Profile doesn't exist yet - create it
@@ -548,6 +583,7 @@ export async function registerRoutes(
         });
       }
       
+      console.log('🔐 OAuth callback: Attempting to log user in...');
       // Log the user in to create a session
       req.login(user, (err) => {
         if (err) {
