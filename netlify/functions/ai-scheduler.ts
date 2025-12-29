@@ -55,7 +55,7 @@ export default async function handler() {
       console.log("Step 5: OpenAI not configured - skipping embeddings");
     }
     
-    // Step 6: Run clustering if we have enough embeddings
+    // Step 6: Run clustering with smart scheduling
     console.log("Step 6: Importing clustering service...");
     const { createClusteringServiceManager, isClusteringServiceAvailable } = await import("../../server/clustering-service");
     
@@ -66,20 +66,65 @@ export default async function handler() {
       console.log("Step 6b: Creating clustering manager...");
       const clusteringManager = createClusteringServiceManager(storage as any);
       
-      console.log("Step 6c: Generating clusters...");
       try {
-        const clusterResult = await clusteringManager.generateClusters(
-          undefined, // no userId - generate for all articles
-          undefined, // no feedIds filter
-          168 // 7 days back
-        );
+        // Import the smart clustering logic
+        console.log("Step 6c: Checking if clustering should run...");
         
-        results.clusters = {
-          created: clusterResult.clustersCreated,
-          articlesProcessed: clusterResult.articlesProcessed
-        };
+        // Simple time-based check for clustering
+        const lastClusteringQuery = await storage.query(`
+          SELECT created_at 
+          FROM clusters 
+          ORDER BY created_at DESC 
+          LIMIT 1
+        `);
         
-        console.log("Clusters: " + clusterResult.clustersCreated + " created from " + clusterResult.articlesProcessed + " articles");
+        const lastClustering = lastClusteringQuery.rows[0]?.created_at;
+        const hoursSinceLastClustering = lastClustering 
+          ? (Date.now() - new Date(lastClustering).getTime()) / (1000 * 60 * 60)
+          : 999; // Force run if no clusters exist
+        
+        // Check for new articles with embeddings in the last 4 hours
+        const newArticlesQuery = await storage.query(`
+          SELECT COUNT(*) as count
+          FROM articles 
+          WHERE embedding IS NOT NULL 
+          AND published_at > NOW() - INTERVAL '4 hours'
+        `);
+        
+        const newArticleCount = parseInt(newArticlesQuery.rows[0]?.count || '0');
+        const minNewArticles = 10;
+        const minHoursBetween = 4;
+        
+        const shouldRun = (!lastClustering) || 
+                         (hoursSinceLastClustering >= 24) || // Force run after 24h
+                         (hoursSinceLastClustering >= minHoursBetween && newArticleCount >= minNewArticles);
+        
+        if (shouldRun) {
+          const reason = !lastClustering ? 'First clustering run' :
+                        hoursSinceLastClustering >= 24 ? `Fallback: ${hoursSinceLastClustering.toFixed(1)}h since last run` :
+                        `${newArticleCount} new articles with embeddings (min: ${minNewArticles})`;
+          
+          console.log(`Step 6d: Running clustering - ${reason}...`);
+          const clusterResult = await clusteringManager.generateClusters(
+            undefined, // no userId - generate for all articles
+            undefined, // no feedIds filter
+            168 // 7 days back
+          );
+          
+          results.clusters = {
+            created: clusterResult.clustersCreated,
+            articlesProcessed: clusterResult.articlesProcessed
+          };
+          
+          console.log("Clusters: " + clusterResult.clustersCreated + " created from " + clusterResult.articlesProcessed + " articles");
+        } else {
+          const reason = hoursSinceLastClustering < minHoursBetween ? 
+            `Only ${hoursSinceLastClustering.toFixed(1)}h since last run (min: ${minHoursBetween}h)` :
+            `Only ${newArticleCount} new articles (min: ${minNewArticles})`;
+          
+          console.log(`Step 6d: Skipping clustering - ${reason}`);
+          results.clusters = { created: 0, articlesProcessed: 0 };
+        }
       } catch (clusterError) {
         const msg = clusterError instanceof Error ? clusterError.message : "Unknown error";
         console.error("Clustering error:", msg);
@@ -112,7 +157,7 @@ export default async function handler() {
   }
 }
 
-// Schedule configuration - runs every 5 minutes
+// Schedule configuration - runs every 15 minutes (reduced from 5 minutes)
 export const config: Config = {
-  schedule: "*/5 * * * *"
+  schedule: "*/15 * * * *"
 };

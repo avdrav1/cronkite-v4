@@ -21,9 +21,13 @@ import {
 
 // Scheduler configuration
 const EMBEDDING_PROCESS_INTERVAL = 30 * 1000; // Process embeddings every 30 seconds
-const CLUSTERING_INTERVAL = 5 * 60 * 1000; // Generate clusters every 5 minutes
+const CLUSTERING_INTERVAL = 24 * 60 * 60 * 1000; // Generate clusters every 24 hours (fallback)
 const CLUSTER_CLEANUP_INTERVAL = 60 * 60 * 1000; // Clean up expired clusters every hour
 const EMBEDDING_BATCH_SIZE = 50; // Process 50 articles at a time
+
+// Clustering trigger thresholds
+const MIN_NEW_ARTICLES_FOR_CLUSTERING = 10; // Minimum new articles to trigger clustering
+const MIN_HOURS_BETWEEN_CLUSTERING = 4; // Minimum hours between clustering runs
 
 // Scheduler state
 let embeddingInterval: NodeJS.Timeout | null = null;
@@ -113,6 +117,9 @@ async function processEmbeddingQueue(): Promise<void> {
       stats.embeddingsProcessed += result.succeeded;
       stats.embeddingsFailed += result.failed;
       console.log(`📊 Embedding queue: ${result.succeeded} succeeded, ${result.failed} failed, ${result.remainingInQueue} remaining`);
+      
+      // Trigger clustering if we processed enough new embeddings
+      await triggerClusteringIfNeeded(result.succeeded);
     }
     
     stats.lastEmbeddingRun = new Date();
@@ -128,7 +135,51 @@ async function processEmbeddingQueue(): Promise<void> {
 }
 
 /**
- * Generate clusters from articles with embeddings
+ * Check if clustering should run based on new content and time since last run
+ */
+export async function shouldRunClustering(): Promise<{ shouldRun: boolean; reason: string }> {
+  if (!clusteringManager) {
+    return { shouldRun: false, reason: 'Clustering manager not available' };
+  }
+
+  const now = new Date();
+  const lastRun = stats.lastClusteringRun;
+  
+  // Always run if never run before
+  if (!lastRun) {
+    return { shouldRun: true, reason: 'First clustering run' };
+  }
+
+  const hoursSinceLastRun = (now.getTime() - lastRun.getTime()) / (1000 * 60 * 60);
+  
+  // Force run if it's been more than 24 hours (fallback)
+  if (hoursSinceLastRun >= 24) {
+    return { shouldRun: true, reason: 'Fallback: 24+ hours since last run' };
+  }
+
+  // Don't run if less than minimum interval
+  if (hoursSinceLastRun < MIN_HOURS_BETWEEN_CLUSTERING) {
+    return { shouldRun: false, reason: `Only ${hoursSinceLastRun.toFixed(1)}h since last run (min: ${MIN_HOURS_BETWEEN_CLUSTERING}h)` };
+  }
+
+  try {
+    // Check for new articles with embeddings since last clustering run
+    const storage = await import('./storage').then(m => m.getStorage());
+    const newArticles = await storage.getArticlesWithEmbeddings(undefined, undefined, Math.ceil(hoursSinceLastRun));
+    
+    if (newArticles.length >= MIN_NEW_ARTICLES_FOR_CLUSTERING) {
+      return { shouldRun: true, reason: `${newArticles.length} new articles with embeddings (min: ${MIN_NEW_ARTICLES_FOR_CLUSTERING})` };
+    }
+
+    return { shouldRun: false, reason: `Only ${newArticles.length} new articles (min: ${MIN_NEW_ARTICLES_FOR_CLUSTERING})` };
+  } catch (error) {
+    console.warn('⚠️ Error checking for new articles, running clustering anyway:', error);
+    return { shouldRun: true, reason: 'Error checking new articles, running as fallback' };
+  }
+}
+
+/**
+ * Generate clusters from articles with embeddings (smart scheduling)
  */
 async function generateClusters(): Promise<void> {
   if (!clusteringManager) {
@@ -136,7 +187,15 @@ async function generateClusters(): Promise<void> {
   }
 
   try {
-    console.log('🔄 Starting cluster generation...');
+    // Check if we should run clustering
+    const { shouldRun, reason } = await shouldRunClustering();
+    
+    if (!shouldRun) {
+      console.log(`⏭️ Skipping clustering: ${reason}`);
+      return;
+    }
+
+    console.log(`🔄 Starting cluster generation: ${reason}`);
     
     // Generate clusters for all users (no userId filter = global clusters)
     const result = await clusteringManager.generateClusters(undefined, undefined, 48);
@@ -299,6 +358,24 @@ export async function triggerClusterGeneration(userId?: string): Promise<{ clust
     clustersCreated: result.clustersCreated,
     articlesProcessed: result.articlesProcessed
   };
+}
+
+/**
+ * Trigger clustering if enough new articles have been processed
+ */
+export async function triggerClusteringIfNeeded(newArticleCount: number = 0): Promise<void> {
+  if (!clusteringManager) {
+    return;
+  }
+
+  // If we just processed a significant batch of embeddings, check if clustering should run
+  if (newArticleCount >= MIN_NEW_ARTICLES_FOR_CLUSTERING) {
+    const { shouldRun, reason } = await shouldRunClustering();
+    if (shouldRun) {
+      console.log(`🔄 Auto-triggering clustering after processing ${newArticleCount} new embeddings: ${reason}`);
+      await generateClusters();
+    }
+  }
 }
 
 /**
