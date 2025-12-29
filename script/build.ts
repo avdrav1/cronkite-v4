@@ -277,6 +277,71 @@ async function buildAll() {
     console.log("⚠️ Test-generate-clusters function not found, skipping");
   }
 
+  // Build the test-simple function
+  console.log("⚡ Building test-simple (Netlify Test Function)...");
+  if (existsSync("netlify/functions/test-simple.ts")) {
+    await esbuild({
+      entryPoints: ["netlify/functions/test-simple.ts"],
+      platform: "node",
+      bundle: true,
+      format: "cjs",
+      outfile: "dist/functions/test-simple.js",
+      define: {
+        "process.env.NODE_ENV": '"production"',
+      },
+      minify: true,
+      external: externals,
+      logLevel: "info",
+    });
+    console.log("✅ Test-simple function built");
+  } else {
+    console.log("⚠️ Test-simple function not found, skipping");
+  }
+
+  // Build the api-minimal function
+  console.log("⚡ Building api-minimal (Netlify Minimal API Function)...");
+  if (existsSync("netlify/functions/api-minimal.ts")) {
+    await esbuild({
+      entryPoints: ["netlify/functions/api-minimal.ts"],
+      platform: "node",
+      bundle: true,
+      format: "cjs",
+      outfile: "dist/functions/api-minimal.js",
+      define: {
+        "process.env.NODE_ENV": '"production"',
+      },
+      minify: true,
+      external: externals,
+      logLevel: "info",
+    });
+    console.log("✅ Api-minimal function built");
+  } else {
+    console.log("⚠️ Api-minimal function not found, skipping");
+  }
+
+  // Build the api-debug function
+  console.log("⚡ Building api-debug (Netlify Debug API Function)...");
+  if (existsSync("netlify/functions/api-debug.ts")) {
+    await esbuild({
+      entryPoints: ["netlify/functions/api-debug.ts"],
+      platform: "node",
+      bundle: true,
+      format: "cjs",
+      outfile: "dist/functions/api-debug.js",
+      define: {
+        "process.env.NODE_ENV": '"production"',
+      },
+      // Inject polyfills for this one since it imports server modules
+      inject: ["server/node-polyfills.ts"],
+      minify: true,
+      external: externals,
+      logLevel: "info",
+    });
+    console.log("✅ Api-debug function built");
+  } else {
+    console.log("⚠️ Api-debug function not found, skipping");
+  }
+
   // Build the run-ai-jobs on-demand function
   console.log("⚡ Building run-ai-jobs (Netlify On-Demand Function)...");
   if (existsSync("netlify/functions/run-ai-jobs.ts")) {
