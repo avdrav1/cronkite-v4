@@ -210,6 +210,8 @@ export default function Home() {
       
       console.log('🚀 Starting fetchArticles...');
       
+      console.log('🚀 About to call Promise.all with apiRequest and apiFetch...');
+      
       // Fetch articles and clusters in parallel
       // Use apiFetch for clusters to handle auth errors gracefully
       const [articlesResponse, clustersResponse] = await Promise.all([
@@ -217,6 +219,7 @@ export default function Home() {
         apiFetch('GET', '/api/clusters') // Use apiFetch to not throw on 401
       ]);
       
+      console.log('🚀 Promise.all completed successfully');
       console.log('🚀 Got responses - articles:', articlesResponse.status, 'clusters:', clustersResponse?.status);
       
       const data = await articlesResponse.json();
@@ -318,7 +321,13 @@ export default function Home() {
         setClusters([]);
       }
     } catch (error) {
-      console.error('Failed to fetch articles:', error);
+      console.error('❌ fetchArticles error:', error);
+      console.error('❌ Error details:', {
+        message: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : 'No stack trace',
+        type: typeof error,
+        error: error
+      });
       const errorMessage = error instanceof Error ? error.message : 'Failed to load articles';
 
       // Check if this is a 401 authentication error - trigger logout and redirect
