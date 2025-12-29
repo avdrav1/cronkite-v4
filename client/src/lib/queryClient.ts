@@ -19,16 +19,25 @@ export async function apiRequest(
     headers["Content-Type"] = "application/json";
   }
   
-  // In development, prioritize session cookies over Supabase tokens
-  // This ensures compatibility with Express session authentication
-  const isDevelopment = import.meta.env?.DEV || import.meta.env?.NODE_ENV === 'development';
+  // Detect environment more reliably
+  // In development: use session cookies only
+  // In production: use Supabase JWT tokens with session cookie fallback
+  const isDevelopment = (
+    (typeof import.meta !== 'undefined' && import.meta.env?.DEV) ||
+    (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development') ||
+    (typeof window !== 'undefined' && window.location.hostname === 'localhost') ||
+    (typeof window !== 'undefined' && window.location.hostname === '127.0.0.1')
+  );
   
-  if (!isDevelopment) {
-    // Only use Supabase JWT token in production/serverless environments
-    let token = await getAccessToken();
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
+  // Always try to get Supabase token first, but only use it in production or if explicitly configured
+  let token = null;
+  if (isSupabaseConfigured()) {
+    token = await getAccessToken();
+  }
+  
+  // Use token in production, or in development if it's the only auth method available
+  if (token && !isDevelopment) {
+    headers["Authorization"] = `Bearer ${token}`;
   }
   
   let res = await fetch(url, {
@@ -38,8 +47,8 @@ export async function apiRequest(
     credentials: "include", // Always include cookies for session auth
   });
 
-  // If we get a 401 in production, try refreshing the token and retry once
-  if (res.status === 401 && !isDevelopment && isSupabaseConfigured()) {
+  // If we get a 401, try refreshing the token and retry once
+  if (res.status === 401 && token && isSupabaseConfigured()) {
     console.log('🔄 apiRequest: Got 401, attempting token refresh and retry...');
     const newToken = await refreshAccessToken();
     if (newToken) {
@@ -75,15 +84,23 @@ export async function apiFetch(
     headers["Content-Type"] = "application/json";
   }
   
-  // In development, prioritize session cookies over Supabase tokens
-  const isDevelopment = import.meta.env?.DEV || import.meta.env?.NODE_ENV === 'development';
+  // Detect environment more reliably
+  const isDevelopment = (
+    (typeof import.meta !== 'undefined' && import.meta.env?.DEV) ||
+    (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development') ||
+    (typeof window !== 'undefined' && window.location.hostname === 'localhost') ||
+    (typeof window !== 'undefined' && window.location.hostname === '127.0.0.1')
+  );
   
-  if (!isDevelopment) {
-    // Only use Supabase JWT token in production/serverless environments
-    const token = await getAccessToken();
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
+  // Always try to get Supabase token if configured
+  let token = null;
+  if (isSupabaseConfigured()) {
+    token = await getAccessToken();
+  }
+  
+  // Use token in production, or in development if it's the only auth method available
+  if (token && !isDevelopment) {
+    headers["Authorization"] = `Bearer ${token}`;
   }
   
   return fetch(url, {
@@ -102,15 +119,23 @@ export const getQueryFn: <T>(options: {
   async ({ queryKey }) => {
     const headers: Record<string, string> = {};
     
-    // In development, prioritize session cookies over Supabase tokens
-    const isDevelopment = import.meta.env?.DEV || import.meta.env?.NODE_ENV === 'development';
+    // Detect environment more reliably
+    const isDevelopment = (
+      (typeof import.meta !== 'undefined' && import.meta.env?.DEV) ||
+      (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development') ||
+      (typeof window !== 'undefined' && window.location.hostname === 'localhost') ||
+      (typeof window !== 'undefined' && window.location.hostname === '127.0.0.1')
+    );
     
-    if (!isDevelopment) {
-      // Only use Supabase JWT token in production/serverless environments
-      let token = await getAccessToken();
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
+    // Always try to get Supabase token if configured
+    let token = null;
+    if (isSupabaseConfigured()) {
+      token = await getAccessToken();
+    }
+    
+    // Use token in production, or in development if it's the only auth method available
+    if (token && !isDevelopment) {
+      headers["Authorization"] = `Bearer ${token}`;
     }
     
     let res = await fetch(queryKey.join("/") as string, {
@@ -118,8 +143,8 @@ export const getQueryFn: <T>(options: {
       headers,
     });
 
-    // If we get a 401 and behavior is "throw", try refreshing token and retry once (production only)
-    if (res.status === 401 && unauthorizedBehavior === "throw" && !isDevelopment && isSupabaseConfigured()) {
+    // If we get a 401 and behavior is "throw", try refreshing token and retry once
+    if (res.status === 401 && unauthorizedBehavior === "throw" && token && isSupabaseConfigured()) {
       console.log('🔄 getQueryFn: Got 401, attempting token refresh and retry...');
       const newToken = await refreshAccessToken();
       if (newToken) {
