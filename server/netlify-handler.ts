@@ -33,6 +33,39 @@ async function getServerlessHandler() {
         });
       });
       
+      // Add a storage debug endpoint
+      app.get('/api/debug-storage', async (req, res) => {
+        console.log('🔍 Debug storage: Starting...');
+        
+        try {
+          console.log('🔍 Debug storage: Importing getStorage...');
+          const { getStorage } = await import('./storage');
+          
+          console.log('🔍 Debug storage: Calling getStorage()...');
+          const storage = await getStorage();
+          
+          console.log('🔍 Debug storage: Storage obtained, testing...');
+          const feeds = await storage.getRecommendedFeeds();
+          
+          console.log(`🔍 Debug storage: Success! Got ${feeds.length} feeds`);
+          
+          res.json({
+            success: true,
+            message: 'Storage working correctly',
+            feedCount: feeds.length,
+            timestamp: new Date().toISOString()
+          });
+        } catch (error) {
+          console.error('❌ Debug storage: Error:', error);
+          res.status(500).json({
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error',
+            stack: error instanceof Error ? error.stack : undefined,
+            timestamp: new Date().toISOString()
+          });
+        }
+      });
+      
       // Try to import and setup the main app
       try {
         console.log('🔧 Attempting to import app-setup...');

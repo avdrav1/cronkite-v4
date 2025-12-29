@@ -92,16 +92,35 @@ export async function registerRoutes(
   // Health Check Route (for deployment validation)
   app.get('/api/health', async (req: Request, res: Response) => {
     try {
-      const storage = await getStorage();
+      console.log('🔍 Health check: Starting storage test...');
+      
+      let storage;
+      try {
+        console.log('🔍 Health check: Calling getStorage()...');
+        storage = await getStorage();
+        console.log('🔍 Health check: getStorage() completed');
+      } catch (storageInitError) {
+        console.error('❌ Health check: getStorage() failed:', storageInitError);
+        return res.status(500).json({
+          status: 'unhealthy',
+          timestamp: new Date().toISOString(),
+          error: 'Storage initialization failed',
+          message: storageInitError instanceof Error ? storageInitError.message : 'Unknown storage init error',
+          details: storageInitError instanceof Error ? storageInitError.stack : undefined
+        });
+      }
       
       // Test storage connectivity
       let storageHealthy = false;
       let storageError = null;
       try {
+        console.log('🔍 Health check: Testing storage with getRecommendedFeeds()...');
         // Try a simple operation to test storage
         const feeds = await storage.getRecommendedFeeds();
         storageHealthy = feeds.length > 0;
+        console.log(`🔍 Health check: getRecommendedFeeds() returned ${feeds.length} feeds`);
       } catch (error) {
+        console.error('❌ Health check: Storage test failed:', error);
         storageError = error instanceof Error ? error.message : 'Unknown storage error';
       }
       
@@ -118,10 +137,12 @@ export async function registerRoutes(
         }
       });
     } catch (error) {
+      console.error('❌ Health check: Unexpected error:', error);
       res.status(500).json({
         status: 'unhealthy',
         timestamp: new Date().toISOString(),
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined
       });
     }
   });
