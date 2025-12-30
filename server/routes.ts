@@ -2835,11 +2835,30 @@ export async function registerRoutes(
           
           if (directClusters.length > 0) {
             console.log(`📊 First cluster: ${directClusters[0].title}`);
+            console.log(`📊 First cluster article_ids:`, directClusters[0].article_ids);
+            console.log(`📊 First cluster article_count:`, directClusters[0].article_count);
             
             // Map clusters with article IDs from the cluster record
-            const clustersWithArticleIds = directClusters.map((cluster) => {
-              // Use article_ids stored directly in cluster, fallback to empty array
-              const articleIds = cluster.article_ids || [];
+            // Use Promise.all since we may need to fetch article IDs from articles table as fallback
+            const clustersWithArticleIds = await Promise.all(directClusters.map(async (cluster) => {
+              // Use article_ids stored directly in cluster, fallback to fetching from articles table
+              let articleIds = cluster.article_ids || [];
+              
+              // If article_ids is empty but article_count > 0, fetch from articles table
+              if (articleIds.length === 0 && cluster.article_count > 0) {
+                console.log(`📊 Cluster "${cluster.title}" has empty article_ids but article_count=${cluster.article_count}, fetching from articles table...`);
+                try {
+                  const fetchedIds = await storage.getArticleIdsByClusterId(cluster.id);
+                  if (fetchedIds.length > 0) {
+                    articleIds = fetchedIds;
+                    console.log(`📊 Fetched ${articleIds.length} article IDs from articles table for cluster "${cluster.title}"`);
+                  }
+                } catch (err) {
+                  console.error(`📊 Failed to fetch article IDs for cluster "${cluster.title}":`, err);
+                }
+              }
+              
+              console.log(`📊 Cluster "${cluster.title}" has ${articleIds.length} articleIds (article_count: ${cluster.article_count})`);
               // Handle timestamps - Supabase returns strings, not Date objects
               const timeframeEnd = cluster.timeframe_end 
                 ? (typeof cluster.timeframe_end === 'string' ? cluster.timeframe_end : cluster.timeframe_end.toISOString())
@@ -2859,7 +2878,7 @@ export async function registerRoutes(
                 latestTimestamp: timeframeEnd,
                 expiresAt: expiresAt
               };
-            });
+            }));
             
             const response = {
               clusters: clustersWithArticleIds,

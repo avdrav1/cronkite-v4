@@ -58,7 +58,7 @@ export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick,
 
     setIsLoading(true);
     try {
-      // Fetch ALL articles by ID from API (includes articles from non-subscribed feeds)
+      // First try: Fetch articles by ID if we have articleIds
       if (cluster.articleIds && cluster.articleIds.length > 0) {
         console.log(`📊 Fetching ${cluster.articleIds.length} articles by IDs for cluster "${cluster.topic}"`);
 
@@ -97,7 +97,35 @@ export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick,
         setArticles(uniqueArticles);
         console.log(`📊 Loaded ${uniqueArticles.length} articles by ID for cluster "${cluster.topic}" (${validArticles.length - uniqueArticles.length} duplicates removed)`);
       } else {
-        console.log(`📊 No articleIds for cluster "${cluster.topic}"`);
+        // Fallback: Use the cluster articles endpoint if no articleIds
+        console.log(`📊 No articleIds for cluster "${cluster.topic}", trying /api/clusters/${cluster.id}/articles endpoint...`);
+        
+        try {
+          const response = await apiFetch('GET', `/api/clusters/${cluster.id}/articles`);
+          if (response.ok) {
+            const data = await response.json();
+            if (data.articles && data.articles.length > 0) {
+              const mappedArticles = data.articles.map((article: any) => ({
+                id: article.id,
+                title: article.title,
+                excerpt: article.excerpt,
+                url: article.url,
+                source: article.source || 'Unknown',
+                published_at: article.published_at,
+                image_url: article.image_url,
+                feed_id: article.feed_id,
+                feed_url: article.feed_url,
+                feed_category: article.feed_category
+              }));
+              setArticles(mappedArticles);
+              console.log(`📊 Loaded ${mappedArticles.length} articles from cluster endpoint for "${cluster.topic}"`);
+              return;
+            }
+          }
+        } catch (err) {
+          console.error('Failed to fetch from cluster articles endpoint:', err);
+        }
+        
         setArticles([]);
       }
     } catch (error) {
