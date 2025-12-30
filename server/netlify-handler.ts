@@ -89,10 +89,13 @@ async function getServerlessHandler() {
         });
         
         app.post('/api/auth/oauth/callback', (req, res) => {
+          console.log('❌ OAuth callback: Using fallback route due to app setup failure');
+          console.log('❌ OAuth callback: Request body:', JSON.stringify(req.body, null, 2));
           res.status(500).json({
             error: 'Authentication unavailable',
-            message: 'Server initialization failed',
-            timestamp: new Date().toISOString()
+            message: 'Server initialization failed - OAuth callback not properly configured',
+            timestamp: new Date().toISOString(),
+            details: setupError instanceof Error ? setupError.message : 'Unknown setup error'
           });
         });
       }

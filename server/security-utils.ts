@@ -309,6 +309,8 @@ const SAFE_PATTERNS = [
   /https:\/\/developer\.mozilla\.org\//gi,
   // GitHub discussion URLs
   /https:\/\/github\.com\/orgs\/supabase\/discussions\//gi,
+  // Radix UI documentation URLs
+  /https:\/\/radix-ui\.com\//gi,
   // Supabase demo tokens (used in development)
   /eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIi/gi,
   // Generic token property names in code

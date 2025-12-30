@@ -486,22 +486,73 @@ export async function registerRoutes(
     }
   });
 
-  // POST /api/auth/oauth/callback - OAuth callback handler for Supabase sessions
-  app.post('/api/auth/oauth/callback', async (req: Request, res: Response) => {
-    console.log('🔐 OAuth callback received');
+  // Debug endpoint for OAuth callback testing
+  app.post('/api/debug/oauth-session', async (req: Request, res: Response) => {
+    console.log('🔍 Debug OAuth session endpoint called');
+    console.log('🔍 Request body:', JSON.stringify(req.body, null, 2));
+    console.log('🔍 Request headers:', req.headers);
     
     try {
       const { session } = req.body;
       
-      if (!session || !session.user) {
-        console.log('❌ OAuth callback: Invalid session data received');
+      res.json({
+        success: true,
+        received: {
+          hasSession: !!session,
+          sessionKeys: session ? Object.keys(session) : [],
+          hasUser: !!(session?.user),
+          userKeys: session?.user ? Object.keys(session.user) : [],
+          sessionStructure: session ? {
+            access_token: !!session.access_token,
+            refresh_token: !!session.refresh_token,
+            expires_at: session.expires_at,
+            user: session.user ? {
+              id: session.user.id,
+              email: session.user.email,
+              hasMetadata: !!session.user.user_metadata,
+              hasAppMetadata: !!session.user.app_metadata
+            } : null
+          } : null
+        }
+      });
+    } catch (error) {
+      console.error('🔍 Debug endpoint error:', error);
+      res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  });
+
+  // POST /api/auth/oauth/callback - OAuth callback handler for Supabase sessions
+  app.post('/api/auth/oauth/callback', async (req: Request, res: Response) => {
+    console.log('🔐 OAuth callback received');
+    console.log('🔐 OAuth callback: Request body keys:', Object.keys(req.body || {}));
+    console.log('🔐 OAuth callback: Session structure:', JSON.stringify(req.body?.session, null, 2));
+    
+    try {
+      const { session } = req.body;
+      
+      if (!session) {
+        console.log('❌ OAuth callback: No session data received');
         return res.status(400).json({
           error: 'Invalid session',
-          message: 'No valid session data provided'
+          message: 'No session data provided'
+        });
+      }
+
+      // Handle both direct user object and session.user structure
+      const supabaseUser = session.user || session;
+      
+      if (!supabaseUser || !supabaseUser.id || !supabaseUser.email) {
+        console.log('❌ OAuth callback: Invalid user data in session');
+        console.log('❌ OAuth callback: User object:', JSON.stringify(supabaseUser, null, 2));
+        return res.status(400).json({
+          error: 'Invalid session',
+          message: 'No valid user data in session'
         });
       }
       
-      const supabaseUser = session.user;
       console.log('🔐 OAuth callback: Processing user:', { 
         id: supabaseUser.id, 
         email: supabaseUser.email,
@@ -509,8 +560,17 @@ export async function registerRoutes(
       });
       
       console.log('🔐 OAuth callback: Getting storage instance...');
-      const storage = await getStorage();
-      console.log('🔐 OAuth callback: Storage instance obtained');
+      let storage;
+      try {
+        storage = await getStorage();
+        console.log('🔐 OAuth callback: Storage instance obtained');
+      } catch (storageError) {
+        console.error('❌ OAuth callback: Storage initialization failed:', storageError);
+        return res.status(500).json({
+          error: 'Storage initialization failed',
+          message: 'Could not initialize database connection'
+        });
+      }
       
       // Get or create user profile from Supabase user data
       // Note: Supabase may have already created the profile via trigger on auth.users insert
@@ -640,13 +700,15 @@ export async function registerRoutes(
       console.error('❌ OAuth callback error:', {
         message: errorMessage,
         stack: errorStack,
-        name: error instanceof Error ? error.name : 'Unknown'
+        name: error instanceof Error ? error.name : 'Unknown',
+        requestBody: req.body ? JSON.stringify(req.body, null, 2) : 'No body'
       });
       
       // Return more detailed error info for debugging (in production, you might want to hide this)
       res.status(500).json({
         error: 'OAuth callback failed',
         message: errorMessage,
+        timestamp: new Date().toISOString(),
         details: process.env.NODE_ENV === 'development' ? errorStack : undefined
       });
     }

@@ -493,7 +493,7 @@ export function AddFriendFlow() {
                 </p>
                 <div className="flex gap-2">
                   <Input
-                    value="https://cronkite.cc/invite?ref=your-username"
+                    value={`${window.location.origin}/invite?ref=your-username`}
                     readOnly
                     className="text-center"
                   />
