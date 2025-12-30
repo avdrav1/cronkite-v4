@@ -21,20 +21,40 @@ const PgSession = connectPgSimple(session);
 // Determine if we're in production
 const isProduction = process.env.NODE_ENV === 'production';
 
+// Determine if we're in a serverless environment
+const isServerless = !!(process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.VERCEL);
+
 // Create session store based on environment
 function createSessionStore() {
-  // Use PostgreSQL store if DATABASE_URL is available (recommended for persistence)
+  // In serverless environments, use memory store (sessions won't persist between invocations anyway)
+  // This avoids connection issues with PostgreSQL poolers in cold starts
+  if (isServerless) {
+    console.log('⚠️  Using memory session store for serverless environment');
+    console.log('ℹ️  Sessions will not persist between function invocations - use JWT tokens for auth');
+    return new MemoryStore({
+      checkPeriod: 86400000 // prune expired entries every 24h
+    });
+  }
+  
+  // Use PostgreSQL store if DATABASE_URL is available (recommended for persistence in non-serverless)
   if (process.env.DATABASE_URL) {
     console.log('🔐 Using PostgreSQL session store for persistence');
-    return new PgSession({
-      conString: process.env.DATABASE_URL,
-      tableName: 'user_sessions', // Custom table name
-      createTableIfMissing: true, // Auto-create table
-      pruneSessionInterval: 60 * 15, // Prune expired sessions every 15 minutes
-      errorLog: (error) => {
-        console.error('🔐 Session store error:', error);
-      }
-    });
+    try {
+      return new PgSession({
+        conString: process.env.DATABASE_URL,
+        tableName: 'user_sessions', // Custom table name
+        createTableIfMissing: true, // Auto-create table
+        pruneSessionInterval: 60 * 15, // Prune expired sessions every 15 minutes
+        errorLog: (error) => {
+          console.error('🔐 Session store error:', error);
+        }
+      });
+    } catch (error) {
+      console.error('⚠️  Failed to create PostgreSQL session store, falling back to memory:', error);
+      return new MemoryStore({
+        checkPeriod: 86400000
+      });
+    }
   }
   
   // Fallback to memory store (sessions won't persist across restarts)

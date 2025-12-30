@@ -107,9 +107,34 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const handleOAuthSession = async (session: any) => {
     try {
       backupSession(session);
-      const response = await apiRequest('POST', '/api/auth/oauth/callback', { session });
-      const data = await response.json();
-      setUser(data.user);
+      
+      // Try to establish backend session first
+      try {
+        const response = await apiRequest('POST', '/api/auth/oauth/callback', { session });
+        if (response.ok) {
+          const data = await response.json();
+          setUser(data.user);
+          console.log('✅ AuthContext: OAuth session established via backend');
+          return;
+        }
+      } catch (backendError) {
+        console.warn('⚠️ AuthContext: Backend OAuth callback failed, trying JWT auth:', backendError);
+      }
+      
+      // Backend session failed - try to get user profile using JWT token
+      // This works in serverless environments where sessions don't persist
+      console.log('🔐 AuthContext: Attempting JWT-based authentication...');
+      const meResponse = await apiRequest('GET', '/api/auth/me');
+      if (meResponse.ok) {
+        const data = await meResponse.json();
+        setUser(data.user);
+        console.log('✅ AuthContext: Authenticated via JWT token');
+        return;
+      }
+      
+      // If both methods fail, user is not authenticated
+      console.error('❌ AuthContext: All authentication methods failed');
+      setUser(null);
     } catch (error) {
       console.error('OAuth session handling error:', error);
       setUser(null);

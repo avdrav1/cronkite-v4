@@ -24,7 +24,10 @@ export default function AuthCallback() {
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         console.error('🔐 AuthCallback: Backend session error:', response.status, errorData);
-        throw new Error(errorData.message || 'Failed to establish session');
+        // Don't throw - backend session is optional in serverless environments
+        // The Supabase JWT token will be used for authentication instead
+        console.warn('⚠️ AuthCallback: Backend session failed, will use JWT token auth');
+        return false;
       }
       
       const data = await response.json();
@@ -32,7 +35,9 @@ export default function AuthCallback() {
       return true;
     } catch (err) {
       console.error('🔐 AuthCallback: Failed to establish backend session:', err);
-      throw err;
+      // Don't throw - backend session is optional
+      console.warn('⚠️ AuthCallback: Backend session failed, will use JWT token auth');
+      return false;
     }
   };
 
@@ -149,8 +154,11 @@ export default function AuthCallback() {
           throw new Error('No session found after OAuth callback. Please try logging in again.');
         }
 
-        // We have a session - establish backend session
-        await establishBackendSession(session);
+        // We have a session - try to establish backend session (optional in serverless)
+        const backendSessionEstablished = await establishBackendSession(session);
+        if (!backendSessionEstablished) {
+          console.log('ℹ️ AuthCallback: Continuing without backend session - using JWT auth');
+        }
         
         // Verify the session is persisted before proceeding
         const isPersisted = await verifySessionPersisted(supabase);
