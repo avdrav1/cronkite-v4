@@ -155,10 +155,13 @@ export function ArticleCard({ article, onClick, onRemove, onStar, onReadChange, 
         "group relative bg-card text-card-foreground rounded-xl border overflow-hidden cursor-pointer shadow-sm hover:shadow-xl transition-shadow duration-300 break-inside-avoid flex flex-col",
         localIsRead ? "opacity-70 border-transparent bg-muted/20" : "border-border/50",
         variant === "large" && "row-span-2",
-        // Cluster visual indicator - colored left border
-        cluster_id && clusterColor && `border-l-4`
+        // Cluster visual indicator - colored left border and light border around entire card
+        cluster_id && clusterColor && `border-l-4 border-2`
       )}
-      style={cluster_id && clusterColor ? { borderLeftColor: clusterColor } : undefined}
+      style={cluster_id && clusterColor ? { 
+        borderLeftColor: clusterColor,
+        borderColor: `${clusterColor}30` // Light version of cluster color for outer border
+      } : undefined}
       onClick={() => onClick(article)}
     >
       {/* Cluster Badge - shown for articles in a cluster */}
