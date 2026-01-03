@@ -27,14 +27,14 @@ export async function apiRequest(
     (typeof window !== 'undefined' && window.location.hostname === '127.0.0.1')
   );
 
-  // Always try to get Supabase token first
+  // Always try to get Supabase token first, but only use it in production or if explicitly configured
   let token = null;
   if (isSupabaseConfigured()) {
     token = await getAccessToken();
   }
 
-  // Always use JWT token when available
-  if (token) {
+  // Use token in production, or in development if it's the only auth method available
+  if (token && !isDevelopment) {
     headers["Authorization"] = `Bearer ${token}`;
   }
 
@@ -111,8 +111,8 @@ export async function apiFetch(
     token = await getAccessToken();
   }
   
-  // Always use JWT token when available
-  if (token) {
+  // Use token in production, or in development if it's the only auth method available
+  if (token && !isDevelopment) {
     headers["Authorization"] = `Bearer ${token}`;
   }
   
@@ -146,8 +146,8 @@ export const getQueryFn: <T>(options: {
       token = await getAccessToken();
     }
     
-    // Always use JWT token when available
-    if (token) {
+    // Use token in production, or in development if it's the only auth method available
+    if (token && !isDevelopment) {
       headers["Authorization"] = `Bearer ${token}`;
     }
     
