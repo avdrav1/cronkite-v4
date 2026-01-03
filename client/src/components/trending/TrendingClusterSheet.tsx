@@ -150,8 +150,10 @@ export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick,
       // Add to local subscribed state
       setLocalSubscribedIds(prev => new Set([...Array.from(prev), article.feed_id!]));
 
-      // Invalidate feeds query to refresh sidebar
-      queryClient.invalidateQueries({ queryKey: ['/api/feeds'] });
+      // Invalidate queries to refresh sidebar and counts
+      queryClient.invalidateQueries({ queryKey: ['user-feeds'] });
+      queryClient.invalidateQueries({ queryKey: ['feed-count'] });
+      queryClient.invalidateQueries({ queryKey: ['article-counts'] });
 
       toast({
         title: "Subscribed",
@@ -198,7 +200,7 @@ export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick,
             <div className="flex items-center gap-1.5 text-xs font-medium text-primary bg-primary/10 px-2 py-1 rounded-full">
               <Newspaper className="h-3 w-3" />
               <span>
-                {isLoading ? 'Loading...' : `${articles.length} article${articles.length !== 1 ? 's' : ''}`}
+                {isLoading ? 'Loading...' : `${articles.length} article${articles.length !== 1 ? 's' : ''} available`}
               </span>
             </div>
             {cluster.sources.slice(0, 4).map((source, i) => (
@@ -312,7 +314,8 @@ export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick,
             </div>
           ) : (
             <div className="text-center py-8 text-muted-foreground text-sm">
-              <p>Articles in this cluster will appear here</p>
+              <p>No articles currently available for this topic</p>
+              <p className="text-xs mt-1">Articles may still be loading or unavailable</p>
             </div>
           )}
         </div>

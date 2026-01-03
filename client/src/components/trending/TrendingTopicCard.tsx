@@ -57,9 +57,9 @@ export function TrendingTopicCard({ cluster, onClick }: TrendingTopicCardProps) 
               <img src={resolveImage(thumb)} alt="" className="h-full w-full object-cover" />
             </div>
           ))}
-          {cluster.articleCount > 3 && (
+          {cluster.sources.length > 3 && (
             <div className="h-10 w-10 rounded-full border-2 border-background bg-muted flex items-center justify-center text-[10px] font-bold text-muted-foreground -ml-2 relative z-0" style={{ zIndex: 0 }}>
-              +{cluster.articleCount - 3}
+              +{cluster.sources.length - 3}
             </div>
           )}
         </div>
@@ -74,7 +74,7 @@ export function TrendingTopicCard({ cluster, onClick }: TrendingTopicCardProps) 
             </p>
           )}
           <p className="text-xs text-muted-foreground/80">
-            {cluster.articleCount} stories from {cluster.sources.join(", ")}
+            From {cluster.sources.length} source{cluster.sources.length !== 1 ? 's' : ''}: {cluster.sources.join(", ")}
           </p>
         </div>
       </div>
