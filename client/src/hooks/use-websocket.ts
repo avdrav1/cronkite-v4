@@ -218,6 +218,14 @@ export function useWebSocket() {
    * Connect to WebSocket server
    */
   const connect = useCallback(() => {
+    // Disable WebSocket in production (use Supabase Realtime instead)
+    const isProduction = window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
+    if (isProduction) {
+      console.log('📱 WebSocket disabled in production - using Supabase Realtime');
+      setConnectionState('disconnected');
+      return;
+    }
+
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       return; // Already connected
     }

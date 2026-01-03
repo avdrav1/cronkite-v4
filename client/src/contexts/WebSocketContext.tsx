@@ -117,10 +117,6 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
       }));
     }
   };
-      
-      console.log('🔌 Connecting to WebSocket:', wsUrl);
-      
-      wsRef.current = new WebSocket(wsUrl);
 
       wsRef.current.onopen = () => {
         console.log('🔌 WebSocket connected');
