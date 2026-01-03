@@ -26,17 +26,7 @@ const isServerless = !!(process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_N
 
 // Create session store based on environment
 function createSessionStore() {
-  // In serverless environments, use memory store (sessions won't persist between invocations anyway)
-  // This avoids connection issues with PostgreSQL poolers in cold starts
-  if (isServerless) {
-    console.log('⚠️  Using memory session store for serverless environment');
-    console.log('ℹ️  Sessions will not persist between function invocations - use JWT tokens for auth');
-    return new MemoryStore({
-      checkPeriod: 86400000 // prune expired entries every 24h
-    });
-  }
-  
-  // Use PostgreSQL store if DATABASE_URL is available (recommended for persistence in non-serverless)
+  // Use PostgreSQL store if DATABASE_URL is available (recommended for persistence)
   if (process.env.DATABASE_URL) {
     console.log('🔐 Using PostgreSQL session store for persistence');
     try {
@@ -55,6 +45,15 @@ function createSessionStore() {
         checkPeriod: 86400000
       });
     }
+  }
+  
+  // In serverless environments without DATABASE_URL, use memory store
+  if (isServerless) {
+    console.log('⚠️  Using memory session store for serverless environment');
+    console.log('ℹ️  Sessions will not persist between function invocations - use JWT tokens for auth');
+    return new MemoryStore({
+      checkPeriod: 86400000 // prune expired entries every 24h
+    });
   }
   
   // Fallback to memory store (sessions won't persist across restarts)
