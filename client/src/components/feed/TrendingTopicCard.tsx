@@ -76,11 +76,8 @@ export function TrendingTopicCard({
           {/* Footer */}
           <div className="flex items-center justify-between pt-3 border-t border-primary/10">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-primary bg-primary/10 px-2 py-1 rounded-full">
-                {cluster.articleCount} articles
-              </span>
               <span className="text-xs text-muted-foreground">
-                from {cluster.sources.length} sources
+                From {cluster.sources.length} source{cluster.sources.length !== 1 ? 's' : ''}
               </span>
             </div>
             <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-all" />

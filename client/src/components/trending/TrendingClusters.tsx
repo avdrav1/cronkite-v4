@@ -148,7 +148,7 @@ export function TrendingClusters({ onClusterClick, activeClusterId, className }:
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <span className="text-xs font-bold text-primary bg-primary/10 px-1.5 py-0.5 rounded">
-                        {cluster.articleCount} articles
+                        From {cluster.sources.length} source{cluster.sources.length !== 1 ? 's' : ''}
                       </span>
                       
                       {/* Source diversity indicator - Requirements: 2.7 */}
