@@ -82,7 +82,7 @@ export function useFeedCountQuery() {
 
 /**
  * Hook for fetching article counts per feed
- * Uses TanStack Query with 2-minute stale time
+ * Uses TanStack Query with 30-second stale time for more frequent updates
  */
 export function useArticleCountsQuery() {
   return useQuery<ArticleCountsResponse>({
@@ -91,7 +91,8 @@ export function useArticleCountsQuery() {
       const response = await apiRequest('GET', '/api/feeds/article-counts');
       return response.json();
     },
-    staleTime: 2 * 60 * 1000, // 2 minutes
+    staleTime: 30 * 1000, // 30 seconds for more frequent updates
+    refetchInterval: 60 * 1000, // Auto-refetch every minute
   });
 }
 

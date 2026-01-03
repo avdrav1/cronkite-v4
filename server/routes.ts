@@ -714,6 +714,15 @@ export async function registerRoutes(
     }
   });
   
+  // GET /api/auth/health - Lightweight session health check
+  app.get('/api/auth/health', (req: Request, res: Response) => {
+    if (req.isAuthenticated() && req.user) {
+      res.json({ status: 'healthy' });
+    } else {
+      res.status(401).json({ status: 'unhealthy' });
+    }
+  });
+  
   // GET /api/auth/me - Get current user profile
   app.get('/api/auth/me', requireAuth, (req: Request, res: Response) => {
     const user = req.user!;

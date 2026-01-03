@@ -20,8 +20,6 @@ export async function apiRequest(
   }
   
   // Detect environment more reliably
-  // In development: use session cookies only
-  // In production: use Supabase JWT tokens with session cookie fallback
   const isDevelopment = (
     (typeof import.meta !== 'undefined' && import.meta.env?.DEV) ||
     (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development') ||
@@ -40,33 +38,48 @@ export async function apiRequest(
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  let res = await fetch(url, {
-    method,
-    headers,
-    body: data ? JSON.stringify(data) : undefined,
-    credentials: "include", // Always include cookies for session auth
-  });
+  // Add timeout to prevent hanging requests
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
 
-  // If we get a 401, try refreshing the token and retry once
-  if (res.status === 401 && token && isSupabaseConfigured()) {
-    console.log('🔄 apiRequest: Got 401, attempting token refresh and retry...');
-    const newToken = await refreshAccessToken();
-    if (newToken) {
-      headers["Authorization"] = `Bearer ${newToken}`;
-      res = await fetch(url, {
-        method,
-        headers,
-        body: data ? JSON.stringify(data) : undefined,
-        credentials: "include",
-      });
-      if (res.ok) {
-        console.log('✅ apiRequest: Retry successful after token refresh');
+  try {
+    let res = await fetch(url, {
+      method,
+      headers,
+      body: data ? JSON.stringify(data) : undefined,
+      credentials: "include",
+      signal: controller.signal,
+    });
+
+    // If we get a 401, try refreshing the token and retry once
+    if (res.status === 401 && token && isSupabaseConfigured()) {
+      console.log('🔄 apiRequest: Got 401, attempting token refresh and retry...');
+      const newToken = await refreshAccessToken();
+      if (newToken) {
+        headers["Authorization"] = `Bearer ${newToken}`;
+        res = await fetch(url, {
+          method,
+          headers,
+          body: data ? JSON.stringify(data) : undefined,
+          credentials: "include",
+          signal: controller.signal,
+        });
+        if (res.ok) {
+          console.log('✅ apiRequest: Retry successful after token refresh');
+        }
       }
     }
-  }
 
-  await throwIfResNotOk(res);
-  return res;
+    clearTimeout(timeoutId);
+    await throwIfResNotOk(res);
+    return res;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`Request timeout: ${url}`);
+    }
+    throw error;
+  }
 }
 
 /**
@@ -173,8 +186,16 @@ export const queryClient = new QueryClient({
       queryFn: getQueryFn({ on401: "throw" }),
       refetchInterval: false,
       refetchOnWindowFocus: false,
-      staleTime: Infinity,
-      retry: false,
+      staleTime: 2 * 60 * 1000, // 2 minutes instead of Infinity
+      retry: (failureCount, error) => {
+        // Don't retry auth errors
+        if (error instanceof Error && error.message.includes('401')) {
+          return false;
+        }
+        // Retry network errors up to 2 times
+        return failureCount < 2;
+      },
+      retryDelay: attemptIndex => Math.min(1000 * 2 ** attemptIndex, 30000),
     },
     mutations: {
       retry: false,
