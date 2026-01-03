@@ -1,11 +1,13 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { getSupabaseClient, isSupabaseConfigured } from '@shared/supabase';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 
 /**
  * WebSocket message types
  */
 export interface WebSocketMessage {
-  type: 'auth' | 'notification' | 'ping' | 'pong' | 'error' | 'comment_update' | 'friend_status_update';
+  type: 'notification' | 'comment_update' | 'friend_status_update';
   data?: any;
   userId?: string;
   timestamp?: number;
@@ -54,20 +56,67 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
     lastError: null as string | null
   });
 
-  const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const channelRef = useRef<RealtimeChannel | null>(null);
 
   const connect = () => {
-    if (!user || wsRef.current?.readyState === WebSocket.CONNECTING) {
+    if (!user || !isSupabaseConfigured()) {
+      setConnectionState('disconnected');
+      return;
+    }
+
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      setConnectionState('error');
       return;
     }
 
     try {
       setConnectionState('connecting');
+      console.log('🔌 Connecting to Supabase Realtime for user:', user.id);
       
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws`;
+      channelRef.current = supabase
+        .channel(`user_${user.id}`)
+        .on('broadcast', { event: 'notification' }, (payload) => {
+          console.log('📱 Realtime notification:', payload);
+          setLastNotification(payload.payload);
+        })
+        .on('broadcast', { event: 'comment_update' }, (payload) => {
+          console.log('📝 Realtime comment update:', payload);
+          setLastCommentUpdate(payload.payload);
+        })
+        .on('broadcast', { event: 'friend_status_update' }, (payload) => {
+          console.log('👥 Realtime friend status update:', payload);
+          setLastFriendStatusUpdate(payload.payload);
+        })
+        .subscribe((status) => {
+          console.log('🔌 Supabase Realtime status:', status);
+          
+          if (status === 'SUBSCRIBED') {
+            setConnectionState('connected');
+            setConnectionStats(prev => ({
+              ...prev,
+              connectedAt: new Date(),
+              reconnectAttempts: 0,
+              lastError: null
+            }));
+          } else if (status === 'CHANNEL_ERROR') {
+            setConnectionState('error');
+            setConnectionStats(prev => ({
+              ...prev,
+              lastError: 'Channel subscription failed'
+            }));
+          }
+        });
+
+    } catch (error) {
+      console.error('🔌 Supabase Realtime connection error:', error);
+      setConnectionState('error');
+      setConnectionStats(prev => ({
+        ...prev,
+        lastError: error instanceof Error ? error.message : 'Unknown error'
+      }));
+    }
+  };
       
       console.log('🔌 Connecting to WebSocket:', wsUrl);
       
@@ -159,59 +208,19 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
   };
 
   const disconnect = () => {
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-      reconnectTimeoutRef.current = null;
+    if (channelRef.current) {
+      console.log('🔌 Disconnecting from Supabase Realtime');
+      channelRef.current.unsubscribe();
+      channelRef.current = null;
     }
-    
-    stopHeartbeat();
-    
-    if (wsRef.current) {
-      wsRef.current.close(1000, 'Client disconnect');
-      wsRef.current = null;
-    }
-    
     setConnectionState('disconnected');
-  };
-
-  const scheduleReconnect = () => {
-    if (reconnectTimeoutRef.current) {
-      return; // Already scheduled
-    }
-
-    setConnectionStats(prev => ({
-      ...prev,
-      reconnectAttempts: prev.reconnectAttempts + 1
-    }));
-
-    const delay = Math.min(1000 * Math.pow(2, connectionStats.reconnectAttempts), 30000);
-    console.log(`🔌 Scheduling reconnect in ${delay}ms (attempt ${connectionStats.reconnectAttempts + 1})`);
-
-    reconnectTimeoutRef.current = setTimeout(() => {
-      reconnectTimeoutRef.current = null;
-      connect();
-    }, delay);
-  };
-
-  const startHeartbeat = () => {
-    stopHeartbeat();
-    heartbeatIntervalRef.current = setInterval(() => {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
-      }
-    }, 30000);
-  };
-
-  const stopHeartbeat = () => {
-    if (heartbeatIntervalRef.current) {
-      clearInterval(heartbeatIntervalRef.current);
-      heartbeatIntervalRef.current = null;
-    }
   };
 
   const reconnect = () => {
     disconnect();
-    setTimeout(connect, 100);
+    if (user) {
+      connect();
+    }
   };
 
   // Connect when user is available
@@ -226,13 +235,6 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
       disconnect();
     };
   }, [user]);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      disconnect();
-    };
-  }, []);
 
   const contextValue: WebSocketContextType = {
     connectionState,
