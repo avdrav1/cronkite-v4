@@ -19,6 +19,7 @@ interface ClusterArticle {
   feed_id?: string;
   feed_url?: string;
   feed_category?: string;
+  isSubscribed?: boolean;
 }
 
 interface TrendingClusterSheetProps {
@@ -58,13 +59,13 @@ export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick,
 
     setIsLoading(true);
     try {
-      // First try: Fetch articles by ID if we have articleIds
+      // Fetch ALL articles in the cluster (not just from subscribed feeds)
+      console.log(`📊 Fetching ALL articles for cluster "${cluster.topic}"`);
+      
       if (cluster.articleIds && cluster.articleIds.length > 0) {
-        console.log(`📊 Fetching ${cluster.articleIds.length} articles by IDs for cluster "${cluster.topic}"`);
-
         const articlePromises = cluster.articleIds.map(async (id) => {
           try {
-            const response = await apiFetch('GET', `/api/articles/${id}`);
+            const response = await apiFetch('GET', `/api/articles/${id}?includeUnsubscribed=true`);
             if (response.ok) {
               const data = await response.json();
               return data.article;
@@ -81,27 +82,25 @@ export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick,
           title: article.title,
           excerpt: article.excerpt,
           url: article.url,
-          source: article.feed_name || 'Unknown',
+          source: article.feed_name || article.source || 'Unknown',
           published_at: article.published_at || article.created_at,
           image_url: article.image_url,
           feed_id: article.feed_id,
           feed_url: article.feed_url,
-          feed_category: article.feed_category
+          feed_category: article.feed_category,
+          // Mark if user is subscribed to this feed
+          isSubscribed: article.feed_id ? allSubscribedFeedIds.has(article.feed_id) : false
         }));
 
-        // Deduplicate articles by URL (same article content may exist in multiple feeds)
-        const uniqueArticles = validArticles.filter((article, index, self) =>
-          index === self.findIndex(a => a.url === article.url)
-        );
-
-        setArticles(uniqueArticles);
-        console.log(`📊 Loaded ${uniqueArticles.length} articles by ID for cluster "${cluster.topic}" (${validArticles.length - uniqueArticles.length} duplicates removed)`);
+        // Don't deduplicate - show all articles so users can see the full scope
+        setArticles(validArticles);
+        console.log(`📊 Loaded ${validArticles.length} articles for cluster "${cluster.topic}"`);
       } else {
-        // Fallback: Use the cluster articles endpoint if no articleIds
+        // Fallback: Use the cluster articles endpoint
         console.log(`📊 No articleIds for cluster "${cluster.topic}", trying /api/clusters/${cluster.id}/articles endpoint...`);
         
         try {
-          const response = await apiFetch('GET', `/api/clusters/${cluster.id}/articles`);
+          const response = await apiFetch('GET', `/api/clusters/${cluster.id}/articles?includeAll=true`);
           if (response.ok) {
             const data = await response.json();
             if (data.articles && data.articles.length > 0) {
@@ -115,7 +114,8 @@ export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick,
                 image_url: article.image_url,
                 feed_id: article.feed_id,
                 feed_url: article.feed_url,
-                feed_category: article.feed_category
+                feed_category: article.feed_category,
+                isSubscribed: article.feed_id ? allSubscribedFeedIds.has(article.feed_id) : false
               }));
               setArticles(mappedArticles);
               console.log(`📊 Loaded ${mappedArticles.length} articles from cluster endpoint for "${cluster.topic}"`);
@@ -227,7 +227,7 @@ export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick,
           ) : articles.length > 0 ? (
             <div className="space-y-3">
               {articles.map((article) => {
-                const isSubscribed = article.feed_id ? allSubscribedFeedIds.has(article.feed_id) : true;
+                const isSubscribed = article.isSubscribed ?? (article.feed_id ? allSubscribedFeedIds.has(article.feed_id) : true);
                 const isSubscribing = subscribingFeedId === article.feed_id;
 
                 return (
