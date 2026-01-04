@@ -63,7 +63,11 @@ export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick,
       console.log(`📊 Fetching ALL articles for cluster "${cluster.topic}"`);
       
       if (cluster.articleIds && cluster.articleIds.length > 0) {
-        const articlePromises = cluster.articleIds.map(async (id) => {
+        // Deduplicate article IDs first
+        const uniqueArticleIds = Array.from(new Set(cluster.articleIds));
+        console.log(`📊 Cluster has ${cluster.articleIds.length} articleIds, ${uniqueArticleIds.length} unique`);
+        
+        const articlePromises = uniqueArticleIds.map(async (id) => {
           try {
             const response = await apiFetch('GET', `/api/articles/${id}?includeUnsubscribed=true`);
             if (response.ok) {
@@ -92,16 +96,18 @@ export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick,
           isSubscribed: article.feed_id ? allSubscribedFeedIds.has(article.feed_id) : false
         }));
 
-        // Don't deduplicate - show all articles so users can see the full scope
-        // Deduplicate by article ID
-        const seen = new Set<string>();
+        // Deduplicate by article ID and URL
+        const seenIds = new Set<string>();
+        const seenUrls = new Set<string>();
         const uniqueArticles = validArticles.filter(article => {
-          if (seen.has(article.id)) return false;
-          seen.add(article.id);
+          if (seenIds.has(article.id)) return false;
+          if (article.url && seenUrls.has(article.url)) return false;
+          seenIds.add(article.id);
+          if (article.url) seenUrls.add(article.url);
           return true;
         });
         setArticles(uniqueArticles);
-        console.log(`📊 Loaded ${uniqueArticles.length} unique articles for cluster "${cluster.topic}"`);
+        console.log(`📊 Loaded ${uniqueArticles.length} unique articles (from ${validArticles.length} total) for cluster "${cluster.topic}"`);
       } else {
         // Fallback: Use the cluster articles endpoint
         console.log(`📊 No articleIds for cluster "${cluster.topic}", trying /api/clusters/${cluster.id}/articles endpoint...`);
@@ -124,11 +130,14 @@ export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick,
                 feed_category: article.feed_category,
                 isSubscribed: article.feed_id ? allSubscribedFeedIds.has(article.feed_id) : false
               }));
-              // Deduplicate by article ID
-              const seen = new Set<string>();
+              // Deduplicate by article ID and URL
+              const seenIds = new Set<string>();
+              const seenUrls = new Set<string>();
               const uniqueArticles = mappedArticles.filter((article: ClusterArticle) => {
-                if (seen.has(article.id)) return false;
-                seen.add(article.id);
+                if (seenIds.has(article.id)) return false;
+                if (article.url && seenUrls.has(article.url)) return false;
+                seenIds.add(article.id);
+                if (article.url) seenUrls.add(article.url);
                 return true;
               });
               setArticles(uniqueArticles);
@@ -242,7 +251,8 @@ export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick,
                 }, {} as Record<string, ClusterArticle[]>)
               ).map(([source, sourceArticles]) => {
                 const firstArticle = sourceArticles[0];
-                const isSubscribed = firstArticle.isSubscribed ?? (firstArticle.feed_id ? allSubscribedFeedIds.has(firstArticle.feed_id) : true);
+                // Recalculate subscription status using current allSubscribedFeedIds
+                const isSubscribed = firstArticle.feed_id ? allSubscribedFeedIds.has(firstArticle.feed_id) : true;
                 const isSubscribing = subscribingFeedId === firstArticle.feed_id;
 
                 return (
