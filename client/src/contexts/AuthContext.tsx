@@ -43,30 +43,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     console.log('🔐 AuthContext: Starting auth check...');
     
     try {
-      // First, try to check if we have an existing backend session
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000); // Reduced timeout
-      
-      let response: Response;
-      try {
-        response = await fetch('/api/auth/me', {
-          method: 'GET',
-          credentials: 'include',
-          signal: controller.signal
-        });
-        clearTimeout(timeoutId);
-      } catch (fetchError) {
-        clearTimeout(timeoutId);
-        console.warn('⚠️ AuthContext: /api/auth/me request failed or timed out');
-        setUser(null);
-        return;
-      }
+      // Check authentication using JWT tokens (works in serverless environments)
+      console.log('🔐 AuthContext: Checking authentication with JWT tokens...');
+      const response = await apiRequest('GET', '/api/auth/me');
       
       console.log('🔐 AuthContext: /api/auth/me response status:', response.status);
 
       if (response.ok) {
         const data = await response.json();
-        console.log('✅ AuthContext: Authenticated via backend session:', data.user?.email);
+        console.log('✅ AuthContext: Authenticated via JWT token:', data.user?.email);
         setUser(data.user);
         return;
       }
