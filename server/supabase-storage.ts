@@ -2511,39 +2511,38 @@ export class SupabaseStorage implements IStorage {
     const feedIds = userFeeds.map(f => f.id);
     console.log(`📊 Getting article counts for ${feedIds.length} feeds for user ${userId}`);
     
-    // Get article counts for each feed using a single query with grouping
+    // Get article counts using RPC function for better performance
     const { data, error } = await this.supabase
-      .from('articles')
-      .select('feed_id')
-      .in('feed_id', feedIds);
+      .rpc('get_article_counts_by_feed', { feed_ids: feedIds });
     
     if (error) {
-      console.error('Failed to get article counts:', error);
-      return result;
-    }
-    
-    console.log(`📊 Found ${data?.length || 0} articles across all feeds`);
-    
-    // Debug: Check if articles exist for specific feeds that show 0 counts
-    const debugFeeds = userFeeds.filter(f => f.name.includes('Guardian') || f.name.includes('BBC'));
-    for (const feed of debugFeeds) {
-      const { data: debugData, error: debugError } = await this.supabase
+      console.error('RPC failed, falling back to direct query:', error);
+      // Fallback to direct query with higher limit
+      const { data: fallbackData, error: fallbackError } = await this.supabase
         .from('articles')
-        .select('id, title, feed_id')
-        .eq('feed_id', feed.id)
-        .limit(3);
+        .select('feed_id')
+        .in('feed_id', feedIds)
+        .limit(50000);
       
-      if (!debugError && debugData) {
-        console.log(`🔍 Debug: Feed "${feed.name}" (${feed.id}) has ${debugData.length} articles in direct query:`, 
-          debugData.map(a => a.title?.substring(0, 50) + '...'));
+      if (fallbackError) {
+        console.error('Failed to get article counts:', fallbackError);
+        return result;
       }
-    }
-    
-    // Count articles per feed
-    if (data) {
-      for (const article of data) {
-        const count = result.get(article.feed_id) || 0;
-        result.set(article.feed_id, count + 1);
+      
+      console.log(`📊 Found ${fallbackData?.length || 0} articles across all feeds (fallback)`);
+      
+      // Count articles per feed
+      if (fallbackData) {
+        for (const article of fallbackData) {
+          const count = result.get(article.feed_id) || 0;
+          result.set(article.feed_id, count + 1);
+        }
+      }
+    } else if (data) {
+      console.log(`📊 Got article counts from RPC for ${data.length} feeds`);
+      // RPC returns { feed_id, count } objects
+      for (const row of data) {
+        result.set(row.feed_id, row.count);
       }
     }
     
