@@ -2528,4 +2528,3 @@ export class SupabaseStorage implements IStorage {
     return result;
   }
 }
-}
