@@ -2509,6 +2509,7 @@ export class SupabaseStorage implements IStorage {
     }
     
     const feedIds = userFeeds.map(f => f.id);
+    console.log(`📊 Getting article counts for ${feedIds.length} feeds for user ${userId}`);
     
     // Get article counts for each feed using a single query with grouping
     const { data, error } = await this.supabase
@@ -2521,6 +2522,23 @@ export class SupabaseStorage implements IStorage {
       return result;
     }
     
+    console.log(`📊 Found ${data?.length || 0} articles across all feeds`);
+    
+    // Debug: Check if articles exist for specific feeds that show 0 counts
+    const debugFeeds = userFeeds.filter(f => f.name.includes('Guardian') || f.name.includes('BBC'));
+    for (const feed of debugFeeds) {
+      const { data: debugData, error: debugError } = await this.supabase
+        .from('articles')
+        .select('id, title, feed_id')
+        .eq('feed_id', feed.id)
+        .limit(3);
+      
+      if (!debugError && debugData) {
+        console.log(`🔍 Debug: Feed "${feed.name}" (${feed.id}) has ${debugData.length} articles in direct query:`, 
+          debugData.map(a => a.title?.substring(0, 50) + '...'));
+      }
+    }
+    
     // Count articles per feed
     if (data) {
       for (const article of data) {
@@ -2529,10 +2547,13 @@ export class SupabaseStorage implements IStorage {
       }
     }
     
-    // Ensure all feeds have an entry (even if 0)
+    // Ensure all feeds have an entry (even if 0) and log feeds with 0 counts
     for (const feed of userFeeds) {
       if (!result.has(feed.id)) {
         result.set(feed.id, 0);
+        console.log(`📊 Feed "${feed.name}" (${feed.id}) has 0 articles`);
+      } else {
+        console.log(`📊 Feed "${feed.name}" (${feed.id}) has ${result.get(feed.id)} articles`);
       }
     }
     
