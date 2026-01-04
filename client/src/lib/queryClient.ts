@@ -33,8 +33,9 @@ export async function apiRequest(
     token = await getAccessToken();
   }
 
-  // Always use JWT token when available (needed for serverless environments)
-  if (token) {
+  // Always use JWT token when available, but skip during OAuth callback to avoid conflicts
+  const isOAuthCallback = window.location.pathname === '/auth/callback';
+  if (token && !isOAuthCallback) {
     headers["Authorization"] = `Bearer ${token}`;
   }
 
@@ -111,8 +112,9 @@ export async function apiFetch(
     token = await getAccessToken();
   }
   
-  // Always use JWT token when available
-  if (token) {
+  // Always use JWT token when available, but skip during OAuth callback
+  const isOAuthCallback = window.location.pathname === '/auth/callback';
+  if (token && !isOAuthCallback) {
     headers["Authorization"] = `Bearer ${token}`;
   }
   
@@ -146,8 +148,9 @@ export const getQueryFn: <T>(options: {
       token = await getAccessToken();
     }
     
-    // Always use JWT token when available
-    if (token) {
+    // Always use JWT token when available, but skip during OAuth callback
+    const isOAuthCallback = window.location.pathname === '/auth/callback';
+    if (token && !isOAuthCallback) {
       headers["Authorization"] = `Bearer ${token}`;
     }
     
