@@ -3032,11 +3032,66 @@ export async function registerRoutes(
     try {
       const clusterId = req.params.clusterId;
       const userId = req.user!.id;
-      console.log(`📊 Fetching articles for cluster ${clusterId}`);
+      const includeAll = req.query.includeAll === 'true';
+      console.log(`📊 Fetching articles for cluster ${clusterId} (includeAll: ${includeAll})`);
       
       const storage = await getStorage();
+
+      // If includeAll=true, return ALL articles in cluster regardless of subscriptions
+      if (includeAll) {
+        console.log(`📊 Fetching ALL articles for cluster ${clusterId}`);
+        
+        const articleIds = await storage.getArticleIdsByClusterId(clusterId);
+        console.log(`📊 Found ${articleIds.length} article IDs for cluster`);
+        
+        if (articleIds.length === 0) {
+          return res.json({ articles: [] });
+        }
+        
+        const articlePromises = articleIds.map(async (articleId) => {
+          try {
+            const article = await storage.getArticleById(articleId);
+            if (!article) return null;
+            
+            let feedInfo = null;
+            if (article.feed_id) {
+              try {
+                feedInfo = await storage.getFeedById(article.feed_id);
+              } catch (err) {
+                console.warn(`Could not get feed info for feed ${article.feed_id}:`, err);
+              }
+            }
+            
+            return {
+              id: article.id,
+              title: article.title,
+              excerpt: article.excerpt || article.content?.substring(0, 200),
+              url: article.url,
+              source: feedInfo?.name || article.source || 'Unknown Source',
+              published_at: article.published_at,
+              image_url: article.image_url,
+              feed_id: article.feed_id,
+              feed_url: feedInfo?.url,
+              feed_category: feedInfo?.category
+            };
+          } catch (err) {
+            console.warn(`Failed to fetch article ${articleId}:`, err);
+            return null;
+          }
+        });
+        
+        const allArticles = (await Promise.all(articlePromises)).filter(Boolean);
+        const sortedArticles = allArticles.sort((a, b) => {
+          const dateA = a.published_at ? new Date(a.published_at).getTime() : 0;
+          const dateB = b.published_at ? new Date(b.published_at).getTime() : 0;
+          return dateB - dateA;
+        });
+        
+        console.log(`📊 Returning ${sortedArticles.length} articles for cluster`);
+        return res.json({ articles: sortedArticles });
+      }
       
-      // Get the cluster to find article IDs
+      // Original logic for subscribed feeds only
       const clusters = await storage.getClusters({ includeExpired: true, limit: 100 });
       const cluster = clusters.find(c => c.id === clusterId);
       
