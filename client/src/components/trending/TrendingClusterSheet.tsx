@@ -93,8 +93,15 @@ export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick,
         }));
 
         // Don't deduplicate - show all articles so users can see the full scope
-        setArticles(validArticles);
-        console.log(`📊 Loaded ${validArticles.length} articles for cluster "${cluster.topic}"`);
+        // Deduplicate by article ID
+        const seen = new Set<string>();
+        const uniqueArticles = validArticles.filter(article => {
+          if (seen.has(article.id)) return false;
+          seen.add(article.id);
+          return true;
+        });
+        setArticles(uniqueArticles);
+        console.log(`📊 Loaded ${uniqueArticles.length} unique articles for cluster "${cluster.topic}"`);
       } else {
         // Fallback: Use the cluster articles endpoint
         console.log(`📊 No articleIds for cluster "${cluster.topic}", trying /api/clusters/${cluster.id}/articles endpoint...`);
@@ -117,8 +124,15 @@ export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick,
                 feed_category: article.feed_category,
                 isSubscribed: article.feed_id ? allSubscribedFeedIds.has(article.feed_id) : false
               }));
-              setArticles(mappedArticles);
-              console.log(`📊 Loaded ${mappedArticles.length} articles from cluster endpoint for "${cluster.topic}"`);
+              // Deduplicate by article ID
+              const seen = new Set<string>();
+              const uniqueArticles = mappedArticles.filter((article: ClusterArticle) => {
+                if (seen.has(article.id)) return false;
+                seen.add(article.id);
+                return true;
+              });
+              setArticles(uniqueArticles);
+              console.log(`📊 Loaded ${uniqueArticles.length} unique articles from cluster endpoint for "${cluster.topic}"`);
               return;
             }
           }
@@ -200,17 +214,9 @@ export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick,
             <div className="flex items-center gap-1.5 text-xs font-medium text-primary bg-primary/10 px-2 py-1 rounded-full">
               <Newspaper className="h-3 w-3" />
               <span>
-                {isLoading ? 'Loading...' : `${articles.length} article${articles.length !== 1 ? 's' : ''} available`}
+                {isLoading ? 'Loading...' : `${articles.length} article${articles.length !== 1 ? 's' : ''} from ${new Set(articles.map(a => a.source)).size} source${new Set(articles.map(a => a.source)).size !== 1 ? 's' : ''}`}
               </span>
             </div>
-            {cluster.sources.slice(0, 4).map((source, i) => (
-              <span 
-                key={i} 
-                className="text-xs text-muted-foreground bg-muted/50 px-2 py-1 rounded-full"
-              >
-                {source}
-              </span>
-            ))}
           </div>
         </SheetHeader>
 
@@ -225,89 +231,78 @@ export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick,
               <span className="text-sm">Loading articles...</span>
             </div>
           ) : articles.length > 0 ? (
-            <div className="space-y-3">
-              {articles.map((article) => {
-                const isSubscribed = article.isSubscribed ?? (article.feed_id ? allSubscribedFeedIds.has(article.feed_id) : true);
-                const isSubscribing = subscribingFeedId === article.feed_id;
+            <div className="space-y-6">
+              {/* Group articles by source */}
+              {Object.entries(
+                articles.reduce((groups, article) => {
+                  const source = article.source || 'Unknown';
+                  if (!groups[source]) groups[source] = [];
+                  groups[source].push(article);
+                  return groups;
+                }, {} as Record<string, ClusterArticle[]>)
+              ).map(([source, sourceArticles]) => {
+                const firstArticle = sourceArticles[0];
+                const isSubscribed = firstArticle.isSubscribed ?? (firstArticle.feed_id ? allSubscribedFeedIds.has(firstArticle.feed_id) : true);
+                const isSubscribing = subscribingFeedId === firstArticle.feed_id;
 
                 return (
-                  <div
-                    key={article.id}
-                    className="w-full text-left p-4 rounded-lg border border-border/50 hover:border-border hover:bg-muted/30 transition-all group"
-                  >
-                    <button
-                      onClick={() => onArticleClick?.(article.id)}
-                      className="w-full text-left"
-                    >
-                      <div className="flex gap-3">
-                        {article.image_url && (
-                          <div className="h-16 w-16 shrink-0 rounded-md overflow-hidden bg-muted">
-                            <img
-                              src={article.image_url}
-                              alt=""
-                              className="h-full w-full object-cover"
-                            />
-                          </div>
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="text-xs font-semibold text-primary uppercase">
-                              {article.source}
-                            </span>
-                            <span className="text-xs text-muted-foreground">
-                              {formatDistanceToNow(new Date(article.published_at), { addSuffix: true })}
-                            </span>
-                          </div>
-                          <h4 className="font-medium text-sm leading-tight line-clamp-2 group-hover:text-primary transition-colors">
-                            {article.title}
-                          </h4>
-                          {article.excerpt && (
-                            <p className="text-xs text-muted-foreground line-clamp-2 mt-1">
-                              {article.excerpt}
-                            </p>
-                          )}
-                        </div>
-                        <ExternalLink className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
-                      </div>
-                    </button>
-
-                    {/* Subscribe button for non-subscribed feeds */}
-                    {!isSubscribed && article.feed_url && (
-                      <div className="mt-3 pt-3 border-t border-border/30">
+                  <div key={source} className="space-y-2">
+                    {/* Source header with subscribe button */}
+                    <div className="flex items-center justify-between gap-2 pb-2 border-b border-border/30">
+                      <span className="text-sm font-semibold text-primary">
+                        {source} ({sourceArticles.length})
+                      </span>
+                      {!isSubscribed && firstArticle.feed_url && (
                         <Button
                           size="sm"
                           variant="outline"
-                          className="h-7 text-xs"
+                          className="h-6 text-xs"
                           disabled={isSubscribing}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleSubscribe(article);
-                          }}
+                          onClick={() => handleSubscribe(firstArticle)}
                         >
                           {isSubscribing ? (
-                            <>
-                              <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
-                              Subscribing...
-                            </>
+                            <Loader2 className="h-3 w-3 animate-spin" />
                           ) : (
                             <>
-                              <Plus className="h-3 w-3 mr-1.5" />
-                              Subscribe to {article.source}
+                              <Plus className="h-3 w-3 mr-1" />
+                              Subscribe
                             </>
                           )}
                         </Button>
-                      </div>
-                    )}
-
-                    {/* Show subscribed indicator */}
-                    {isSubscribed && article.feed_id && (
-                      <div className="mt-3 pt-3 border-t border-border/30">
+                      )}
+                      {isSubscribed && (
                         <span className="inline-flex items-center text-xs text-muted-foreground">
-                          <Check className="h-3 w-3 mr-1.5 text-green-500" />
-                          Subscribed to {article.source}
+                          <Check className="h-3 w-3 mr-1 text-green-500" />
+                          Subscribed
                         </span>
-                      </div>
-                    )}
+                      )}
+                    </div>
+                    
+                    {/* Articles from this source */}
+                    {sourceArticles.map((article) => (
+                      <button
+                        key={article.id}
+                        onClick={() => onArticleClick?.(article.id)}
+                        className="w-full text-left p-3 rounded-lg border border-border/50 hover:border-border hover:bg-muted/30 transition-all group"
+                      >
+                        <div className="flex gap-3">
+                          {article.image_url && (
+                            <div className="h-14 w-14 shrink-0 rounded-md overflow-hidden bg-muted">
+                              <img src={article.image_url} alt="" className="h-full w-full object-cover" />
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <span className="text-xs text-muted-foreground">
+                              {formatDistanceToNow(new Date(article.published_at), { addSuffix: true })}
+                            </span>
+                            <h4 className="font-medium text-sm leading-tight line-clamp-2 group-hover:text-primary transition-colors">
+                              {article.title}
+                            </h4>
+                          </div>
+                          <ExternalLink className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                        </div>
+                      </button>
+                    ))}
                   </div>
                 );
               })}

@@ -1,10 +1,9 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { TrendingUp, ChevronRight, Loader2, Sparkles, Users, BarChart3 } from "lucide-react";
+import { TrendingUp, ChevronRight, Loader2, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/queryClient";
 import { formatDistanceToNow } from "date-fns";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface ArticleCluster {
   id: string;
@@ -117,8 +116,7 @@ export function TrendingClusters({ onClusterClick, activeClusterId, className }:
   }
 
   return (
-    <TooltipProvider>
-      <div className={cn("space-y-4", className)}>
+    <div className={cn("space-y-4", className)}>
         <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground uppercase tracking-wider px-1">
           <TrendingUp className="h-4 w-4" />
           Trending Topics
@@ -148,36 +146,8 @@ export function TrendingClusters({ onClusterClick, activeClusterId, className }:
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <span className="text-xs font-bold text-primary bg-primary/10 px-1.5 py-0.5 rounded">
-                        From {cluster.sources.length} source{cluster.sources.length !== 1 ? 's' : ''}
+                        {cluster.articleIds?.length || cluster.articleCount} article{(cluster.articleIds?.length || cluster.articleCount) !== 1 ? 's' : ''} from {cluster.sources.length} source{cluster.sources.length !== 1 ? 's' : ''}
                       </span>
-                      
-                      {/* Source diversity indicator - Requirements: 2.7 */}
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded cursor-help">
-                            <Users className="h-3 w-3" />
-                            {cluster.sources.length} sources
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p className="text-xs">Coverage from {cluster.sources.length} different news sources</p>
-                        </TooltipContent>
-                      </Tooltip>
-                      
-                      {/* Relevance score indicator - Requirements: 2.7 */}
-                      {cluster.relevanceScore > 0 && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded cursor-help">
-                              <BarChart3 className="h-3 w-3" />
-                              {Math.round(cluster.relevanceScore)}
-                            </span>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p className="text-xs">Relevance score: {cluster.articleCount} articles × {cluster.sources.length} sources</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
                       
                       <span className="text-xs text-muted-foreground">
                         {formatDistanceToNow(new Date(cluster.latestTimestamp), { addSuffix: true })}
@@ -209,7 +179,6 @@ export function TrendingClusters({ onClusterClick, activeClusterId, className }:
           </AnimatePresence>
         </div>
       </div>
-    </TooltipProvider>
   );
 }
 
