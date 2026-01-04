@@ -2850,27 +2850,20 @@ export async function registerRoutes(
             // Map clusters with article IDs from the cluster record
             // Use Promise.all since we may need to fetch article IDs from articles table as fallback
             const clustersWithArticleIds = await Promise.all(directClusters.map(async (cluster) => {
-              // Use article_ids stored directly in cluster, fallback to fetching from articles table
-              let articleIds = cluster.article_ids || [];
-              
-              // If article_ids is empty but article_count > 0, fetch from articles table
-              if (articleIds.length === 0 && cluster.article_count > 0) {
-                console.log(`📊 Cluster "${cluster.title}" has empty article_ids but article_count=${cluster.article_count}, fetching from articles table...`);
-                try {
-                  const fetchedIds = await storage.getArticleIdsByClusterId(cluster.id);
-                  if (fetchedIds.length > 0) {
-                    articleIds = fetchedIds;
-                    console.log(`📊 Fetched ${articleIds.length} article IDs from articles table for cluster "${cluster.title}"`);
-                  }
-                } catch (err) {
-                  console.error(`📊 Failed to fetch article IDs for cluster "${cluster.title}":`, err);
-                }
+              // Always fetch article IDs from articles table for accuracy
+              let articleIds: string[] = [];
+              try {
+                articleIds = await storage.getArticleIdsByClusterId(cluster.id);
+              } catch (err) {
+                console.error(`📊 Failed to fetch article IDs for cluster "${cluster.title}":`, err);
+                // Fallback to stored article_ids
+                articleIds = cluster.article_ids || [];
               }
               
               // Deduplicate article IDs
               const uniqueArticleIds = Array.from(new Set(articleIds));
               
-              console.log(`📊 Cluster "${cluster.title}" has ${uniqueArticleIds.length} unique articleIds (raw: ${articleIds.length})`);
+              console.log(`📊 Cluster "${cluster.title}" has ${uniqueArticleIds.length} unique articleIds`);
               // Handle timestamps - Supabase returns strings, not Date objects
               const timeframeEnd = cluster.timeframe_end 
                 ? (typeof cluster.timeframe_end === 'string' ? cluster.timeframe_end : cluster.timeframe_end.toISOString())

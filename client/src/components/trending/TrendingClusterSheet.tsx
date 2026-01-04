@@ -237,10 +237,12 @@ export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick,
                     
                     {/* Articles from this source */}
                     {sourceArticles.map((article) => (
-                      <button
+                      <a
                         key={article.id}
-                        onClick={() => onArticleClick?.(article.id)}
-                        className="w-full text-left p-3 rounded-lg border border-border/50 hover:border-border hover:bg-muted/30 transition-all group"
+                        href={article.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block w-full text-left p-3 rounded-lg border border-border/50 hover:border-border hover:bg-muted/30 transition-all group"
                       >
                         <div className="flex gap-3">
                           {article.image_url && (
@@ -258,7 +260,7 @@ export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick,
                           </div>
                           <ExternalLink className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
                         </div>
-                      </button>
+                      </a>
                     ))}
                   </div>
                 );
