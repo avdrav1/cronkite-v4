@@ -45,14 +45,27 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     try {
       // Check authentication using JWT tokens (works in serverless environments)
       console.log('🔐 AuthContext: Checking authentication with JWT tokens...');
-      const response = await apiRequest('GET', '/api/auth/me');
       
-      console.log('🔐 AuthContext: /api/auth/me response status:', response.status);
+      // Add timeout to prevent freezing
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      
+      try {
+        const response = await apiRequest('GET', '/api/auth/me');
+        clearTimeout(timeoutId);
+        
+        console.log('🔐 AuthContext: /api/auth/me response status:', response.status);
 
-      if (response.ok) {
-        const data = await response.json();
-        console.log('✅ AuthContext: Authenticated via JWT token:', data.user?.email);
-        setUser(data.user);
+        if (response.ok) {
+          const data = await response.json();
+          console.log('✅ AuthContext: Authenticated via JWT token:', data.user?.email);
+          setUser(data.user);
+          return;
+        }
+      } catch (error) {
+        clearTimeout(timeoutId);
+        console.warn('🔐 AuthContext: JWT auth check failed:', error);
+      }
         return;
       }
       
