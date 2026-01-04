@@ -2508,84 +2508,24 @@ export class SupabaseStorage implements IStorage {
       return result;
     }
     
-    const feedIds = userFeeds.map(f => f.id);
-    console.log(`📊 Getting article counts for ${feedIds.length} feeds for user ${userId}`);
+    console.log(`📊 Getting article counts for ${userFeeds.length} feeds for user ${userId}`);
     
-    // Get article counts for each feed using service role to bypass RLS
-    const { data, error } = await this.supabase
-      .from('articles')
-      .select('feed_id')
-      .in('feed_id', feedIds)
-      .limit(50000);
-    
-    if (error) {
-      console.error('Failed to get article counts:', error);
-      
-      // Fallback: Count each feed individually
-      console.log('🔄 Falling back to individual feed counting...');
-      for (const feed of userFeeds) {
-        const { count, error: countError } = await this.supabase
-          .from('articles')
-          .select('*', { count: 'exact', head: true })
-          .eq('feed_id', feed.id);
-        
-        if (!countError && count !== null) {
-          result.set(feed.id, count);
-          console.log(`📊 Feed "${feed.name}" has ${count} articles (individual count)`);
-        } else {
-          result.set(feed.id, 0);
-          console.log(`❌ Failed to count articles for "${feed.name}":`, countError);
-        }
-      }
-      return result;
-    }
-    
-    console.log(`📊 Found ${data?.length || 0} articles across all feeds`);
-    
-    // Debug: Check total articles in database vs what we got
-    const { count: totalCount } = await this.supabase
-      .from('articles')
-      .select('*', { count: 'exact', head: true });
-    
-    console.log(`🔍 Total articles in database: ${totalCount}, Retrieved: ${data?.length || 0}`);
-    
-    // Debug: Check if Guardian/BBC articles have different feed_ids
-    const problemFeeds = userFeeds.filter(f => 
-      f.name.includes('Guardian') || f.name.includes('BBC') || 
-      f.name.includes('Rolling Stone') || f.name.includes('Pitchfork')
-    );
-    
-    for (const feed of problemFeeds) {
-      const { data: sampleArticles } = await this.supabase
-        .from('articles')
-        .select('id, title, feed_id')
-        .ilike('title', `%${feed.name.split(' ')[0]}%`)
-        .limit(3);
-      
-      console.log(`🔍 Sample articles for "${feed.name}" (expected feed_id: ${feed.id}):`);
-      sampleArticles?.forEach(article => {
-        console.log(`  - "${article.title?.substring(0, 50)}..." has feed_id: ${article.feed_id}`);
-      });
-    }
-    
-    // Count articles per feed
-    if (data) {
-      for (const article of data) {
-        const count = result.get(article.feed_id) || 0;
-        result.set(article.feed_id, count + 1);
-      }
-    }
-    
-    // Ensure all feeds have an entry (even if 0) and log feeds with 0 counts
+    // Count each feed individually using exact count (bypasses row limits)
     for (const feed of userFeeds) {
-      if (!result.has(feed.id)) {
-        result.set(feed.id, 0);
-        console.log(`📊 Feed "${feed.name}" (${feed.id}) has 0 articles`);
+      const { count, error } = await this.supabase
+        .from('articles')
+        .select('*', { count: 'exact', head: true })
+        .eq('feed_id', feed.id);
+      
+      if (!error && count !== null) {
+        result.set(feed.id, count);
       } else {
-        console.log(`📊 Feed "${feed.name}" (${feed.id}) has ${result.get(feed.id)} articles`);
+        result.set(feed.id, 0);
+        if (error) console.error(`❌ Failed to count "${feed.name}":`, error);
       }
     }
     
     return result;
   }
+}
 }
