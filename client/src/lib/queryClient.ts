@@ -31,6 +31,13 @@ export async function apiRequest(
   let token = null;
   if (isSupabaseConfigured()) {
     token = await getAccessToken();
+    if (token) {
+      console.log('🔑 JWT token found for request');
+    } else {
+      console.warn('🔑 No JWT token available');
+    }
+  } else {
+    console.warn('🔑 Supabase not configured');
   }
 
   // Always use JWT token when available, but skip during OAuth callback to avoid conflicts
