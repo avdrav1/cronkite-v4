@@ -65,7 +65,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       } catch (error) {
         clearTimeout(timeoutId);
         console.warn('🔐 AuthContext: JWT auth check failed:', error);
-      }
+        
+        // If auth check fails, clear user
+        console.log('🔐 AuthContext: Auth check failed, clearing user');
+        setUser(null);
         return;
       }
       
