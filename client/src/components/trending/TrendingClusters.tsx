@@ -144,15 +144,21 @@ export function TrendingClusters({ onClusterClick, activeClusterId, className }:
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <span className="text-xs font-bold text-primary bg-primary/10 px-1.5 py-0.5 rounded">
-                        {cluster.articleIds?.length || cluster.articleCount} article{(cluster.articleIds?.length || cluster.articleCount) !== 1 ? 's' : ''} from {cluster.sources.length} source{cluster.sources.length !== 1 ? 's' : ''}
-                      </span>
-                      
-                      <span className="text-xs text-muted-foreground">
-                        {formatDistanceToNow(new Date(cluster.latestTimestamp), { addSuffix: true })}
-                      </span>
-                    </div>
+                    {(() => {
+                      const uniqueArticleCount = cluster.articleIds ? new Set(cluster.articleIds).size : cluster.articleCount;
+                      const sourceCount = cluster.sources.length;
+                      return (
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <span className="text-xs font-bold text-primary bg-primary/10 px-1.5 py-0.5 rounded">
+                            {uniqueArticleCount} article{uniqueArticleCount !== 1 ? 's' : ''} from {sourceCount} source{sourceCount !== 1 ? 's' : ''}
+                          </span>
+                          
+                          <span className="text-xs text-muted-foreground">
+                            {formatDistanceToNow(new Date(cluster.latestTimestamp), { addSuffix: true })}
+                          </span>
+                        </div>
+                      );
+                    })()}
                     <h4 className="font-semibold text-sm text-foreground group-hover:text-primary transition-colors line-clamp-1">
                       {cluster.topic}
                     </h4>
