@@ -2867,7 +2867,10 @@ export async function registerRoutes(
                 }
               }
               
-              console.log(`📊 Cluster "${cluster.title}" has ${articleIds.length} articleIds (article_count: ${cluster.article_count})`);
+              // Deduplicate article IDs
+              const uniqueArticleIds = Array.from(new Set(articleIds));
+              
+              console.log(`📊 Cluster "${cluster.title}" has ${uniqueArticleIds.length} unique articleIds (raw: ${articleIds.length})`);
               // Handle timestamps - Supabase returns strings, not Date objects
               const timeframeEnd = cluster.timeframe_end 
                 ? (typeof cluster.timeframe_end === 'string' ? cluster.timeframe_end : cluster.timeframe_end.toISOString())
@@ -2879,8 +2882,8 @@ export async function registerRoutes(
                 id: cluster.id,
                 topic: cluster.title,
                 summary: cluster.summary || '',
-                articleIds,
-                articleCount: cluster.article_count,
+                articleIds: uniqueArticleIds,
+                articleCount: uniqueArticleIds.length,
                 sources: cluster.source_feeds || [],
                 avgSimilarity: parseFloat(cluster.avg_similarity || '0'),
                 relevanceScore: parseFloat(cluster.relevance_score || '0'),
@@ -3067,7 +3070,7 @@ export async function registerRoutes(
               title: article.title,
               excerpt: article.excerpt || article.content?.substring(0, 200),
               url: article.url,
-              source: feedInfo?.name || article.source || 'Unknown Source',
+              source: feedInfo?.name || 'Unknown Source',
               published_at: article.published_at,
               image_url: article.image_url,
               feed_id: article.feed_id,
@@ -3081,14 +3084,33 @@ export async function registerRoutes(
         });
         
         const allArticles = (await Promise.all(articlePromises)).filter(Boolean);
-        const sortedArticles = allArticles.sort((a, b) => {
+        
+        // Deduplicate by ID and URL
+        const seenIds = new Set<string>();
+        const seenUrls = new Set<string>();
+        const uniqueArticles = allArticles.filter((article: any) => {
+          if (seenIds.has(article.id)) return false;
+          if (article.url && seenUrls.has(article.url)) return false;
+          seenIds.add(article.id);
+          if (article.url) seenUrls.add(article.url);
+          return true;
+        });
+        
+        const sortedArticles = uniqueArticles.sort((a: any, b: any) => {
           const dateA = a.published_at ? new Date(a.published_at).getTime() : 0;
           const dateB = b.published_at ? new Date(b.published_at).getTime() : 0;
           return dateB - dateA;
         });
         
-        console.log(`📊 Returning ${sortedArticles.length} articles for cluster`);
-        return res.json({ articles: sortedArticles });
+        // Count unique sources
+        const uniqueSources = new Set(sortedArticles.map((a: any) => a.source));
+        
+        console.log(`📊 Returning ${sortedArticles.length} unique articles from ${uniqueSources.size} sources for cluster`);
+        return res.json({ 
+          articles: sortedArticles,
+          articleCount: sortedArticles.length,
+          sourceCount: uniqueSources.size
+        });
       }
       
       // Original logic for subscribed feeds only

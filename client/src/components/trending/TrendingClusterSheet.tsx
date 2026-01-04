@@ -59,98 +59,45 @@ export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick,
 
     setIsLoading(true);
     try {
-      // Fetch ALL articles in the cluster (not just from subscribed feeds)
-      console.log(`📊 Fetching ALL articles for cluster "${cluster.topic}"`);
+      console.log(`📊 Fetching articles for cluster "${cluster.topic}"`);
       
-      if (cluster.articleIds && cluster.articleIds.length > 0) {
-        // Deduplicate article IDs first
-        const uniqueArticleIds = Array.from(new Set(cluster.articleIds));
-        console.log(`📊 Cluster has ${cluster.articleIds.length} articleIds, ${uniqueArticleIds.length} unique`);
-        
-        const articlePromises = uniqueArticleIds.map(async (id) => {
-          try {
-            const response = await apiFetch('GET', `/api/articles/${id}?includeUnsubscribed=true`);
-            if (response.ok) {
-              const data = await response.json();
-              return data.article;
-            }
-            return null;
-          } catch {
-            return null;
-          }
-        });
-
-        const fetchedArticles = await Promise.all(articlePromises);
-        const validArticles = fetchedArticles.filter(Boolean).map((article: any) => ({
-          id: article.id,
-          title: article.title,
-          excerpt: article.excerpt,
-          url: article.url,
-          source: article.feed_name || article.source || 'Unknown',
-          published_at: article.published_at || article.created_at,
-          image_url: article.image_url,
-          feed_id: article.feed_id,
-          feed_url: article.feed_url,
-          feed_category: article.feed_category,
-          // Mark if user is subscribed to this feed
-          isSubscribed: article.feed_id ? allSubscribedFeedIds.has(article.feed_id) : false
-        }));
-
-        // Deduplicate by article ID and URL
-        const seenIds = new Set<string>();
-        const seenUrls = new Set<string>();
-        const uniqueArticles = validArticles.filter(article => {
-          if (seenIds.has(article.id)) return false;
-          if (article.url && seenUrls.has(article.url)) return false;
-          seenIds.add(article.id);
-          if (article.url) seenUrls.add(article.url);
-          return true;
-        });
-        setArticles(uniqueArticles);
-        console.log(`📊 Loaded ${uniqueArticles.length} unique articles (from ${validArticles.length} total) for cluster "${cluster.topic}"`);
-      } else {
-        // Fallback: Use the cluster articles endpoint
-        console.log(`📊 No articleIds for cluster "${cluster.topic}", trying /api/clusters/${cluster.id}/articles endpoint...`);
-        
-        try {
-          const response = await apiFetch('GET', `/api/clusters/${cluster.id}/articles?includeAll=true`);
-          if (response.ok) {
-            const data = await response.json();
-            if (data.articles && data.articles.length > 0) {
-              const mappedArticles = data.articles.map((article: any) => ({
-                id: article.id,
-                title: article.title,
-                excerpt: article.excerpt,
-                url: article.url,
-                source: article.source || 'Unknown',
-                published_at: article.published_at,
-                image_url: article.image_url,
-                feed_id: article.feed_id,
-                feed_url: article.feed_url,
-                feed_category: article.feed_category,
-                isSubscribed: article.feed_id ? allSubscribedFeedIds.has(article.feed_id) : false
-              }));
-              // Deduplicate by article ID and URL
-              const seenIds = new Set<string>();
-              const seenUrls = new Set<string>();
-              const uniqueArticles = mappedArticles.filter((article: ClusterArticle) => {
-                if (seenIds.has(article.id)) return false;
-                if (article.url && seenUrls.has(article.url)) return false;
-                seenIds.add(article.id);
-                if (article.url) seenUrls.add(article.url);
-                return true;
-              });
-              setArticles(uniqueArticles);
-              console.log(`📊 Loaded ${uniqueArticles.length} unique articles from cluster endpoint for "${cluster.topic}"`);
-              return;
-            }
-          }
-        } catch (err) {
-          console.error('Failed to fetch from cluster articles endpoint:', err);
+      // Always use the cluster articles endpoint for consistent results
+      const response = await apiFetch('GET', `/api/clusters/${cluster.id}/articles?includeAll=true`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.articles && data.articles.length > 0) {
+          const mappedArticles = data.articles.map((article: any) => ({
+            id: article.id,
+            title: article.title,
+            excerpt: article.excerpt,
+            url: article.url,
+            source: article.source || 'Unknown',
+            published_at: article.published_at,
+            image_url: article.image_url,
+            feed_id: article.feed_id,
+            feed_url: article.feed_url,
+            feed_category: article.feed_category,
+            isSubscribed: article.feed_id ? allSubscribedFeedIds.has(article.feed_id) : false
+          }));
+          
+          // Deduplicate by article ID and URL
+          const seenIds = new Set<string>();
+          const seenUrls = new Set<string>();
+          const uniqueArticles = mappedArticles.filter((article: ClusterArticle) => {
+            if (seenIds.has(article.id)) return false;
+            if (article.url && seenUrls.has(article.url)) return false;
+            seenIds.add(article.id);
+            if (article.url) seenUrls.add(article.url);
+            return true;
+          });
+          
+          setArticles(uniqueArticles);
+          console.log(`📊 Loaded ${uniqueArticles.length} unique articles for cluster "${cluster.topic}"`);
+          return;
         }
-        
-        setArticles([]);
       }
+      
+      setArticles([]);
     } catch (error) {
       console.error('Failed to fetch cluster articles:', error);
       setArticles([]);
