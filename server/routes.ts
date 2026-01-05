@@ -2891,12 +2891,21 @@ export async function registerRoutes(
               const expiresAt = cluster.expires_at
                 ? (typeof cluster.expires_at === 'string' ? cluster.expires_at : cluster.expires_at.toISOString())
                 : new Date().toISOString();
+              // Get actual article count from articles table
+              let actualArticleCount = uniqueArticleIds.length;
+              try {
+                const actualIds = await storage.getArticleIdsByClusterId(cluster.id);
+                actualArticleCount = actualIds.length;
+              } catch (err) {
+                console.warn(`Failed to get actual article count for cluster ${cluster.id}`);
+              }
+              
               return {
                 id: cluster.id,
                 topic: cluster.title,
                 summary: cluster.summary || '',
                 articleIds: uniqueArticleIds,
-                articleCount: uniqueArticleIds.length,
+                articleCount: actualArticleCount,
                 sourceCount: sources.length,
                 sources,
                 avgSimilarity: parseFloat(cluster.avg_similarity || '0'),

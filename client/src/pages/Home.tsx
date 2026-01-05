@@ -1209,9 +1209,29 @@ export default function Home() {
         isOpen={!!selectedCluster}
         onClose={() => setSelectedCluster(null)}
         subscribedFeedIds={feeds.map(f => f.id)}
-        onArticleClick={(articleId) => {
-          // Find the article and open it
-          const article = articles.find(a => a.id === articleId);
+        onArticleClick={async (articleId) => {
+          // Try to find in current articles first
+          let article = articles.find(a => a.id === articleId);
+          
+          // If not found, fetch it directly
+          if (!article) {
+            try {
+              const response = await apiFetch('GET', `/api/articles/${articleId}`);
+              if (response.ok) {
+                const data = await response.json();
+                article = data.article;
+              }
+            } catch (error) {
+              console.error('Failed to fetch article:', error);
+              toast({
+                title: "Error",
+                description: "Could not load article",
+                variant: "destructive"
+              });
+              return;
+            }
+          }
+          
           if (article) {
             setSelectedCluster(null);
             setSelectedArticle(article);
