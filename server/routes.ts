@@ -4353,6 +4353,22 @@ export async function registerRoutes(
         });
       }
 
+      // Check if article exists first
+      const { storage } = await import('./storage');
+      const article = await storage.db
+        .select({ id: storage.schema.articles.id })
+        .from(storage.schema.articles)
+        .where(storage.eq(storage.schema.articles.id, articleId))
+        .limit(1);
+
+      if (article.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'ARTICLE_NOT_FOUND',
+          message: 'Article not found'
+        });
+      }
+
       const { commentService } = await import('./comment-service');
       const comments = await commentService.getComments(articleId, userId, limit);
 
