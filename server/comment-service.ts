@@ -117,7 +117,7 @@ export class CommentService {
     }
 
     // Create the comment
-    const insertData: InsertArticleComment = {
+    const insertData = {
       article_id: articleId,
       user_id: userId,
       content: trimmedContent,
@@ -303,7 +303,7 @@ export class CommentService {
       .set({
         deleted_at: new Date(),
         updated_at: new Date()
-      })
+      } as any)
       .where(eq(articleComments.id, commentId));
 
     // Send real-time comment deletion update to other users viewing the article

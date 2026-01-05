@@ -64,6 +64,15 @@ export function TrendingClusters({ onClusterClick, activeClusterId, className }:
         if (data.clusters && data.clusters.length > 0) {
           setClusters(data.clusters);
           console.log('✅ TrendingClusters: Loaded', data.clusters.length, 'clusters');
+          // Debug: Log first cluster counts
+          if (data.clusters[0]) {
+            console.log('🔍 First cluster counts:', {
+              topic: data.clusters[0].topic,
+              articleCount: data.clusters[0].articleCount,
+              sourceCount: data.clusters[0].sourceCount,
+              sourcesLength: data.clusters[0].sources?.length
+            });
+          }
         } else {
           console.log('ℹ️ TrendingClusters: No clusters returned from API');
           setClusters([]);

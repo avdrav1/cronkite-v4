@@ -89,7 +89,7 @@ export class NotificationService {
     }
 
     // Create the notification
-    const insertData: InsertNotification = {
+    const insertData = {
       user_id: userId,
       type,
       title,
@@ -217,7 +217,7 @@ export class NotificationService {
       .update(notifications)
       .set({
         read_at: new Date()
-      })
+      } as any)
       .where(eq(notifications.id, notificationId));
   }
 
@@ -233,7 +233,7 @@ export class NotificationService {
       .update(notifications)
       .set({
         read_at: new Date()
-      })
+      } as any)
       .where(
         and(
           eq(notifications.user_id, userId),

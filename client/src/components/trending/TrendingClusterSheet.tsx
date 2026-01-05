@@ -93,6 +93,16 @@ export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick,
           
           setArticles(uniqueArticles);
           console.log(`📊 Loaded ${uniqueArticles.length} unique articles for cluster "${cluster.topic}"`);
+          console.log('🔍 Detail page counts:', {
+            totalArticles: uniqueArticles.length,
+            uniqueSources: new Set(uniqueArticles.map(a => a.source)).size,
+            sourceBreakdown: Object.entries(
+              uniqueArticles.reduce((acc, a) => {
+                acc[a.source] = (acc[a.source] || 0) + 1;
+                return acc;
+              }, {} as Record<string, number>)
+            )
+          });
           return;
         }
       }

@@ -176,7 +176,7 @@ export class ReportingModerationService {
         .set({ 
           deleted_at: new Date(),
           updated_at: new Date()
-        })
+        } as any)
         .where(eq(articleComments.id, contentId));
 
       // Log the moderation action
