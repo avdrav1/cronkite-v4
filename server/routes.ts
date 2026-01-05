@@ -2892,12 +2892,23 @@ export async function registerRoutes(
                 ? (typeof cluster.expires_at === 'string' ? cluster.expires_at : cluster.expires_at.toISOString())
                 : new Date().toISOString();
               // Get actual article count from articles table
-              let actualArticleCount = uniqueArticleIds.length;
+              let actualArticleCount = 0;
+              let actualSourceCount = 0;
               try {
                 const actualIds = await storage.getArticleIdsByClusterId(cluster.id);
                 actualArticleCount = actualIds.length;
+                
+                // Get actual source count by fetching articles and counting unique feeds
+                if (actualIds.length > 0) {
+                  const articlePromises = actualIds.slice(0, 100).map(id => storage.getArticleById(id));
+                  const articles = (await Promise.all(articlePromises)).filter(Boolean);
+                  const uniqueFeedIds = new Set(articles.map(a => a?.feed_id).filter(Boolean));
+                  actualSourceCount = uniqueFeedIds.size;
+                }
               } catch (err) {
-                console.warn(`Failed to get actual article count for cluster ${cluster.id}`);
+                console.warn(`Failed to get actual counts for cluster ${cluster.id}`);
+                actualArticleCount = uniqueArticleIds.length;
+                actualSourceCount = sources.length;
               }
               
               return {
@@ -2906,7 +2917,7 @@ export async function registerRoutes(
                 summary: cluster.summary || '',
                 articleIds: uniqueArticleIds,
                 articleCount: actualArticleCount,
-                sourceCount: sources.length,
+                sourceCount: actualSourceCount,
                 sources,
                 avgSimilarity: parseFloat(cluster.avg_similarity || '0'),
                 relevanceScore: parseFloat(cluster.relevance_score || '0'),

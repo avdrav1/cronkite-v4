@@ -11,6 +11,7 @@ interface ArticleCluster {
   summary: string;
   articleIds: string[];
   articleCount: number;
+  sourceCount?: number;
   sources: string[];
   latestTimestamp: string;
   relevanceScore: number;
@@ -155,7 +156,7 @@ export function TrendingClusters({ onClusterClick, activeClusterId, className }:
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <span className="text-xs font-bold text-primary bg-primary/10 px-1.5 py-0.5 rounded">
-                        {cluster.articleCount} article{cluster.articleCount !== 1 ? 's' : ''} from {cluster.sources.length} source{cluster.sources.length !== 1 ? 's' : ''}
+                        {cluster.articleCount} article{cluster.articleCount !== 1 ? 's' : ''} from {cluster.sourceCount || cluster.sources.length} source{(cluster.sourceCount || cluster.sources.length) !== 1 ? 's' : ''}
                       </span>
                       
                       <span className="text-xs text-muted-foreground">
