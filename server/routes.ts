@@ -2897,6 +2897,7 @@ export async function registerRoutes(
                 summary: cluster.summary || '',
                 articleIds: uniqueArticleIds,
                 articleCount: uniqueArticleIds.length,
+                sourceCount: sources.length,
                 sources,
                 avgSimilarity: parseFloat(cluster.avg_similarity || '0'),
                 relevanceScore: parseFloat(cluster.relevance_score || '0'),
