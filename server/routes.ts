@@ -2852,8 +2852,28 @@ export async function registerRoutes(
             const clustersWithArticleIds = await Promise.all(directClusters.map(async (cluster) => {
               // Always fetch article IDs from articles table for accuracy
               let articleIds: string[] = [];
+              let sources: string[] = cluster.source_feeds || [];
+              
               try {
                 articleIds = await storage.getArticleIdsByClusterId(cluster.id);
+                
+                // Fetch actual articles to get accurate source names
+                if (articleIds.length > 0) {
+                  const articlePromises = articleIds.slice(0, 50).map(id => storage.getArticleById(id));
+                  const articles = (await Promise.all(articlePromises)).filter(Boolean);
+                  
+                  // Get unique sources from actual articles
+                  const sourceSet = new Set<string>();
+                  for (const article of articles) {
+                    if (article?.feed_id) {
+                      const feed = await storage.getFeedById(article.feed_id);
+                      if (feed?.name) sourceSet.add(feed.name);
+                    }
+                  }
+                  if (sourceSet.size > 0) {
+                    sources = Array.from(sourceSet);
+                  }
+                }
               } catch (err) {
                 console.error(`📊 Failed to fetch article IDs for cluster "${cluster.title}":`, err);
                 // Fallback to stored article_ids
@@ -2863,7 +2883,7 @@ export async function registerRoutes(
               // Deduplicate article IDs
               const uniqueArticleIds = Array.from(new Set(articleIds));
               
-              console.log(`📊 Cluster "${cluster.title}" has ${uniqueArticleIds.length} unique articleIds`);
+              console.log(`📊 Cluster "${cluster.title}" has ${uniqueArticleIds.length} articles from ${sources.length} sources`);
               // Handle timestamps - Supabase returns strings, not Date objects
               const timeframeEnd = cluster.timeframe_end 
                 ? (typeof cluster.timeframe_end === 'string' ? cluster.timeframe_end : cluster.timeframe_end.toISOString())
@@ -2877,7 +2897,7 @@ export async function registerRoutes(
                 summary: cluster.summary || '',
                 articleIds: uniqueArticleIds,
                 articleCount: uniqueArticleIds.length,
-                sources: cluster.source_feeds || [],
+                sources,
                 avgSimilarity: parseFloat(cluster.avg_similarity || '0'),
                 relevanceScore: parseFloat(cluster.relevance_score || '0'),
                 latestTimestamp: timeframeEnd,
