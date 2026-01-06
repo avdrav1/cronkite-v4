@@ -9,7 +9,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { Article, Cluster, InsertCluster } from '@shared/schema';
 
 // Constants
-export const CLUSTER_SIMILARITY_THRESHOLD = 0.6; // Requirements: 2.1 - Lowered for better coverage
+export const CLUSTER_SIMILARITY_THRESHOLD = 0.4; // Requirements: 2.1 - Much more permissive
 export const SIMILAR_ARTICLES_THRESHOLD = 0.7; // Requirements: 4.2
 export const MIN_CLUSTER_ARTICLES = 1; // Requirements: 2.2 - Lowered for better coverage
 export const MIN_CLUSTER_SOURCES = 1; // Requirements: 2.2 - Allow single-source trending topics
@@ -163,7 +163,7 @@ function fallbackClusterByKeywords(articles: Array<{
       const otherKeywords = extractKeywords(other.title + ' ' + (other.excerpt || ''));
       const similarity = calculateKeywordSimilarity(keywords, otherKeywords);
       
-      if (similarity > 0.3) { // Lower threshold for keyword matching
+      if (similarity > 0.2) { // Much lower threshold for keyword matching
         cluster.members.push(other);
         cluster.sources.add(other.feedName);
         processed.add(other.id);
@@ -206,6 +206,48 @@ function calculateKeywordSimilarity(keywords1: string[], keywords2: string[]): n
   const union = new Set([...set1, ...set2]);
   
   return union.size > 0 ? intersection.size / union.size : 0;
+}
+
+/**
+ * Cluster articles by time windows (group articles published around the same time)
+ */
+function clusterByTimeWindows(articles: Array<{
+  id: string;
+  title: string;
+  excerpt: string | null;
+  feedId: string;
+  feedName: string;
+  publishedAt: Date | null;
+}>): FallbackClusterCandidate[] {
+  const clusters: FallbackClusterCandidate[] = [];
+  const timeWindows = new Map<string, typeof articles>();
+  
+  // Group articles by 6-hour time windows
+  for (const article of articles) {
+    if (!article.publishedAt) continue;
+    
+    const windowKey = Math.floor(article.publishedAt.getTime() / (6 * 60 * 60 * 1000)).toString();
+    if (!timeWindows.has(windowKey)) {
+      timeWindows.set(windowKey, []);
+    }
+    timeWindows.get(windowKey)!.push(article);
+  }
+  
+  // Create clusters from time windows with multiple articles
+  for (const [windowKey, windowArticles] of timeWindows) {
+    if (windowArticles.length >= 2) { // At least 2 articles in the time window
+      const sources = new Set(windowArticles.map(a => a.feedName));
+      if (sources.size >= 2) { // From at least 2 different sources
+        clusters.push({
+          members: windowArticles,
+          avgSimilarity: 0.8, // High similarity for time-based clusters
+          sources
+        });
+      }
+    }
+  }
+  
+  return clusters.sort((a, b) => b.members.length - a.members.length).slice(0, 10);
 }
 
 /**
@@ -668,8 +710,14 @@ export class ClusteringServiceManager {
     
     if (articlesWithEmbeddings.length >= MIN_CLUSTER_ARTICLES) {
       // Use vector-based clustering
+      console.log(`📊 Attempting vector clustering with threshold ${CLUSTER_SIMILARITY_THRESHOLD}...`);
       clusterCandidates = formClusters(articlesWithEmbeddings, CLUSTER_SIMILARITY_THRESHOLD);
       console.log(`📊 Vector clustering found ${clusterCandidates.length} candidates`);
+      
+      // Debug: Log details of first few clusters
+      clusterCandidates.slice(0, 3).forEach((cluster, i) => {
+        console.log(`📊 Cluster ${i + 1}: ${cluster.members.length} articles, ${Array.from(cluster.sources).length} sources, similarity: ${cluster.avgSimilarity.toFixed(3)}`);
+      });
     }
     
     // Fallback to keyword-based clustering if needed
@@ -685,6 +733,16 @@ export class ClusteringServiceManager {
         clusterCandidates = fallbackClusterByKeywords(allArticles);
         console.log(`📊 Keyword clustering found ${clusterCandidates.length} candidates`);
         
+        // Try time-based clustering if keyword clustering didn't work well
+        if (clusterCandidates.length < 5) {
+          console.log(`📊 Trying time-based clustering...`);
+          const timeClusters = clusterByTimeWindows(allArticles);
+          if (timeClusters.length > clusterCandidates.length) {
+            clusterCandidates = timeClusters;
+            console.log(`📊 Time-based clustering found ${clusterCandidates.length} candidates`);
+          }
+        }
+        
         // If still no clusters, create individual trending topics from top articles
         if (clusterCandidates.length === 0) {
           console.log(`📊 Creating individual trending topics from top articles...`);
@@ -696,9 +754,8 @@ export class ClusteringServiceManager {
               article,
               engagement: calculateEngagementScore(article)
             }))
-            .filter(item => item.engagement >= MIN_ENGAGEMENT_THRESHOLD)
             .sort((a, b) => b.engagement - a.engagement)
-            .slice(0, 10)
+            .slice(0, 15) // Increase to 15 trending topics
             .map(item => item.article);
           
           // Create individual clusters for each top article
