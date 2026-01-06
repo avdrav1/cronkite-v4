@@ -80,6 +80,17 @@ export function TrendingClusterSheet({ cluster, isOpen, onClose, onArticleClick,
             isSubscribed: article.feed_id ? allSubscribedFeedIds.has(article.feed_id) : false
           }));
           
+          // Debug subscription status
+          console.log('🔍 Subscription debug:', {
+            subscribedFeedIds: Array.from(allSubscribedFeedIds),
+            sampleArticleFeedIds: data.articles.slice(0, 3).map((a: any) => ({ source: a.source, feed_id: a.feed_id })),
+            subscriptionMatches: data.articles.slice(0, 3).map((a: any) => ({ 
+              source: a.source, 
+              feed_id: a.feed_id, 
+              isSubscribed: a.feed_id ? allSubscribedFeedIds.has(a.feed_id) : false 
+            }))
+          });
+          
           // Deduplicate by article ID and URL
           const seenIds = new Set<string>();
           const seenUrls = new Set<string>();
