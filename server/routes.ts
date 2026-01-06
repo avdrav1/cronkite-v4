@@ -4364,25 +4364,6 @@ export async function registerRoutes(
         });
       }
 
-      // Check if article exists first
-      const { getDatabase } = await import('./production-db');
-      const { articles } = await import('@shared/schema');
-      const { eq } = await import('drizzle-orm');
-      const db = getDatabase();
-      const article = await db
-        .select({ id: articles.id })
-        .from(articles)
-        .where(eq(articles.id, articleId))
-        .limit(1);
-
-      if (article.length === 0) {
-        return res.status(404).json({
-          success: false,
-          error: 'ARTICLE_NOT_FOUND',
-          message: 'Article not found'
-        });
-      }
-
       const { commentService } = await import('./comment-service');
       const comments = await commentService.getComments(articleId, userId, limit);
 
