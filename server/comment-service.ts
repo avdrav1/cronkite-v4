@@ -207,10 +207,15 @@ export class CommentService {
    * @returns Promise<CommentWithAuthor[]> - List of comments with author information
    */
   async getComments(articleId: string, userId: string, limit: number = 50): Promise<CommentWithAuthor[]> {
-    // Check if user can view comments on this article
-    const canComment = await privacyService.canComment(userId, articleId);
-    if (!canComment) {
-      return []; // Return empty array if user can't access the article
+    try {
+      // Check if user can view comments on this article
+      const canComment = await privacyService.canComment(userId, articleId);
+      if (!canComment) {
+        return []; // Return empty array if user can't access the article
+      }
+    } catch (error) {
+      console.error('Error checking comment permissions:', error);
+      return []; // Return empty array on permission check error
     }
 
     // Get all non-deleted comments for the article
