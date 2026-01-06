@@ -9,11 +9,11 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { Article, Cluster, InsertCluster } from '@shared/schema';
 
 // Constants
-export const CLUSTER_SIMILARITY_THRESHOLD = 0.75; // Requirements: 2.1
+export const CLUSTER_SIMILARITY_THRESHOLD = 0.6; // Requirements: 2.1 - Lowered for better coverage
 export const SIMILAR_ARTICLES_THRESHOLD = 0.7; // Requirements: 4.2
 export const MIN_CLUSTER_ARTICLES = 1; // Requirements: 2.2 - Lowered for better coverage
 export const MIN_CLUSTER_SOURCES = 1; // Requirements: 2.2 - Allow single-source trending topics
-export const MIN_ENGAGEMENT_THRESHOLD = 0.3; // Minimum engagement score for single-article clusters
+export const MIN_ENGAGEMENT_THRESHOLD = 0.2; // Minimum engagement score for single-article clusters
 export const MAX_SIMILAR_ARTICLES = 5; // Requirements: 4.1
 export const CLUSTER_EXPIRATION_HOURS = 168; // Requirements: 2.6 - 7 days
 export const MAX_RETRY_ATTEMPTS = 3;
@@ -445,8 +445,16 @@ export function formClusters(
       }
     }
     
-    // Property 6: Check minimum requirements (2 articles from 2 sources)
-    if (clusterMembers.length >= MIN_CLUSTER_ARTICLES && clusterSources.size >= MIN_CLUSTER_SOURCES) {
+    // Property 6: Check minimum requirements (more lenient now)
+    const avgEngagement = clusterMembers.length > 0 ? 
+      clusterMembers.reduce((sum, m) => sum + calculateEngagementScore({
+        publishedAt: m.publishedAt,
+        feedName: m.feedName,
+        title: m.title
+      }), 0) / clusterMembers.length : 0;
+      
+    if (clusterMembers.length >= MIN_CLUSTER_ARTICLES && 
+        (clusterSources.size >= MIN_CLUSTER_SOURCES || avgEngagement >= MIN_ENGAGEMENT_THRESHOLD)) {
       // Mark all members as assigned (Property 7)
       for (const member of clusterMembers) {
         assignedArticleIds.add(member.id);
@@ -676,10 +684,37 @@ export class ClusteringServiceManager {
       if (allArticles.length > 0) {
         clusterCandidates = fallbackClusterByKeywords(allArticles);
         console.log(`📊 Keyword clustering found ${clusterCandidates.length} candidates`);
+        
+        // If still no clusters, create individual trending topics from top articles
+        if (clusterCandidates.length === 0) {
+          console.log(`📊 Creating individual trending topics from top articles...`);
+          method = 'individual';
+          
+          // Sort by engagement and take top articles
+          const topArticles = allArticles
+            .map(article => ({
+              article,
+              engagement: calculateEngagementScore(article)
+            }))
+            .filter(item => item.engagement >= MIN_ENGAGEMENT_THRESHOLD)
+            .sort((a, b) => b.engagement - a.engagement)
+            .slice(0, 10)
+            .map(item => item.article);
+          
+          // Create individual clusters for each top article
+          clusterCandidates = topArticles.map(article => ({
+            members: [article],
+            avgSimilarity: 1.0,
+            sources: new Set([article.feedName])
+          }));
+          
+          console.log(`📊 Created ${clusterCandidates.length} individual trending topics`);
+        }
       }
     }
     
     if (clusterCandidates.length === 0) {
+      console.log(`📊 No clusters found. Returning empty result.`);
       return {
         clusters: [],
         articlesProcessed: articlesWithEmbeddings.length,
@@ -688,6 +723,8 @@ export class ClusteringServiceManager {
         method
       };
     }
+    
+    console.log(`📊 Processing ${clusterCandidates.length} cluster candidates with method: ${method}`);
     
     console.log(`📊 Found ${clusterCandidates.length} cluster candidates`);
     
