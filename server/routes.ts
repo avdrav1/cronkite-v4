@@ -4111,11 +4111,20 @@ export async function registerRoutes(
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       console.error('Get friends error:', errorMessage);
 
-      res.status(500).json({
-        success: false,
-        error: 'GET_FRIENDS_ERROR',
-        message: errorMessage
-      });
+      // Handle database connection errors gracefully
+      if (errorMessage.includes('ENOTFOUND') || errorMessage.includes('getaddrinfo')) {
+        res.status(503).json({
+          success: false,
+          error: 'DATABASE_UNAVAILABLE',
+          message: 'Database temporarily unavailable. Please try again later.'
+        });
+      } else {
+        res.status(500).json({
+          success: false,
+          error: 'GET_FRIENDS_ERROR',
+          message: errorMessage
+        });
+      }
     }
   });
 
