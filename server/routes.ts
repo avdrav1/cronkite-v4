@@ -2974,7 +2974,7 @@ export async function registerRoutes(
               clusters: clustersWithArticleIds,
               articlesAnalyzed: cachedClusters.reduce((sum, c) => sum + c.articleCount, 0),
               generatedAt: new Date().toISOString(),
-              method: 'vector',
+              method: 'cached',
               cached: true
             };
             console.log(`📊 Response cluster count: ${response.clusters.length}`);

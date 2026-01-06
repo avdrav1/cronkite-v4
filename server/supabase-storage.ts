@@ -1764,6 +1764,65 @@ export class SupabaseStorage implements IStorage {
     }).filter((a: any) => a.embedding.length > 0);
   }
 
+  async getRecentArticles(
+    userId?: string,
+    feedIds?: string[],
+    hoursBack: number = 168
+  ): Promise<Array<{
+    id: string;
+    title: string;
+    excerpt: string | null;
+    feedId: string;
+    feedName: string;
+    publishedAt: Date | null;
+  }>> {
+    const cutoffTime = new Date(Date.now() - hoursBack * 60 * 60 * 1000);
+    
+    let query = this.supabase
+      .from('articles')
+      .select(`
+        id,
+        title,
+        excerpt,
+        feed_id,
+        published_at,
+        feeds!inner (
+          id,
+          name,
+          user_id
+        )
+      `)
+      .gte('published_at', cutoffTime.toISOString())
+      .order('published_at', { ascending: false })
+      .limit(1000);
+
+    // Filter by user's feeds if userId provided
+    if (userId) {
+      query = query.eq('feeds.user_id', userId);
+    }
+
+    // Filter by specific feeds if provided
+    if (feedIds && feedIds.length > 0) {
+      query = query.in('feed_id', feedIds);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error('Error fetching recent articles:', error);
+      return [];
+    }
+
+    return (data || []).map((article: any) => ({
+      id: article.id,
+      title: article.title,
+      excerpt: article.excerpt,
+      feedId: article.feed_id,
+      feedName: article.feeds?.name || 'Unknown Feed',
+      publishedAt: article.published_at ? new Date(article.published_at) : null,
+    }));
+  }
+
   async createCluster(cluster: InsertCluster): Promise<Cluster> {
     const { data, error } = await this.supabase
       .from('clusters')

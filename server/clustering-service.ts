@@ -11,10 +11,11 @@ import type { Article, Cluster, InsertCluster } from '@shared/schema';
 // Constants
 export const CLUSTER_SIMILARITY_THRESHOLD = 0.75; // Requirements: 2.1
 export const SIMILAR_ARTICLES_THRESHOLD = 0.7; // Requirements: 4.2
-export const MIN_CLUSTER_ARTICLES = 2; // Requirements: 2.2
-export const MIN_CLUSTER_SOURCES = 2; // Requirements: 2.2
+export const MIN_CLUSTER_ARTICLES = 1; // Requirements: 2.2 - Lowered for better coverage
+export const MIN_CLUSTER_SOURCES = 1; // Requirements: 2.2 - Allow single-source trending topics
+export const MIN_ENGAGEMENT_THRESHOLD = 0.3; // Minimum engagement score for single-article clusters
 export const MAX_SIMILAR_ARTICLES = 5; // Requirements: 4.1
-export const CLUSTER_EXPIRATION_HOURS = 48; // Requirements: 2.6
+export const CLUSTER_EXPIRATION_HOURS = 168; // Requirements: 2.6 - 7 days
 export const MAX_RETRY_ATTEMPTS = 3;
 export const RETRY_DELAYS = [1000, 2000, 4000]; // Exponential backoff
 
@@ -55,6 +56,7 @@ export interface ClusterGenerationResult {
   articlesProcessed: number;
   clustersCreated: number;
   processingTimeMs: number;
+  method?: string;
 }
 
 export interface ArticleWithEmbedding {
@@ -96,6 +98,114 @@ export function getAnthropicClient(): Anthropic | null {
  */
 export function isClusteringServiceAvailable(): boolean {
   return !!process.env.ANTHROPIC_API_KEY;
+}
+
+/**
+ * Calculate engagement score for an article
+ * Factors: recency, source popularity, read counts
+ */
+function calculateEngagementScore(article: {
+  publishedAt: Date | null;
+  feedName: string;
+  title: string;
+}): number {
+  let score = 0;
+  
+  // Recency boost (0-0.5 points)
+  if (article.publishedAt) {
+    const hoursAgo = (Date.now() - article.publishedAt.getTime()) / (1000 * 60 * 60);
+    const recencyScore = Math.max(0, 0.5 - (hoursAgo / 168) * 0.5); // Decay over 7 days
+    score += recencyScore;
+  }
+  
+  // Source popularity boost (0-0.3 points)
+  const popularSources = ['BBC', 'CNN', 'Reuters', 'Associated Press', 'The New York Times', 'The Guardian'];
+  if (popularSources.some(source => article.feedName.toLowerCase().includes(source.toLowerCase()))) {
+    score += 0.3;
+  }
+  
+  // Title length/quality boost (0-0.2 points)
+  if (article.title.length > 50 && article.title.length < 120) {
+    score += 0.2;
+  }
+  
+  return Math.min(1.0, score);
+}
+
+/**
+ * Fallback clustering using keyword similarity for articles without embeddings
+ */
+function fallbackClusterByKeywords(articles: Array<{
+  id: string;
+  title: string;
+  excerpt: string | null;
+  feedId: string;
+  feedName: string;
+  publishedAt: Date | null;
+}>): FallbackClusterCandidate[] {
+  const clusters: FallbackClusterCandidate[] = [];
+  const processed = new Set<string>();
+  
+  for (const article of articles) {
+    if (processed.has(article.id)) continue;
+    
+    const keywords = extractKeywords(article.title + ' ' + (article.excerpt || ''));
+    const cluster: FallbackClusterCandidate = {
+      members: [article],
+      avgSimilarity: 1.0,
+      sources: new Set([article.feedName])
+    };
+    
+    // Find similar articles by keyword overlap
+    for (const other of articles) {
+      if (other.id === article.id || processed.has(other.id)) continue;
+      
+      const otherKeywords = extractKeywords(other.title + ' ' + (other.excerpt || ''));
+      const similarity = calculateKeywordSimilarity(keywords, otherKeywords);
+      
+      if (similarity > 0.3) { // Lower threshold for keyword matching
+        cluster.members.push(other);
+        cluster.sources.add(other.feedName);
+        processed.add(other.id);
+      }
+    }
+    
+    processed.add(article.id);
+    
+    // Check if cluster meets criteria (now more lenient)
+    const engagementScore = calculateEngagementScore(cluster.members[0]);
+    if (cluster.members.length >= MIN_CLUSTER_ARTICLES && 
+        (Array.from(cluster.sources).length >= MIN_CLUSTER_SOURCES || engagementScore >= MIN_ENGAGEMENT_THRESHOLD)) {
+      clusters.push(cluster);
+    }
+  }
+  
+  return clusters;
+}
+
+/**
+ * Extract keywords from text
+ */
+function extractKeywords(text: string): string[] {
+  const stopWords = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should']);
+  
+  return text.toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .split(/\s+/)
+    .filter(word => word.length > 3 && !stopWords.has(word))
+    .slice(0, 10); // Top 10 keywords
+}
+
+/**
+ * Calculate similarity between keyword sets
+ */
+function calculateKeywordSimilarity(keywords1: string[], keywords2: string[]): number {
+  const set1 = new Set(keywords1);
+  const set2 = new Set(keywords2);
+  const intersection = new Set([...set1].filter(x => set2.has(x)));
+  const union = new Set([...set1, ...set2]);
+  
+  return union.size > 0 ? intersection.size / union.size : 0;
 }
 
 /**
@@ -232,6 +342,19 @@ interface ClusterCandidate {
   sources: Set<string>;
 }
 
+interface FallbackClusterCandidate {
+  members: Array<{
+    id: string;
+    title: string;
+    excerpt: string | null;
+    feedId: string;
+    feedName: string;
+    publishedAt: Date | null;
+  }>;
+  avgSimilarity: number;
+  sources: Set<string>;
+}
+
 /**
  * Group articles into clusters based on embedding similarity
  * Requirements: 2.1, 2.2, 2.4
@@ -344,11 +467,15 @@ export function formClusters(
 }
 
 /**
- * Calculate relevance score for a cluster
- * Requirements: 2.7 - relevance score = article_count × source_diversity
+ * Calculate relevance score for a cluster with engagement factors
+ * Requirements: 2.7 - relevance score = article_count × source_diversity × engagement
  */
-export function calculateRelevanceScore(articleCount: number, sourceCount: number): number {
-  return articleCount * sourceCount;
+export function calculateRelevanceScore(
+  articleCount: number, 
+  sourceCount: number, 
+  avgEngagement: number = 0.5
+): number {
+  return articleCount * sourceCount * (1 + avgEngagement);
 }
 
 
@@ -470,6 +597,19 @@ export interface ClusteringStorage {
     hoursBack?: number
   ): Promise<ArticleWithEmbedding[]>;
   
+  getRecentArticles(
+    userId?: string,
+    feedIds?: string[],
+    hoursBack?: number
+  ): Promise<Array<{
+    id: string;
+    title: string;
+    excerpt: string | null;
+    feedId: string;
+    feedName: string;
+    publishedAt: Date | null;
+  }>>;
+  
   // Cluster operations
   createCluster(cluster: InsertCluster): Promise<Cluster>;
   updateCluster(id: string, updates: Partial<Cluster>): Promise<Cluster>;
@@ -507,26 +647,47 @@ export class ClusteringServiceManager {
   async generateClusters(
     userId?: string,
     feedIds?: string[],
-    hoursBack: number = 48
+    hoursBack: number = 168 // 7 days for better trending analysis
   ): Promise<ClusterGenerationResult> {
     const startTime = Date.now();
     
-    // Get articles with embeddings
-    const articles = await this.storage.getArticlesWithEmbeddings(userId, feedIds, hoursBack);
+    // Try vector-based clustering first
+    const articlesWithEmbeddings = await this.storage.getArticlesWithEmbeddings(userId, feedIds, hoursBack);
+    let clusterCandidates: (ClusterCandidate | FallbackClusterCandidate)[] = [];
+    let method = 'vector';
     
-    if (articles.length < MIN_CLUSTER_ARTICLES) {
-      return {
-        clusters: [],
-        articlesProcessed: articles.length,
-        clustersCreated: 0,
-        processingTimeMs: Date.now() - startTime,
-      };
+    console.log(`📊 Found ${articlesWithEmbeddings.length} articles with embeddings`);
+    
+    if (articlesWithEmbeddings.length >= MIN_CLUSTER_ARTICLES) {
+      // Use vector-based clustering
+      clusterCandidates = formClusters(articlesWithEmbeddings, CLUSTER_SIMILARITY_THRESHOLD);
+      console.log(`📊 Vector clustering found ${clusterCandidates.length} candidates`);
     }
     
-    console.log(`📊 Processing ${articles.length} articles for clustering...`);
+    // Fallback to keyword-based clustering if needed
+    if (clusterCandidates.length === 0) {
+      console.log(`📊 Falling back to keyword-based clustering...`);
+      method = 'keyword';
+      
+      // Get articles without embedding requirement
+      const allArticles = await this.storage.getRecentArticles(userId, feedIds, hoursBack);
+      console.log(`📊 Found ${allArticles.length} total articles for fallback clustering`);
+      
+      if (allArticles.length > 0) {
+        clusterCandidates = fallbackClusterByKeywords(allArticles);
+        console.log(`📊 Keyword clustering found ${clusterCandidates.length} candidates`);
+      }
+    }
     
-    // Form clusters based on similarity
-    const clusterCandidates = formClusters(articles, CLUSTER_SIMILARITY_THRESHOLD);
+    if (clusterCandidates.length === 0) {
+      return {
+        clusters: [],
+        articlesProcessed: articlesWithEmbeddings.length,
+        clustersCreated: 0,
+        processingTimeMs: Date.now() - startTime,
+        method
+      };
+    }
     
     console.log(`📊 Found ${clusterCandidates.length} cluster candidates`);
     
@@ -545,10 +706,19 @@ export class ClusteringServiceManager {
           }))
         );
         
+        // Calculate engagement scores for cluster members
+        const engagementScores = candidate.members.map(m => calculateEngagementScore({
+          publishedAt: m.publishedAt,
+          feedName: m.feedName,
+          title: m.title
+        }));
+        const avgEngagement = engagementScores.reduce((sum, score) => sum + score, 0) / engagementScores.length;
+        
         // Calculate relevance score (Requirements: 2.7)
         const relevanceScore = calculateRelevanceScore(
           candidate.members.length,
-          candidate.sources.size
+          candidate.sources.size,
+          avgEngagement
         );
         
         // Get latest timestamp from cluster members

@@ -2212,6 +2212,68 @@ export class MemStorage implements IStorage {
     return result;
   }
 
+  async getRecentArticles(
+    userId?: string,
+    feedIds?: string[],
+    hoursBack: number = 168
+  ): Promise<Array<{
+    id: string;
+    title: string;
+    excerpt: string | null;
+    feedId: string;
+    feedName: string;
+    publishedAt: Date | null;
+  }>> {
+    const cutoffTime = new Date(Date.now() - hoursBack * 60 * 60 * 1000);
+    const result: Array<{
+      id: string;
+      title: string;
+      excerpt: string | null;
+      feedId: string;
+      feedName: string;
+      publishedAt: Date | null;
+    }> = [];
+    
+    // Get user's feeds if userId is provided
+    let userFeedIds: Set<string> | null = null;
+    if (userId) {
+      const userFeeds = this.userFeeds.get(userId) || [];
+      userFeedIds = new Set(userFeeds.map(f => f.id));
+    }
+    
+    // Filter by feedIds if provided
+    const targetFeedIds = feedIds ? new Set(feedIds) : null;
+    
+    for (const [feedId, articles] of this.articles) {
+      // Skip if not in user's feeds (when userId provided)
+      if (userFeedIds && !userFeedIds.has(feedId)) continue;
+      
+      // Skip if not in target feeds (when feedIds provided)
+      if (targetFeedIds && !targetFeedIds.has(feedId)) continue;
+      
+      const feed = this.feeds.get(feedId);
+      if (!feed) continue;
+      
+      for (const article of articles) {
+        if (article.published_at && article.published_at >= cutoffTime) {
+          result.push({
+            id: article.id,
+            title: article.title,
+            excerpt: article.excerpt,
+            feedId: article.feed_id,
+            feedName: feed.name,
+            publishedAt: article.published_at
+          });
+        }
+      }
+    }
+    
+    // Sort by published date (newest first) and limit to 1000 for performance
+    return result
+      .sort((a, b) => (b.publishedAt?.getTime() || 0) - (a.publishedAt?.getTime() || 0))
+      .slice(0, 1000);
+  }
+
   async createCluster(cluster: InsertCluster): Promise<Cluster> {
     const id = randomUUID();
     const newCluster: Cluster = {
