@@ -220,30 +220,10 @@ export class CommentService {
       // Use Supabase client instead of direct DB connection
       const supabase = getSupabase();
       
+      // First get comments
       const { data: comments, error } = await supabase
         .from('article_comments')
-        .select(`
-          id,
-          article_id,
-          user_id,
-          content,
-          tagged_users,
-          created_at,
-          updated_at,
-          deleted_at,
-          profiles!article_comments_user_id_fkey (
-            id,
-            email,
-            display_name,
-            avatar_url,
-            bio,
-            timezone,
-            is_admin,
-            onboarding_completed,
-            created_at,
-            updated_at
-          )
-        `)
+        .select('*')
         .eq('article_id', articleId)
         .is('deleted_at', null)
         .order('created_at', { ascending: false })
@@ -258,37 +238,39 @@ export class CommentService {
         return [];
       }
 
-      // Map to CommentWithAuthor format
-      const visibleComments: CommentWithAuthor[] = [];
-      
-      for (const comment of comments) {
-        const author = comment.profiles as any;
-        if (!author) continue;
+      // Get unique user IDs and fetch profiles
+      const userIds = [...new Set(comments.map(c => c.user_id))];
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('*')
+        .in('id', userIds);
 
-        // For now, show all comments (permission check can be added later)
-        visibleComments.push({
+      const profileMap = new Map((profiles || []).map(p => [p.id, p]));
+
+      // Map to CommentWithAuthor format
+      return comments.map(comment => {
+        const author = profileMap.get(comment.user_id);
+        return {
           id: comment.id,
           articleId: comment.article_id,
           content: comment.content,
           author: {
-            id: author.id,
-            email: author.email,
-            display_name: author.display_name,
-            avatar_url: author.avatar_url,
-            bio: author.bio,
-            timezone: author.timezone,
-            is_admin: author.is_admin,
-            onboarding_completed: author.onboarding_completed,
-            created_at: new Date(author.created_at),
-            updated_at: new Date(author.updated_at)
+            id: author?.id || comment.user_id,
+            email: author?.email || '',
+            display_name: author?.display_name || 'Unknown User',
+            avatar_url: author?.avatar_url || null,
+            bio: author?.bio || null,
+            timezone: author?.timezone || 'UTC',
+            is_admin: author?.is_admin || false,
+            onboarding_completed: author?.onboarding_completed || false,
+            created_at: author?.created_at ? new Date(author.created_at) : new Date(),
+            updated_at: author?.updated_at ? new Date(author.updated_at) : new Date()
           } as unknown as Profile,
           taggedUsers: [],
           createdAt: new Date(comment.created_at),
           updatedAt: new Date(comment.updated_at)
-        });
-      }
-
-      return visibleComments;
+        };
+      });
     } catch (error) {
       console.error('Error in getComments:', error);
       return [];
