@@ -4437,10 +4437,6 @@ export async function registerRoutes(
         });
       }
 
-      // Temporary bypass - create comment directly without permission check
-      const { commentService } = await import('./comment-service');
-      
-      // Create a simple comment bypassing the addComment method
       const trimmedContent = content.trim();
       if (trimmedContent.length === 0) {
         return res.status(400).json({
@@ -4449,22 +4445,56 @@ export async function registerRoutes(
           message: 'Comment content cannot be empty'
         });
       }
-      
-      // For now, just return success without actually creating the comment
-      return res.json({
+
+      // Create comment using Supabase
+      const { createClient } = await import('@supabase/supabase-js');
+      const supabase = createClient(
+        process.env.SUPABASE_URL || '',
+        process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || ''
+      );
+
+      // Insert the comment
+      const { data: newComment, error: insertError } = await supabase
+        .from('article_comments')
+        .insert({
+          article_id: articleId,
+          user_id: userId,
+          content: trimmedContent,
+          tagged_users: taggedUserIds || []
+        })
+        .select()
+        .single();
+
+      if (insertError) {
+        console.error('Error creating comment:', insertError);
+        return res.status(500).json({
+          success: false,
+          error: 'CREATE_COMMENT_ERROR',
+          message: 'Failed to create comment'
+        });
+      }
+
+      // Get the user's profile for the response
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('id, display_name, avatar_url')
+        .eq('id', userId)
+        .single();
+
+      return res.status(201).json({
         success: true,
         comment: {
-          id: 'temp-' + Date.now(),
-          articleId,
-          content: trimmedContent,
+          id: newComment.id,
+          articleId: newComment.article_id,
+          content: newComment.content,
           author: {
             id: userId,
-            displayName: 'Test User',
-            avatarUrl: null
+            displayName: profile?.display_name || 'Unknown User',
+            avatarUrl: profile?.avatar_url || null
           },
           taggedUsers: [],
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
+          createdAt: newComment.created_at,
+          updatedAt: newComment.updated_at
         }
       });
 
