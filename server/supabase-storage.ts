@@ -1023,27 +1023,30 @@ export class SupabaseStorage implements IStorage {
     
     const feedIds = userFeeds.map(uf => uf.feed_id);
     
-    // Get article IDs to keep (most recent maxArticles)
-    const { data: articlesToKeep } = await this.supabase
+    // Get article IDs to DELETE (skip the most recent maxArticles)
+    const { data: articlesToDelete } = await this.supabase
       .from('articles')
       .select('id')
       .in('feed_id', feedIds)
       .order('published_at', { ascending: false })
-      .limit(maxArticles);
+      .range(maxArticles, 999999);
     
-    if (!articlesToKeep) return 0;
+    if (!articlesToDelete || articlesToDelete.length === 0) return 0;
     
-    const keepIds = articlesToKeep.map(a => a.id);
+    const deleteIds = articlesToDelete.map(a => a.id);
     
-    // Delete articles not in the keep list
-    const { data: deleted } = await this.supabase
+    // Delete old articles
+    const { error } = await this.supabase
       .from('articles')
       .delete()
-      .in('feed_id', feedIds)
-      .not('id', 'in', `(${keepIds.join(',')})`)
-      .select('id');
+      .in('id', deleteIds);
     
-    return deleted?.length || 0;
+    if (error) {
+      console.error('Cleanup delete error:', error);
+      return 0;
+    }
+    
+    return deleteIds.length;
   }
 
   // User Article Management
