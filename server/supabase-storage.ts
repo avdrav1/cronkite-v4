@@ -2133,7 +2133,22 @@ export class SupabaseStorage implements IStorage {
     
     for (const cluster of clusters) {
       const articleIds = await this.getArticleIdsByClusterId(cluster.id);
+      
+      // Delete if no articles
       if (articleIds.length === 0) {
+        await this.deleteCluster(cluster.id);
+        deleted++;
+        continue;
+      }
+      
+      // Check source diversity - require minimum 2 sources
+      const articles = await Promise.all(
+        articleIds.slice(0, 50).map(id => this.getArticleById(id))
+      );
+      const uniqueFeedIds = new Set(articles.filter(Boolean).map(a => a!.feed_id));
+      
+      if (uniqueFeedIds.size < 2) {
+        console.log(`🧹 Deleting cluster "${cluster.title}" - only ${uniqueFeedIds.size} source(s)`);
         await this.deleteCluster(cluster.id);
         deleted++;
       }
