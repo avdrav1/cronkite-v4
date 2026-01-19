@@ -1024,30 +1024,42 @@ export class SupabaseStorage implements IStorage {
     const feedIds = userFeeds.map(uf => uf.feed_id);
     
     // Get article IDs to DELETE (skip the most recent maxArticles, exclude clustered articles)
-    const { data: articlesToDelete } = await this.supabase
+    const { data: articlesToDelete, error: selectError } = await this.supabase
       .from('articles')
       .select('id')
       .in('feed_id', feedIds)
       .is('cluster_id', null)  // Protect clustered articles from deletion
       .order('published_at', { ascending: false })
-      .range(maxArticles, 999999);
+      .range(maxArticles, maxArticles + 5000);  // Batch delete up to 5000 at a time
     
-    if (!articlesToDelete || articlesToDelete.length === 0) return 0;
-    
-    const deleteIds = articlesToDelete.map(a => a.id);
-    
-    // Delete old articles
-    const { error } = await this.supabase
-      .from('articles')
-      .delete()
-      .in('id', deleteIds);
-    
-    if (error) {
-      console.error('Cleanup delete error:', error);
+    if (selectError) {
+      console.error('Cleanup select error:', selectError);
       return 0;
     }
     
-    return deleteIds.length;
+    if (!articlesToDelete || articlesToDelete.length === 0) return 0;
+    
+    console.log(`🧹 Cleanup: Found ${articlesToDelete.length} articles to delete (keeping ${maxArticles})`);
+    
+    const deleteIds = articlesToDelete.map(a => a.id);
+    
+    // Delete in batches of 500 to avoid query limits
+    let totalDeleted = 0;
+    for (let i = 0; i < deleteIds.length; i += 500) {
+      const batch = deleteIds.slice(i, i + 500);
+      const { error } = await this.supabase
+        .from('articles')
+        .delete()
+        .in('id', batch);
+      
+      if (error) {
+        console.error('Cleanup delete error:', error);
+        break;
+      }
+      totalDeleted += batch.length;
+    }
+    
+    return totalDeleted;
   }
 
   // User Article Management

@@ -1675,12 +1675,12 @@ export async function registerRoutes(
             const deletedCount = await storage.cleanupOldArticles(userId, config.maxArticlesPerUserFeed);
             if (deletedCount > 0) {
               console.log(`Cleaned up ${deletedCount} old articles for user ${userId}`);
-              // Maintain cluster integrity after cleanup
-              const updatedClusters = await storage.refreshClusterCounts();
-              const deletedClusters = await storage.deleteEmptyClusters();
-              if (updatedClusters > 0 || deletedClusters > 0) {
-                console.log(`Cluster maintenance: ${updatedClusters} counts updated, ${deletedClusters} empty clusters removed`);
-              }
+            }
+            // Always maintain cluster integrity after sync (counts may be stale)
+            const updatedClusters = await storage.refreshClusterCounts();
+            const deletedClusters = await storage.deleteEmptyClusters();
+            if (updatedClusters > 0 || deletedClusters > 0) {
+              console.log(`Cluster maintenance: ${updatedClusters} counts updated, ${deletedClusters} empty clusters removed`);
             }
           } catch (cleanupError) {
             console.error('Article cleanup error:', cleanupError);
@@ -1727,12 +1727,12 @@ export async function registerRoutes(
             const deletedCount = await storage.cleanupOldArticles(userId, config.maxArticlesPerUserFeed);
             if (deletedCount > 0) {
               console.log(`Background sync: Cleaned up ${deletedCount} old articles for user ${userId}`);
-              // Maintain cluster integrity after cleanup
-              const updatedClusters = await storage.refreshClusterCounts();
-              const deletedClusters = await storage.deleteEmptyClusters();
-              if (updatedClusters > 0 || deletedClusters > 0) {
-                console.log(`Background sync: Cluster maintenance: ${updatedClusters} counts updated, ${deletedClusters} empty clusters removed`);
-              }
+            }
+            // Always maintain cluster integrity after sync (counts may be stale)
+            const updatedClusters = await storage.refreshClusterCounts();
+            const deletedClusters = await storage.deleteEmptyClusters();
+            if (updatedClusters > 0 || deletedClusters > 0) {
+              console.log(`Background sync: Cluster maintenance: ${updatedClusters} counts updated, ${deletedClusters} empty clusters removed`);
             }
           } catch (cleanupError) {
             console.error('Background sync: Article cleanup error:', cleanupError);
