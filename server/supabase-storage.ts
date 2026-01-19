@@ -1015,10 +1015,10 @@ export class SupabaseStorage implements IStorage {
   async cleanupOldArticles(userId: string, maxArticles: number): Promise<number> {
     console.log(`🧹 cleanupOldArticles called: userId=${userId}, maxArticles=${maxArticles}`);
     
-    // Get user's feed IDs
+    // Get user's feed IDs from feeds table (feeds have user_id column)
     const { data: userFeeds, error: feedError } = await this.supabase
-      .from('user_feeds')
-      .select('feed_id')
+      .from('feeds')
+      .select('id')
       .eq('user_id', userId);
     
     if (feedError) {
@@ -1031,7 +1031,7 @@ export class SupabaseStorage implements IStorage {
       return 0;
     }
     
-    const feedIds = userFeeds.map(uf => uf.feed_id);
+    const feedIds = userFeeds.map(uf => uf.id);
     console.log(`🧹 Cleanup: Found ${feedIds.length} feeds for user`);
     
     // First, count total articles
