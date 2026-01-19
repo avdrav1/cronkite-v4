@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { useInvalidateFeedsQuery } from "@/hooks/useFeedsQuery";
@@ -40,6 +41,7 @@ const PRIORITY_CONFIG = {
 } as const;
 
 export function FeedManagement() {
+  const queryClient = useQueryClient();
   const [feeds, setFeeds] = useState<Feed[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -92,6 +94,10 @@ export function FeedManagement() {
     }
     toast({ title: "Sync Complete", description: `${totalNew} new articles found.` });
     await fetchFeeds(); await fetchFeedCount();
+    // Invalidate queries to refresh nav counts
+    queryClient.invalidateQueries({ queryKey: ['article-counts'] });
+    queryClient.invalidateQueries({ queryKey: ['user-feeds'] });
+    queryClient.invalidateQueries({ queryKey: ['feed-count'] });
     setIsSyncing(false); setSyncProgress({ current: 0, total: 0, newArticles: 0 });
   };
 

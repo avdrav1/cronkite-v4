@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { Link, useLocation, useSearch } from "wouter";
+import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import {
@@ -48,6 +49,7 @@ interface AppShellProps {
 }
 
 export function AppShell({ children }: AppShellProps) {
+  const queryClient = useQueryClient();
   const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(true);
   const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(true);
   const [, setLocation] = useLocation();
@@ -97,8 +99,10 @@ export function AppShell({ children }: AppShellProps) {
         description: `Found ${totalNew} new article${totalNew !== 1 ? 's' : ''}.`
       });
 
-      // Trigger feed list refresh
-      window.dispatchEvent(new CustomEvent('feedsUpdated'));
+      // Invalidate queries to refresh counts
+      queryClient.invalidateQueries({ queryKey: ['article-counts'] });
+      queryClient.invalidateQueries({ queryKey: ['user-feeds'] });
+      queryClient.invalidateQueries({ queryKey: ['feed-count'] });
     } catch (e) {
       console.error('Sync all error:', e);
       toast({ variant: "destructive", title: "Sync failed" });

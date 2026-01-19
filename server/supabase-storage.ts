@@ -1023,11 +1023,12 @@ export class SupabaseStorage implements IStorage {
     
     const feedIds = userFeeds.map(uf => uf.feed_id);
     
-    // Get article IDs to DELETE (skip the most recent maxArticles)
+    // Get article IDs to DELETE (skip the most recent maxArticles, exclude clustered articles)
     const { data: articlesToDelete } = await this.supabase
       .from('articles')
       .select('id')
       .in('feed_id', feedIds)
+      .is('cluster_id', null)  // Protect clustered articles from deletion
       .order('published_at', { ascending: false })
       .range(maxArticles, 999999);
     
@@ -2058,6 +2059,34 @@ export class SupabaseStorage implements IStorage {
     }
     
     return (data || []).map(a => a.id);
+  }
+
+  async refreshClusterCounts(): Promise<number> {
+    const clusters = await this.getClusters({ includeExpired: false });
+    let updated = 0;
+    
+    for (const cluster of clusters) {
+      const articleIds = await this.getArticleIdsByClusterId(cluster.id);
+      if (cluster.article_count !== articleIds.length) {
+        await this.updateCluster(cluster.id, { article_count: articleIds.length });
+        updated++;
+      }
+    }
+    return updated;
+  }
+
+  async deleteEmptyClusters(): Promise<number> {
+    const clusters = await this.getClusters({ includeExpired: false });
+    let deleted = 0;
+    
+    for (const cluster of clusters) {
+      const articleIds = await this.getArticleIdsByClusterId(cluster.id);
+      if (articleIds.length === 0) {
+        await this.deleteCluster(cluster.id);
+        deleted++;
+      }
+    }
+    return deleted;
   }
 
   // ============================================================================

@@ -218,6 +218,8 @@ export interface IStorage {
   removeArticlesFromCluster(clusterId: string): Promise<void>;
   deleteExpiredClusters(): Promise<number>;
   getArticleIdsByClusterId(clusterId: string): Promise<string[]>;
+  refreshClusterCounts(): Promise<number>;
+  deleteEmptyClusters(): Promise<number>;
   
   // Feed Scheduler Management (Requirements: 3.1, 3.2, 3.3, 6.2, 6.6)
   getFeedById(feedId: string): Promise<Feed | undefined>;
@@ -2430,6 +2432,30 @@ export class MemStorage implements IStorage {
       }
     });
     return articleIds;
+  }
+
+  async refreshClusterCounts(): Promise<number> {
+    let updated = 0;
+    for (const [id, cluster] of this.clusters) {
+      const articleIds = await this.getArticleIdsByClusterId(id);
+      if (cluster.article_count !== articleIds.length) {
+        this.clusters.set(id, { ...cluster, article_count: articleIds.length });
+        updated++;
+      }
+    }
+    return updated;
+  }
+
+  async deleteEmptyClusters(): Promise<number> {
+    let deleted = 0;
+    for (const [id, cluster] of this.clusters) {
+      const articleIds = await this.getArticleIdsByClusterId(id);
+      if (articleIds.length === 0) {
+        this.clusters.delete(id);
+        deleted++;
+      }
+    }
+    return deleted;
   }
 
   // ============================================================================
