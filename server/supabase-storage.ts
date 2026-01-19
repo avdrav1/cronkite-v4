@@ -1013,15 +1013,34 @@ export class SupabaseStorage implements IStorage {
   }
 
   async cleanupOldArticles(userId: string, maxArticles: number): Promise<number> {
+    console.log(`🧹 cleanupOldArticles called: userId=${userId}, maxArticles=${maxArticles}`);
+    
     // Get user's feed IDs
-    const { data: userFeeds } = await this.supabase
+    const { data: userFeeds, error: feedError } = await this.supabase
       .from('user_feeds')
       .select('feed_id')
       .eq('user_id', userId);
     
-    if (!userFeeds || userFeeds.length === 0) return 0;
+    if (feedError) {
+      console.error('🧹 Cleanup: Failed to get user feeds:', feedError);
+      return 0;
+    }
+    
+    if (!userFeeds || userFeeds.length === 0) {
+      console.log('🧹 Cleanup: No user feeds found');
+      return 0;
+    }
     
     const feedIds = userFeeds.map(uf => uf.feed_id);
+    console.log(`🧹 Cleanup: Found ${feedIds.length} feeds for user`);
+    
+    // First, count total articles
+    const { count: totalCount } = await this.supabase
+      .from('articles')
+      .select('*', { count: 'exact', head: true })
+      .in('feed_id', feedIds);
+    
+    console.log(`🧹 Cleanup: Total articles in user feeds: ${totalCount}`);
     
     // Get article IDs to DELETE (skip the most recent maxArticles, exclude clustered articles)
     const { data: articlesToDelete, error: selectError } = await this.supabase
@@ -1033,11 +1052,14 @@ export class SupabaseStorage implements IStorage {
       .range(maxArticles, maxArticles + 5000);  // Batch delete up to 5000 at a time
     
     if (selectError) {
-      console.error('Cleanup select error:', selectError);
+      console.error('🧹 Cleanup select error:', selectError);
       return 0;
     }
     
-    if (!articlesToDelete || articlesToDelete.length === 0) return 0;
+    if (!articlesToDelete || articlesToDelete.length === 0) {
+      console.log(`🧹 Cleanup: No articles to delete (total: ${totalCount}, max: ${maxArticles})`);
+      return 0;
+    }
     
     console.log(`🧹 Cleanup: Found ${articlesToDelete.length} articles to delete (keeping ${maxArticles})`);
     
@@ -1053,12 +1075,13 @@ export class SupabaseStorage implements IStorage {
         .in('id', batch);
       
       if (error) {
-        console.error('Cleanup delete error:', error);
+        console.error('🧹 Cleanup delete error:', error);
         break;
       }
       totalDeleted += batch.length;
     }
     
+    console.log(`🧹 Cleanup: Deleted ${totalDeleted} articles`);
     return totalDeleted;
   }
 
