@@ -87,7 +87,7 @@ export function FeedManagement() {
     for (let i = 0; i < activeFeeds.length; i++) {
       setSyncProgress(p => ({ ...p, current: i + 1 }));
       try {
-        const res = await apiRequest('POST', '/api/feeds/sync', { feedIds: [activeFeeds[i].id] });
+        const res = await apiRequest('POST', '/api/feeds/sync', { feedIds: [activeFeeds[i].id], waitForResults: true });
         const r = await res.json();
         if (r.results?.[0]) { totalNew += r.results[0].articlesNew || 0; setSyncProgress(p => ({ ...p, newArticles: totalNew })); }
       } catch (e) { console.error(e); }

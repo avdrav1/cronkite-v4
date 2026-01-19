@@ -83,7 +83,7 @@ export function AppShell({ children }: AppShellProps) {
       for (let i = 0; i < feeds.length; i++) {
         setSyncProgress(p => ({ ...p, current: i + 1 }));
         try {
-          const res = await apiRequest('POST', '/api/feeds/sync', { feedIds: [feeds[i].id] });
+          const res = await apiRequest('POST', '/api/feeds/sync', { feedIds: [feeds[i].id], waitForResults: true });
           const result = await res.json();
           if (result.results?.[0]) {
             totalNew += result.results[0].articlesNew || 0;
