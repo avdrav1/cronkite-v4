@@ -1034,6 +1034,16 @@ export class SupabaseStorage implements IStorage {
     const feedIds = userFeeds.map(uf => uf.id);
     console.log(`🧹 Cleanup: Found ${feedIds.length} feeds for user`);
     
+    // Get article IDs that are starred or read (protected)
+    const { data: protectedArticles } = await this.supabase
+      .from('user_articles')
+      .select('article_id')
+      .eq('user_id', userId)
+      .or('is_starred.eq.true,is_read.eq.true');
+    
+    const protectedIds = new Set((protectedArticles || []).map(a => a.article_id));
+    console.log(`🧹 Cleanup: ${protectedIds.size} articles protected (starred/read)`);
+    
     // First, count total articles
     const { count: totalCount } = await this.supabase
       .from('articles')
@@ -1042,28 +1052,35 @@ export class SupabaseStorage implements IStorage {
     
     console.log(`🧹 Cleanup: Total articles in user feeds: ${totalCount}`);
     
-    // Get article IDs to DELETE (skip the most recent maxArticles, exclude clustered articles)
-    const { data: articlesToDelete, error: selectError } = await this.supabase
+    // Get article IDs to potentially delete (skip the most recent maxArticles)
+    const { data: candidatesToDelete, error: selectError } = await this.supabase
       .from('articles')
       .select('id')
       .in('feed_id', feedIds)
-      .is('cluster_id', null)  // Protect clustered articles from deletion
       .order('published_at', { ascending: false })
-      .range(maxArticles, maxArticles + 5000);  // Batch delete up to 5000 at a time
+      .range(maxArticles, maxArticles + 5000);
     
     if (selectError) {
       console.error('🧹 Cleanup select error:', selectError);
       return 0;
     }
     
-    if (!articlesToDelete || articlesToDelete.length === 0) {
+    if (!candidatesToDelete || candidatesToDelete.length === 0) {
       console.log(`🧹 Cleanup: No articles to delete (total: ${totalCount}, max: ${maxArticles})`);
       return 0;
     }
     
-    console.log(`🧹 Cleanup: Found ${articlesToDelete.length} articles to delete (keeping ${maxArticles})`);
+    // Filter out protected articles (starred or read)
+    const deleteIds = candidatesToDelete
+      .map(a => a.id)
+      .filter(id => !protectedIds.has(id));
     
-    const deleteIds = articlesToDelete.map(a => a.id);
+    console.log(`🧹 Cleanup: ${candidatesToDelete.length} candidates, ${deleteIds.length} deletable (after protecting starred/read)`);
+    
+    if (deleteIds.length === 0) {
+      console.log('🧹 Cleanup: All candidate articles are protected');
+      return 0;
+    }
     
     // Delete in batches of 500 to avoid query limits
     let totalDeleted = 0;
