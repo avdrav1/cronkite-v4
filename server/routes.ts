@@ -7099,5 +7099,94 @@ export async function registerRoutes(
     }
   });
 
+  // ============================================================================
+  // Admin Cluster Management
+  // ============================================================================
+
+  // GET /api/admin/clusters - Get all clusters with article counts and source info
+  app.get('/api/admin/clusters', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const storage = await getStorage();
+      const clusters = await storage.getClusters({ includeExpired: true, limit: 200 });
+      
+      const clustersWithDetails = await Promise.all(clusters.map(async (cluster) => {
+        const articleIds = await storage.getArticleIdsByClusterId(cluster.id);
+        const articles = await Promise.all(
+          articleIds.slice(0, 50).map(id => storage.getArticleById(id))
+        );
+        const validArticles = articles.filter(Boolean);
+        const uniqueFeedIds = new Set(validArticles.map(a => a!.feed_id));
+        
+        const feedNames: string[] = [];
+        for (const feedId of uniqueFeedIds) {
+          const feed = await storage.getFeedById(feedId);
+          if (feed) feedNames.push(feed.name);
+        }
+        
+        return {
+          id: cluster.id,
+          title: cluster.title,
+          summary: cluster.summary,
+          articleCount: articleIds.length,
+          sourceCount: uniqueFeedIds.size,
+          sources: feedNames,
+          createdAt: cluster.created_at,
+          expiresAt: cluster.expires_at,
+          isValid: uniqueFeedIds.size >= 2 && articleIds.length > 0
+        };
+      }));
+      
+      clustersWithDetails.sort((a, b) => {
+        if (a.isValid !== b.isValid) return a.isValid ? 1 : -1;
+        return b.articleCount - a.articleCount;
+      });
+      
+      const summary = {
+        total: clustersWithDetails.length,
+        valid: clustersWithDetails.filter(c => c.isValid).length,
+        invalid: clustersWithDetails.filter(c => !c.isValid).length,
+        empty: clustersWithDetails.filter(c => c.articleCount === 0).length,
+        singleSource: clustersWithDetails.filter(c => c.sourceCount === 1).length
+      };
+      
+      res.json({ success: true, clusters: clustersWithDetails, summary });
+    } catch (error) {
+      console.error('Admin get clusters error:', error);
+      res.status(500).json({ error: 'Failed to get clusters' });
+    }
+  });
+
+  // DELETE /api/admin/clusters/:id - Delete a specific cluster
+  app.delete('/api/admin/clusters/:id', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const storage = await getStorage();
+      await storage.deleteCluster(id);
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Admin delete cluster error:', error);
+      res.status(500).json({ error: 'Failed to delete cluster' });
+    }
+  });
+
+  // POST /api/admin/clusters/cleanup - Delete all invalid clusters (< 2 sources)
+  app.post('/api/admin/clusters/cleanup', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const storage = await getStorage();
+      const deleted = await storage.deleteEmptyClusters();
+      const updated = await storage.refreshClusterCounts();
+      
+      res.json({ 
+        success: true, 
+        deleted,
+        updated,
+        message: `Deleted ${deleted} invalid clusters, updated ${updated} cluster counts`
+      });
+    } catch (error) {
+      console.error('Admin cleanup clusters error:', error);
+      res.status(500).json({ error: 'Failed to cleanup clusters' });
+    }
+  });
+
   return httpServer;
 }

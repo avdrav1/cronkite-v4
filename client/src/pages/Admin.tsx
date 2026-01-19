@@ -22,7 +22,8 @@ import {
   Calendar,
   Zap,
   Timer,
-  ShieldX
+  ShieldX,
+  Sparkles
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
@@ -359,6 +360,9 @@ export default function Admin() {
 
         {/* Sync Monitor */}
         <SyncMonitor />
+
+        {/* Cluster Management */}
+        <ClusterAdmin />
 
         {/* Summary Cards */}
         <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
@@ -816,6 +820,224 @@ function SyncMonitor() {
             </AlertDescription>
           </Alert>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+interface ClusterInfo {
+  id: string;
+  title: string;
+  summary: string;
+  articleCount: number;
+  sourceCount: number;
+  sources: string[];
+  createdAt: string;
+  expiresAt: string;
+  isValid: boolean;
+}
+
+interface ClusterSummary {
+  total: number;
+  valid: number;
+  invalid: number;
+  empty: number;
+  singleSource: number;
+}
+
+function ClusterAdmin() {
+  const [clusters, setClusters] = useState<ClusterInfo[]>([]);
+  const [summary, setSummary] = useState<ClusterSummary | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isCleaningUp, setIsCleaningUp] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchClusters = async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      const response = await apiRequest('GET', '/api/admin/clusters');
+      const data = await response.json();
+      if (data.success) {
+        setClusters(data.clusters || []);
+        setSummary(data.summary || null);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load clusters');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const deleteCluster = async (id: string, title: string) => {
+    if (!confirm(`Delete cluster "${title}"?`)) return;
+    try {
+      await apiRequest('DELETE', `/api/admin/clusters/${id}`);
+      setClusters(prev => prev.filter(c => c.id !== id));
+      if (summary) {
+        setSummary({ ...summary, total: summary.total - 1, invalid: summary.invalid - 1 });
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete cluster');
+    }
+  };
+
+  const cleanupInvalid = async () => {
+    if (!confirm(`Delete all ${summary?.invalid || 0} invalid clusters?`)) return;
+    try {
+      setIsCleaningUp(true);
+      const response = await apiRequest('POST', '/api/admin/clusters/cleanup');
+      const data = await response.json();
+      if (data.success) {
+        await fetchClusters();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to cleanup clusters');
+    } finally {
+      setIsCleaningUp(false);
+    }
+  };
+
+  useEffect(() => { fetchClusters(); }, []);
+
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-5 w-5 text-primary" />
+            <CardTitle className="text-lg">Cluster Management</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-center py-4">
+            <Spinner className="h-5 w-5" />
+            <span className="ml-2 text-sm text-muted-foreground">Loading clusters...</span>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-5 w-5 text-primary" />
+            <CardTitle className="text-lg">Cluster Management</CardTitle>
+            {summary && (
+              <Badge variant={summary.invalid > 0 ? "destructive" : "default"}>
+                {summary.valid} valid / {summary.invalid} invalid
+              </Badge>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <Button variant="ghost" size="sm" onClick={fetchClusters}>
+              <RefreshCw className="h-4 w-4" />
+            </Button>
+            {summary && summary.invalid > 0 && (
+              <Button 
+                variant="destructive" 
+                size="sm" 
+                onClick={cleanupInvalid}
+                disabled={isCleaningUp}
+              >
+                {isCleaningUp ? <Spinner className="h-4 w-4 mr-2" /> : <Trash2 className="h-4 w-4 mr-2" />}
+                Cleanup {summary.invalid} Invalid
+              </Button>
+            )}
+          </div>
+        </div>
+        <CardDescription>
+          Trending topic clusters (requires 2+ sources to be valid)
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {error && (
+          <Alert variant="destructive" className="mb-4">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        
+        {summary && (
+          <div className="grid grid-cols-5 gap-3 mb-4">
+            <div className="p-3 bg-muted/50 rounded-lg text-center">
+              <p className="text-xs text-muted-foreground">Total</p>
+              <p className="text-lg font-medium">{summary.total}</p>
+            </div>
+            <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-lg text-center">
+              <p className="text-xs text-green-600">Valid</p>
+              <p className="text-lg font-medium text-green-700">{summary.valid}</p>
+            </div>
+            <div className="p-3 bg-red-50 dark:bg-red-900/20 rounded-lg text-center">
+              <p className="text-xs text-red-600">Invalid</p>
+              <p className="text-lg font-medium text-red-700">{summary.invalid}</p>
+            </div>
+            <div className="p-3 bg-orange-50 dark:bg-orange-900/20 rounded-lg text-center">
+              <p className="text-xs text-orange-600">Empty</p>
+              <p className="text-lg font-medium text-orange-700">{summary.empty}</p>
+            </div>
+            <div className="p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg text-center">
+              <p className="text-xs text-amber-600">Single Source</p>
+              <p className="text-lg font-medium text-amber-700">{summary.singleSource}</p>
+            </div>
+          </div>
+        )}
+
+        <div className="border rounded-lg overflow-hidden max-h-96 overflow-y-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/50 sticky top-0">
+              <tr>
+                <th className="text-left p-2 font-medium">Cluster</th>
+                <th className="text-center p-2 font-medium">Articles</th>
+                <th className="text-center p-2 font-medium">Sources</th>
+                <th className="text-center p-2 font-medium">Status</th>
+                <th className="text-right p-2 font-medium">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {clusters.map(cluster => (
+                <tr key={cluster.id} className={cn("hover:bg-muted/30", !cluster.isValid && "bg-red-50/50 dark:bg-red-900/10")}>
+                  <td className="p-2">
+                    <div className="font-medium truncate max-w-xs" title={cluster.title}>{cluster.title}</div>
+                    <div className="text-xs text-muted-foreground truncate max-w-xs">
+                      {cluster.sources.slice(0, 3).join(', ')}{cluster.sources.length > 3 && ` +${cluster.sources.length - 3}`}
+                    </div>
+                  </td>
+                  <td className="p-2 text-center tabular-nums">{cluster.articleCount}</td>
+                  <td className="p-2 text-center tabular-nums">{cluster.sourceCount}</td>
+                  <td className="p-2 text-center">
+                    {cluster.isValid ? (
+                      <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">Valid</Badge>
+                    ) : cluster.articleCount === 0 ? (
+                      <Badge className="bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400">Empty</Badge>
+                    ) : (
+                      <Badge className="bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400">1 Source</Badge>
+                    )}
+                  </td>
+                  <td className="p-2 text-right">
+                    <Button 
+                      variant="ghost" 
+                      size="sm"
+                      onClick={() => deleteCluster(cluster.id, cluster.title)}
+                      className="text-destructive hover:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+              {clusters.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="p-8 text-center text-muted-foreground">
+                    No clusters found
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </CardContent>
     </Card>
   );
