@@ -2114,13 +2114,22 @@ export class SupabaseStorage implements IStorage {
   }
 
   async refreshClusterCounts(): Promise<number> {
-    const clusters = await this.getClusters({ includeExpired: false });
+    const clusters = await this.getClusters({ includeExpired: false, limit: 100 });
     let updated = 0;
     
     for (const cluster of clusters) {
-      const articleIds = await this.getArticleIdsByClusterId(cluster.id);
-      if (cluster.article_count !== articleIds.length) {
-        await this.updateCluster(cluster.id, { article_count: articleIds.length });
+      const { count } = await this.supabase
+        .from('articles')
+        .select('*', { count: 'exact', head: true })
+        .eq('cluster_id', cluster.id);
+      
+      const articleCount = count || 0;
+      if (cluster.article_count !== articleCount) {
+        // Use direct update instead of updateCluster to avoid .single() issue
+        await this.supabase
+          .from('clusters')
+          .update({ article_count: articleCount, updated_at: new Date().toISOString() })
+          .eq('id', cluster.id);
         updated++;
       }
     }
