@@ -2356,9 +2356,11 @@ export async function registerRoutes(
         return dateB - dateA;
       });
       
-      // Return all articles - frontend handles date-based pagination (7-day chunks)
+      // Cap at 250 articles to prevent Lambda response size limit (6MB)
+      const cappedArticles = articlesWithState.slice(0, 250);
+      
       res.json({
-        articles: articlesWithState,
+        articles: cappedArticles,
         total: articlesWithState.length,
         feeds_count: userFeeds.length
       });
