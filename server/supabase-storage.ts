@@ -2128,32 +2128,50 @@ export class SupabaseStorage implements IStorage {
   }
 
   async deleteEmptyClusters(): Promise<number> {
-    const clusters = await this.getClusters({ includeExpired: false });
-    let deleted = 0;
+    const clusters = await this.getClusters({ includeExpired: false, limit: 100 });
+    const toDelete: string[] = [];
     
+    // Batch check which clusters to delete
     for (const cluster of clusters) {
-      const articleIds = await this.getArticleIdsByClusterId(cluster.id);
+      const { count } = await this.supabase
+        .from('articles')
+        .select('feed_id', { count: 'exact', head: true })
+        .eq('cluster_id', cluster.id);
       
-      // Delete if no articles
-      if (articleIds.length === 0) {
-        await this.deleteCluster(cluster.id);
-        deleted++;
+      if (!count || count === 0) {
+        toDelete.push(cluster.id);
         continue;
       }
       
-      // Check source diversity - require minimum 2 sources
-      const articles = await Promise.all(
-        articleIds.slice(0, 50).map(id => this.getArticleById(id))
-      );
-      const uniqueFeedIds = new Set(articles.filter(Boolean).map(a => a!.feed_id));
+      // Check source diversity with a single query
+      const { data: feedIds } = await this.supabase
+        .from('articles')
+        .select('feed_id')
+        .eq('cluster_id', cluster.id)
+        .limit(50);
       
-      if (uniqueFeedIds.size < 2) {
-        console.log(`🧹 Deleting cluster "${cluster.title}" - only ${uniqueFeedIds.size} source(s)`);
-        await this.deleteCluster(cluster.id);
-        deleted++;
+      const uniqueFeeds = new Set((feedIds || []).map(a => a.feed_id));
+      if (uniqueFeeds.size < 2) {
+        toDelete.push(cluster.id);
       }
     }
-    return deleted;
+    
+    // Batch delete
+    if (toDelete.length > 0) {
+      // Clear cluster_id from articles first
+      await this.supabase
+        .from('articles')
+        .update({ cluster_id: null })
+        .in('cluster_id', toDelete);
+      
+      // Delete clusters
+      await this.supabase
+        .from('clusters')
+        .delete()
+        .in('id', toDelete);
+    }
+    
+    return toDelete.length;
   }
 
   // ============================================================================
