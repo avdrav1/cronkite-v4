@@ -124,6 +124,7 @@ export interface IStorage {
   updateArticle(id: string, updates: Partial<Article>): Promise<Article>;
   getArticleByGuid(feedId: string, guid: string): Promise<Article | undefined>;
   getArticlesByFeedId(feedId: string, limit?: number): Promise<Article[]>;
+  cleanupOldArticles(userId: string, maxArticles: number): Promise<number>;
   
   // User Article Management
   getUserArticleState(userId: string, articleId: string): Promise<UserArticle | undefined>;
@@ -913,6 +914,26 @@ export class MemStorage implements IStorage {
       .sort((a, b) => (b.published_at?.getTime() || 0) - (a.published_at?.getTime() || 0));
     
     return limit ? feedArticles.slice(0, limit) : feedArticles;
+  }
+
+  async cleanupOldArticles(userId: string, maxArticles: number): Promise<number> {
+    // Get user's feeds
+    const userFeeds = Array.from(this.userFeeds.values())
+      .filter(uf => uf.user_id === userId)
+      .map(uf => uf.feed_id);
+    
+    // Get all articles from user's feeds
+    const articles = Array.from(this.articles.values())
+      .filter(a => userFeeds.includes(a.feed_id))
+      .sort((a, b) => (b.published_at?.getTime() || 0) - (a.published_at?.getTime() || 0));
+    
+    if (articles.length <= maxArticles) return 0;
+    
+    // Delete old articles
+    const toDelete = articles.slice(maxArticles);
+    toDelete.forEach(a => this.articles.delete(a.id));
+    
+    return toDelete.length;
   }
 
   // User Article Management

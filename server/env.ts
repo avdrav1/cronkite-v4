@@ -26,6 +26,7 @@ interface OptionalEnvVars {
   RSS_SYNC_INTERVAL: string;
   RSS_SYNC_BATCH_SIZE: string;
   RSS_SYNC_MAX_ARTICLES: string;
+  MAX_ARTICLES_PER_USER_FEED: string;  // Maximum articles to keep per user (default: 250)
   NETLIFY_FUNCTION: string;
   NETLIFY: string;
   AWS_LAMBDA_FUNCTION_NAME: string;

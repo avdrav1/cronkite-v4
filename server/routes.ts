@@ -14,6 +14,7 @@ import { categoryMappingService } from "@shared/category-mapping";
 import { generateArticleSummary, isAISummaryAvailable, clusterArticles, isClusteringAvailable } from "./ai-summary";
 import { requireFeedOwnership, validateFeedOwnership } from "./feed-ownership";
 import { createSimilarArticlesService } from "./similar-articles-service";
+import { config } from "./config";
 import { 
   insertProfileSchema, 
   selectProfileSchema,
@@ -1669,6 +1670,17 @@ export async function registerRoutes(
           
           console.log(`RSS sync completed for user ${userId}: ${successCount} success, ${failureCount} failed, ${newArticlesCount} new articles, ${integrationResult.totalEmbeddingsQueued} embeddings queued`);
           
+          // Cleanup old articles to maintain cap
+          try {
+            const deletedCount = await storage.cleanupOldArticles(userId, config.maxArticlesPerUserFeed);
+            if (deletedCount > 0) {
+              console.log(`Cleaned up ${deletedCount} old articles for user ${userId}`);
+            }
+          } catch (cleanupError) {
+            console.error('Article cleanup error:', cleanupError);
+            // Don't fail the sync if cleanup fails
+          }
+          
           return res.json({
             success: true,
             message: 'Feed synchronization completed',
@@ -1702,9 +1714,21 @@ export async function registerRoutes(
       }
       
       // Don't await the sync, let it run in background
-      syncPromise.catch(error => {
-        console.error('Background RSS sync error:', error);
-      });
+      syncPromise
+        .then(async (integrationResult) => {
+          // Cleanup old articles after background sync
+          try {
+            const deletedCount = await storage.cleanupOldArticles(userId, config.maxArticlesPerUserFeed);
+            if (deletedCount > 0) {
+              console.log(`Background sync: Cleaned up ${deletedCount} old articles for user ${userId}`);
+            }
+          } catch (cleanupError) {
+            console.error('Background sync: Article cleanup error:', cleanupError);
+          }
+        })
+        .catch(error => {
+          console.error('Background RSS sync error:', error);
+        });
       
       const syncResults = feedsToSync.map(feed => ({
         feedId: feed.id,
@@ -2356,8 +2380,8 @@ export async function registerRoutes(
         return dateB - dateA;
       });
       
-      // Cap at 250 articles to prevent Lambda response size limit (6MB)
-      const cappedArticles = articlesWithState.slice(0, 250);
+      // Cap at configured limit to prevent Lambda response size limit (6MB)
+      const cappedArticles = articlesWithState.slice(0, config.maxArticlesPerUserFeed);
       
       res.json({
         articles: cappedArticles,

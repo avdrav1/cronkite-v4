@@ -1012,6 +1012,40 @@ export class SupabaseStorage implements IStorage {
     return (data || []) as Article[];
   }
 
+  async cleanupOldArticles(userId: string, maxArticles: number): Promise<number> {
+    // Get user's feed IDs
+    const { data: userFeeds } = await this.supabase
+      .from('user_feeds')
+      .select('feed_id')
+      .eq('user_id', userId);
+    
+    if (!userFeeds || userFeeds.length === 0) return 0;
+    
+    const feedIds = userFeeds.map(uf => uf.feed_id);
+    
+    // Get article IDs to keep (most recent maxArticles)
+    const { data: articlesToKeep } = await this.supabase
+      .from('articles')
+      .select('id')
+      .in('feed_id', feedIds)
+      .order('published_at', { ascending: false })
+      .limit(maxArticles);
+    
+    if (!articlesToKeep) return 0;
+    
+    const keepIds = articlesToKeep.map(a => a.id);
+    
+    // Delete articles not in the keep list
+    const { data: deleted } = await this.supabase
+      .from('articles')
+      .delete()
+      .in('feed_id', feedIds)
+      .not('id', 'in', `(${keepIds.join(',')})`)
+      .select('id');
+    
+    return deleted?.length || 0;
+  }
+
   // User Article Management
   async getUserArticleState(userId: string, articleId: string): Promise<UserArticle | undefined> {
     const { data, error } = await this.supabase
