@@ -2140,19 +2140,14 @@ export class SupabaseStorage implements IStorage {
   }
 
   async deleteEmptyClusters(): Promise<number> {
-    // Get all cluster articles - need to handle Supabase's default 1000 row limit
+    // Get all cluster articles
     const { data: articles, error } = await this.supabase
       .from('articles')
       .select('cluster_id, feed_id')
       .not('cluster_id', 'is', null)
       .limit(10000);
     
-    if (error) {
-      console.error('🧹 deleteEmptyClusters query error:', error.message);
-      throw new Error(`Failed to fetch articles: ${error.message}`);
-    }
-    
-    console.log(`🧹 deleteEmptyClusters: fetched ${articles?.length || 0} articles with clusters`);
+    if (error) throw new Error(`Failed to fetch articles: ${error.message}`);
     
     // Build map of cluster_id -> unique feed_ids
     const clusterFeeds = new Map<string, Set<string>>();
@@ -2161,29 +2156,24 @@ export class SupabaseStorage implements IStorage {
       clusterFeeds.get(a.cluster_id)!.add(a.feed_id);
     });
     
-    // Include expired clusters - they should be cleaned up too
     const clusters = await this.getClusters({ includeExpired: true, limit: 1000 });
     const toDelete = clusters
       .filter(c => (clusterFeeds.get(c.id)?.size || 0) < 2)
       .map(c => c.id);
     
-    console.log(`🧹 deleteEmptyClusters: ${clusters.length} total clusters, ${toDelete.length} to delete`);
+    console.log(`🧹 deleteEmptyClusters: ${toDelete.length} to delete`);
     
-    // Batch deletes to avoid Supabase query size limits
-    const batchSize = 100;
+    // Batch in parallel
+    const batchSize = 50;
+    const batches: string[][] = [];
     for (let i = 0; i < toDelete.length; i += batchSize) {
-      const batch = toDelete.slice(i, i + batchSize);
-      
-      await this.supabase
-        .from('articles')
-        .update({ cluster_id: null })
-        .in('cluster_id', batch);
-      
-      await this.supabase
-        .from('clusters')
-        .delete()
-        .in('id', batch);
+      batches.push(toDelete.slice(i, i + batchSize));
     }
+    
+    await Promise.all(batches.map(async batch => {
+      await this.supabase.from('articles').update({ cluster_id: null }).in('cluster_id', batch);
+      await this.supabase.from('clusters').delete().in('id', batch);
+    }));
     
     return toDelete.length;
   }
