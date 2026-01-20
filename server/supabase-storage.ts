@@ -2140,42 +2140,27 @@ export class SupabaseStorage implements IStorage {
   }
 
   async deleteEmptyClusters(): Promise<number> {
-    // Get all cluster articles
-    const { data: articles, error } = await this.supabase
-      .from('articles')
-      .select('cluster_id, feed_id')
-      .not('cluster_id', 'is', null)
-      .limit(10000);
+    // Use RPC to delete invalid clusters in a single database call
+    const { data, error } = await this.supabase.rpc('delete_invalid_clusters');
     
-    if (error) throw new Error(`Failed to fetch articles: ${error.message}`);
-    
-    // Build map of cluster_id -> unique feed_ids
-    const clusterFeeds = new Map<string, Set<string>>();
-    (articles || []).forEach(a => {
-      if (!clusterFeeds.has(a.cluster_id)) clusterFeeds.set(a.cluster_id, new Set());
-      clusterFeeds.get(a.cluster_id)!.add(a.feed_id);
-    });
-    
-    const clusters = await this.getClusters({ includeExpired: true, limit: 1000 });
-    const toDelete = clusters
-      .filter(c => (clusterFeeds.get(c.id)?.size || 0) < 2)
-      .map(c => c.id);
-    
-    console.log(`🧹 deleteEmptyClusters: ${toDelete.length} to delete`);
-    
-    // Batch in parallel
-    const batchSize = 50;
-    const batches: string[][] = [];
-    for (let i = 0; i < toDelete.length; i += batchSize) {
-      batches.push(toDelete.slice(i, i + batchSize));
+    if (error) {
+      console.error('🧹 deleteEmptyClusters RPC error:', error.message);
+      // Fallback to simple delete of clusters with 0 articles
+      const { data: empty } = await this.supabase
+        .from('clusters')
+        .select('id')
+        .eq('article_count', 0);
+      
+      if (empty && empty.length > 0) {
+        const ids = empty.map(c => c.id);
+        await this.supabase.from('clusters').delete().in('id', ids);
+        return ids.length;
+      }
+      return 0;
     }
     
-    await Promise.all(batches.map(async batch => {
-      await this.supabase.from('articles').update({ cluster_id: null }).in('cluster_id', batch);
-      await this.supabase.from('clusters').delete().in('id', batch);
-    }));
-    
-    return toDelete.length;
+    console.log(`🧹 deleteEmptyClusters: deleted ${data} clusters`);
+    return data || 0;
   }
 
   // ============================================================================
