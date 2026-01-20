@@ -848,9 +848,48 @@ interface ClusterSummary {
 function ClusterAdmin() {
   const [clusters, setClusters] = useState<ClusterInfo[]>([]);
   const [summary, setSummary] = useState<ClusterSummary | null>(null);
+  const [settings, setSettings] = useState({
+    min_cluster_sources: 3,
+    min_cluster_articles: 3,
+    cluster_similarity_threshold: '0.60',
+    keyword_overlap_min: 3,
+    cluster_time_window_hours: 48
+  });
+  const [showSettings, setShowSettings] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isCleaningUp, setIsCleaningUp] = useState(false);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const fetchSettings = async () => {
+    try {
+      const response = await apiRequest('GET', '/api/admin/clusters/settings');
+      const data = await response.json();
+      if (data.success && data.settings) {
+        setSettings({
+          min_cluster_sources: data.settings.min_cluster_sources ?? 3,
+          min_cluster_articles: data.settings.min_cluster_articles ?? 3,
+          cluster_similarity_threshold: data.settings.cluster_similarity_threshold ?? '0.60',
+          keyword_overlap_min: data.settings.keyword_overlap_min ?? 3,
+          cluster_time_window_hours: data.settings.cluster_time_window_hours ?? 48
+        });
+      }
+    } catch (err) {
+      console.error('Failed to load settings:', err);
+    }
+  };
+
+  const saveSettings = async () => {
+    try {
+      setIsSavingSettings(true);
+      await apiRequest('PUT', '/api/admin/clusters/settings', settings);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save settings');
+    } finally {
+      setIsSavingSettings(false);
+    }
+  };
 
   const fetchClusters = async () => {
     try {
@@ -898,7 +937,10 @@ function ClusterAdmin() {
     }
   };
 
-  useEffect(() => { fetchClusters(); }, []);
+  useEffect(() => { 
+    fetchClusters();
+    fetchSettings();
+  }, []);
 
   if (isLoading) {
     return (
@@ -933,6 +975,9 @@ function ClusterAdmin() {
             )}
           </div>
           <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => setShowSettings(!showSettings)}>
+              {showSettings ? 'Hide' : 'Settings'}
+            </Button>
             <Button variant="ghost" size="sm" onClick={fetchClusters}>
               <RefreshCw className="h-4 w-4" />
             </Button>
@@ -954,6 +999,77 @@ function ClusterAdmin() {
         </CardDescription>
       </CardHeader>
       <CardContent>
+        {showSettings && (
+          <div className="mb-6 p-4 border rounded-lg bg-muted/30">
+            <h3 className="font-semibold mb-4">Clustering Configuration</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium">Min Sources</label>
+                <Input 
+                  type="number" 
+                  min="1" 
+                  value={settings.min_cluster_sources}
+                  onChange={(e) => setSettings({...settings, min_cluster_sources: parseInt(e.target.value)})}
+                  className="mt-1"
+                />
+                <p className="text-xs text-muted-foreground mt-1">Minimum unique sources per cluster</p>
+              </div>
+              <div>
+                <label className="text-sm font-medium">Min Articles</label>
+                <Input 
+                  type="number" 
+                  min="1" 
+                  value={settings.min_cluster_articles}
+                  onChange={(e) => setSettings({...settings, min_cluster_articles: parseInt(e.target.value)})}
+                  className="mt-1"
+                />
+                <p className="text-xs text-muted-foreground mt-1">Minimum articles per cluster</p>
+              </div>
+              <div>
+                <label className="text-sm font-medium">Similarity Threshold</label>
+                <Input 
+                  type="number" 
+                  step="0.01" 
+                  min="0" 
+                  max="1" 
+                  value={settings.cluster_similarity_threshold}
+                  onChange={(e) => setSettings({...settings, cluster_similarity_threshold: e.target.value})}
+                  className="mt-1"
+                />
+                <p className="text-xs text-muted-foreground mt-1">Embedding similarity (0.0-1.0)</p>
+              </div>
+              <div>
+                <label className="text-sm font-medium">Keyword Overlap</label>
+                <Input 
+                  type="number" 
+                  min="1" 
+                  value={settings.keyword_overlap_min}
+                  onChange={(e) => setSettings({...settings, keyword_overlap_min: parseInt(e.target.value)})}
+                  className="mt-1"
+                />
+                <p className="text-xs text-muted-foreground mt-1">Min shared keywords required</p>
+              </div>
+              <div>
+                <label className="text-sm font-medium">Time Window (hours)</label>
+                <Input 
+                  type="number" 
+                  min="1" 
+                  value={settings.cluster_time_window_hours}
+                  onChange={(e) => setSettings({...settings, cluster_time_window_hours: parseInt(e.target.value)})}
+                  className="mt-1"
+                />
+                <p className="text-xs text-muted-foreground mt-1">Max time span for articles</p>
+              </div>
+            </div>
+            <div className="flex gap-2 mt-4">
+              <Button onClick={saveSettings} disabled={isSavingSettings}>
+                {isSavingSettings ? <Spinner className="h-4 w-4 mr-2" /> : null}
+                Save Settings
+              </Button>
+              <Button variant="outline" onClick={fetchSettings}>Reset</Button>
+            </div>
+          </div>
+        )}
         {error && (
           <Alert variant="destructive" className="mb-4">
             <AlertDescription>{error}</AlertDescription>

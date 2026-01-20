@@ -2163,6 +2163,34 @@ export class SupabaseStorage implements IStorage {
     return data || 0;
   }
 
+  async getAdminSettings(): Promise<{ 
+    min_cluster_sources?: number;
+    min_cluster_articles?: number;
+    cluster_similarity_threshold?: string;
+    keyword_overlap_min?: number;
+    cluster_time_window_hours?: number;
+  } | undefined> {
+    // Get first admin user's settings
+    const { data: adminProfile } = await this.supabase
+      .from('profiles')
+      .select('id')
+      .eq('is_admin', true)
+      .limit(1)
+      .single();
+    
+    if (!adminProfile) {
+      return undefined;
+    }
+    
+    const { data: settings } = await this.supabase
+      .from('user_settings')
+      .select('min_cluster_sources, min_cluster_articles, cluster_similarity_threshold, keyword_overlap_min, cluster_time_window_hours')
+      .eq('user_id', adminProfile.id)
+      .single();
+    
+    return settings || undefined;
+  }
+
   // ============================================================================
   // Feed Scheduler Management (Requirements: 3.1, 3.2, 3.3, 6.2, 6.6)
   // ============================================================================

@@ -9,15 +9,24 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { Article, Cluster, InsertCluster } from '@shared/schema';
 
 // Constants
-export const CLUSTER_SIMILARITY_THRESHOLD = 0.4; // Requirements: 2.1 - Much more permissive
+export const CLUSTER_SIMILARITY_THRESHOLD = 0.6; // Requirements: 2.1 - Stricter matching
 export const SIMILAR_ARTICLES_THRESHOLD = 0.7; // Requirements: 4.2
-export const MIN_CLUSTER_ARTICLES = 1; // Requirements: 2.2 - Lowered for better coverage
-export const MIN_CLUSTER_SOURCES = 1; // Requirements: 2.2 - Allow single-source trending topics
+export const MIN_CLUSTER_ARTICLES = 3; // Requirements: 2.2 - Default minimum
+export const MIN_CLUSTER_SOURCES = 3; // Requirements: 2.2 - Require multiple sources
 export const MIN_ENGAGEMENT_THRESHOLD = 0.2; // Minimum engagement score for single-article clusters
 export const MAX_SIMILAR_ARTICLES = 5; // Requirements: 4.1
 export const CLUSTER_EXPIRATION_HOURS = 168; // Requirements: 2.6 - 7 days
 export const MAX_RETRY_ATTEMPTS = 3;
 export const RETRY_DELAYS = [1000, 2000, 4000]; // Exponential backoff
+
+// Cluster configuration settings
+export interface ClusterSettings {
+  minSources: number;
+  minArticles: number;
+  similarityThreshold: number;
+  keywordOverlapMin: number;
+  timeWindowHours: number;
+}
 
 // Types
 export interface SimilarArticle {
@@ -135,21 +144,31 @@ function calculateEngagementScore(article: {
 /**
  * Fallback clustering using keyword similarity for articles without embeddings
  */
-function fallbackClusterByKeywords(articles: Array<{
-  id: string;
-  title: string;
-  excerpt: string | null;
-  feedId: string;
-  feedName: string;
-  publishedAt: Date | null;
-}>): FallbackClusterCandidate[] {
+function fallbackClusterByKeywords(
+  articles: Array<{
+    id: string;
+    title: string;
+    excerpt: string | null;
+    feedId: string;
+    feedName: string;
+    publishedAt: Date | null;
+  }>,
+  settings?: ClusterSettings
+): FallbackClusterCandidate[] {
+  const config: ClusterSettings = settings || {
+    minSources: MIN_CLUSTER_SOURCES,
+    minArticles: MIN_CLUSTER_ARTICLES,
+    similarityThreshold: CLUSTER_SIMILARITY_THRESHOLD,
+    keywordOverlapMin: 3,
+    timeWindowHours: 48
+  };
+  
   const clusters: FallbackClusterCandidate[] = [];
   const processed = new Set<string>();
   
   for (const article of articles) {
     if (processed.has(article.id)) continue;
     
-    const keywords = extractKeywords(article.title + ' ' + (article.excerpt || ''));
     const cluster: FallbackClusterCandidate = {
       members: [article],
       avgSimilarity: 1.0,
@@ -160,22 +179,24 @@ function fallbackClusterByKeywords(articles: Array<{
     for (const other of articles) {
       if (other.id === article.id || processed.has(other.id)) continue;
       
-      const otherKeywords = extractKeywords(other.title + ' ' + (other.excerpt || ''));
-      const similarity = calculateKeywordSimilarity(keywords, otherKeywords);
+      // Validate keyword overlap
+      const keywordCheck = validateKeywordOverlap(article, other, config.keywordOverlapMin);
+      if (!keywordCheck.isValid) continue;
       
-      if (similarity > 0.2) { // Much lower threshold for keyword matching
-        cluster.members.push(other);
-        cluster.sources.add(other.feedName);
-        processed.add(other.id);
-      }
+      cluster.members.push(other);
+      cluster.sources.add(other.feedName);
+      processed.add(other.id);
     }
     
     processed.add(article.id);
     
-    // Check if cluster meets criteria (now more lenient)
-    const engagementScore = calculateEngagementScore(cluster.members[0]);
-    if (cluster.members.length >= MIN_CLUSTER_ARTICLES && 
-        (Array.from(cluster.sources).length >= MIN_CLUSTER_SOURCES || engagementScore >= MIN_ENGAGEMENT_THRESHOLD)) {
+    // Validate time proximity
+    const timeCheck = validateTimeProximity(cluster.members, config.timeWindowHours);
+    if (!timeCheck.isValid) continue;
+    
+    // Enforce source diversity (strict - no exceptions)
+    if (cluster.members.length >= config.minArticles && 
+        Array.from(cluster.sources).length >= config.minSources) {
       clusters.push(cluster);
     }
   }
@@ -184,16 +205,63 @@ function fallbackClusterByKeywords(articles: Array<{
 }
 
 /**
- * Extract keywords from text
+ * Extract keywords and phrases from text
+ * Returns both single keywords and multi-word phrases (bigrams/trigrams)
  */
 function extractKeywords(text: string): string[] {
-  const stopWords = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should']);
+  const stopWords = new Set([
+    'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by',
+    'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did',
+    'will', 'would', 'could', 'should', 'may', 'might', 'must', 'can', 'this', 'that', 'these',
+    'those', 'from', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 'between',
+    'under', 'again', 'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how',
+    'all', 'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'only', 'own', 'same',
+    'than', 'too', 'very', 'just', 'about', 'says', 'said', 'new', 'also', 'its', 'their', 'his',
+    'her', 'our', 'your', 'them', 'they', 'what', 'which', 'who', 'whom', 'whose'
+  ]);
   
-  return text.toLowerCase()
+  // Tokenize and clean
+  const words = text.toLowerCase()
     .replace(/[^\w\s]/g, ' ')
     .split(/\s+/)
-    .filter(word => word.length > 3 && !stopWords.has(word))
-    .slice(0, 10); // Top 10 keywords
+    .filter(word => word.length > 2);
+  
+  const keywords = new Set<string>();
+  
+  // Extract single keywords (proper nouns and significant words)
+  const originalWords = text.split(/\s+/);
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i];
+    if (word.length > 3 && !stopWords.has(word)) {
+      // Check if original word was capitalized (potential named entity)
+      if (originalWords[i] && /^[A-Z]/.test(originalWords[i])) {
+        keywords.add(word + '_proper');
+      }
+      keywords.add(word);
+    }
+  }
+  
+  // Extract bigrams (2-word phrases)
+  for (let i = 0; i < words.length - 1; i++) {
+    const w1 = words[i];
+    const w2 = words[i + 1];
+    if (w1.length > 3 && w2.length > 3 && !stopWords.has(w1) && !stopWords.has(w2)) {
+      keywords.add(`${w1}_${w2}`);
+    }
+  }
+  
+  // Extract trigrams (3-word phrases) for named entities
+  for (let i = 0; i < words.length - 2; i++) {
+    const w1 = words[i];
+    const w2 = words[i + 1];
+    const w3 = words[i + 2];
+    if (w1.length > 2 && w2.length > 2 && w3.length > 2 &&
+        !stopWords.has(w1) && !stopWords.has(w2) && !stopWords.has(w3)) {
+      keywords.add(`${w1}_${w2}_${w3}`);
+    }
+  }
+  
+  return Array.from(keywords);
 }
 
 /**
@@ -206,6 +274,69 @@ function calculateKeywordSimilarity(keywords1: string[], keywords2: string[]): n
   const union = new Set([...set1, ...set2]);
   
   return union.size > 0 ? intersection.size / union.size : 0;
+}
+
+/**
+ * Validate keyword overlap between two articles
+ * Returns overlap count and shared terms, with phrases weighted higher
+ */
+function validateKeywordOverlap(
+  article1: { title: string; excerpt: string | null },
+  article2: { title: string; excerpt: string | null },
+  minOverlap: number
+): { isValid: boolean; overlapCount: number; sharedTerms: string[] } {
+  const text1 = article1.title + ' ' + (article1.excerpt || '');
+  const text2 = article2.title + ' ' + (article2.excerpt || '');
+  
+  const keywords1 = extractKeywords(text1);
+  const keywords2 = extractKeywords(text2);
+  
+  const set1 = new Set(keywords1);
+  const set2 = new Set(keywords2);
+  const shared = [...set1].filter(x => set2.has(x));
+  
+  // Weight phrases higher than single words
+  let weightedCount = 0;
+  for (const term of shared) {
+    if (term.includes('_')) {
+      // Multi-word phrase: weight 2x
+      weightedCount += 2;
+    } else {
+      weightedCount += 1;
+    }
+  }
+  
+  return {
+    isValid: weightedCount >= minOverlap,
+    overlapCount: weightedCount,
+    sharedTerms: shared
+  };
+}
+
+/**
+ * Validate time proximity for articles in a cluster
+ * All articles must be within the specified time window
+ */
+function validateTimeProximity(
+  articles: Array<{ publishedAt: Date | null }>,
+  windowHours: number
+): { isValid: boolean; timeSpanHours: number } {
+  const dates = articles
+    .map(a => a.publishedAt?.getTime())
+    .filter((t): t is number => t !== null && t !== undefined);
+  
+  if (dates.length === 0) {
+    return { isValid: false, timeSpanHours: 0 };
+  }
+  
+  const minTime = Math.min(...dates);
+  const maxTime = Math.max(...dates);
+  const timeSpanHours = (maxTime - minTime) / (1000 * 60 * 60);
+  
+  return {
+    isValid: timeSpanHours <= windowHours,
+    timeSpanHours
+  };
 }
 
 /**
@@ -398,25 +529,35 @@ interface FallbackClusterCandidate {
 }
 
 /**
- * Group articles into clusters based on embedding similarity
+ * Group articles into clusters based on embedding similarity with hybrid validation
  * Requirements: 2.1, 2.2, 2.4
  * 
- * Property 5: All pairs of articles within a cluster have similarity >= 0.75
- * Property 6: Each cluster has at least 2 articles from 2 different sources
- * Property 7: Each article is assigned to at most one cluster
+ * Applies multiple validation layers:
+ * 1. Embedding similarity check
+ * 2. Keyword overlap validation
+ * 3. Time proximity check
+ * 4. Source diversity requirement
  */
 export function formClusters(
   articles: ArticleWithEmbedding[],
-  similarityThreshold: number = CLUSTER_SIMILARITY_THRESHOLD
+  settings?: ClusterSettings
 ): ClusterCandidate[] {
-  if (articles.length < MIN_CLUSTER_ARTICLES) {
+  const config: ClusterSettings = settings || {
+    minSources: MIN_CLUSTER_SOURCES,
+    minArticles: MIN_CLUSTER_ARTICLES,
+    similarityThreshold: CLUSTER_SIMILARITY_THRESHOLD,
+    keywordOverlapMin: 3,
+    timeWindowHours: 48
+  };
+  
+  if (articles.length < config.minArticles) {
     return [];
   }
   
   const clusters: ClusterCandidate[] = [];
-  const assignedArticleIds = new Set<string>(); // Property 7: Track assigned articles
+  const assignedArticleIds = new Set<string>();
   
-  // Sort articles by published date (newest first) to prioritize recent content
+  // Sort articles by published date (newest first)
   const sortedArticles = [...articles].sort((a, b) => {
     const dateA = a.publishedAt?.getTime() || 0;
     const dateB = b.publishedAt?.getTime() || 0;
@@ -424,57 +565,62 @@ export function formClusters(
   });
   
   for (const candidateArticle of sortedArticles) {
-    // Skip if already assigned to a cluster (Property 7)
     if (assignedArticleIds.has(candidateArticle.id)) {
       continue;
     }
     
-    // Find all similar articles that haven't been assigned yet
     const similarArticles: Array<{ article: ArticleWithEmbedding; similarity: number }> = [];
     
     for (const otherArticle of sortedArticles) {
-      if (otherArticle.id === candidateArticle.id) {
+      if (otherArticle.id === candidateArticle.id || assignedArticleIds.has(otherArticle.id)) {
         continue;
       }
       
-      // Skip if already assigned (Property 7)
-      if (assignedArticleIds.has(otherArticle.id)) {
-        continue;
-      }
-      
+      // Layer 1: Embedding similarity
       const similarity = cosineSimilarity(candidateArticle.embedding, otherArticle.embedding);
-      
-      // Property 5: Only include if similarity >= threshold
-      if (similarity >= similarityThreshold) {
-        similarArticles.push({ article: otherArticle, similarity });
+      if (similarity < config.similarityThreshold) {
+        continue;
       }
+      
+      // Layer 2: Keyword overlap validation
+      const keywordCheck = validateKeywordOverlap(candidateArticle, otherArticle, config.keywordOverlapMin);
+      if (!keywordCheck.isValid) {
+        continue;
+      }
+      
+      similarArticles.push({ article: otherArticle, similarity });
     }
     
     if (similarArticles.length === 0) {
       continue;
     }
     
-    // Build cluster with candidate article and similar articles
     const clusterMembers = [candidateArticle];
     const clusterSources = new Set<string>([candidateArticle.feedName]);
     let totalSimilarity = 0;
     let pairCount = 0;
     
-    // Sort by similarity and add to cluster
     similarArticles.sort((a, b) => b.similarity - a.similarity);
     
     for (const { article, similarity } of similarArticles) {
-      // Verify this article is similar to ALL existing cluster members (Property 5)
       let isValidMember = true;
       
       for (const member of clusterMembers) {
         if (member.id === article.id) continue;
         
         const memberSimilarity = cosineSimilarity(member.embedding, article.embedding);
-        if (memberSimilarity < similarityThreshold) {
+        if (memberSimilarity < config.similarityThreshold) {
           isValidMember = false;
           break;
         }
+        
+        // Validate keyword overlap with existing members
+        const keywordCheck = validateKeywordOverlap(member, article, config.keywordOverlapMin);
+        if (!keywordCheck.isValid) {
+          isValidMember = false;
+          break;
+        }
+        
         totalSimilarity += memberSimilarity;
         pairCount++;
       }
@@ -487,17 +633,14 @@ export function formClusters(
       }
     }
     
-    // Property 6: Check minimum requirements (more lenient now)
-    const avgEngagement = clusterMembers.length > 0 ? 
-      clusterMembers.reduce((sum, m) => sum + calculateEngagementScore({
-        publishedAt: m.publishedAt,
-        feedName: m.feedName,
-        title: m.title
-      }), 0) / clusterMembers.length : 0;
-      
-    if (clusterMembers.length >= MIN_CLUSTER_ARTICLES && 
-        (clusterSources.size >= MIN_CLUSTER_SOURCES || avgEngagement >= MIN_ENGAGEMENT_THRESHOLD)) {
-      // Mark all members as assigned (Property 7)
+    // Layer 3: Time proximity validation
+    const timeCheck = validateTimeProximity(clusterMembers, config.timeWindowHours);
+    if (!timeCheck.isValid) {
+      continue;
+    }
+    
+    // Layer 4: Source diversity requirement (strict - no exceptions)
+    if (clusterMembers.length >= config.minArticles && clusterSources.size >= config.minSources) {
       for (const member of clusterMembers) {
         assignedArticleIds.add(member.id);
       }
@@ -677,6 +820,15 @@ export interface ClusteringStorage {
   
   // Expiration
   deleteExpiredClusters(): Promise<number>;
+  
+  // Settings
+  getAdminSettings(): Promise<{ 
+    min_cluster_sources?: number;
+    min_cluster_articles?: number;
+    cluster_similarity_threshold?: string;
+    keyword_overlap_min?: number;
+    cluster_time_window_hours?: number;
+  } | undefined>;
 }
 
 /**
@@ -701,6 +853,20 @@ export class ClusteringServiceManager {
   ): Promise<ClusterGenerationResult> {
     const startTime = Date.now();
     
+    // Load cluster settings from admin user
+    const adminSettings = await this.storage.getAdminSettings();
+    const settings: ClusterSettings = {
+      minSources: adminSettings?.min_cluster_sources ?? MIN_CLUSTER_SOURCES,
+      minArticles: adminSettings?.min_cluster_articles ?? MIN_CLUSTER_ARTICLES,
+      similarityThreshold: adminSettings?.cluster_similarity_threshold 
+        ? parseFloat(adminSettings.cluster_similarity_threshold) 
+        : CLUSTER_SIMILARITY_THRESHOLD,
+      keywordOverlapMin: adminSettings?.keyword_overlap_min ?? 3,
+      timeWindowHours: adminSettings?.cluster_time_window_hours ?? 48
+    };
+    
+    console.log(`📊 Using cluster settings:`, settings);
+    
     // Try vector-based clustering first
     const articlesWithEmbeddings = await this.storage.getArticlesWithEmbeddings(userId, feedIds, hoursBack);
     let clusterCandidates: (ClusterCandidate | FallbackClusterCandidate)[] = [];
@@ -708,16 +874,11 @@ export class ClusteringServiceManager {
     
     console.log(`📊 Found ${articlesWithEmbeddings.length} articles with embeddings`);
     
-    if (articlesWithEmbeddings.length >= MIN_CLUSTER_ARTICLES) {
-      // Use vector-based clustering
-      console.log(`📊 Attempting vector clustering with threshold ${CLUSTER_SIMILARITY_THRESHOLD}...`);
-      clusterCandidates = formClusters(articlesWithEmbeddings, CLUSTER_SIMILARITY_THRESHOLD);
+    if (articlesWithEmbeddings.length >= settings.minArticles) {
+      // Use vector-based clustering with settings
+      console.log(`📊 Attempting vector clustering with threshold ${settings.similarityThreshold}...`);
+      clusterCandidates = formClusters(articlesWithEmbeddings, settings);
       console.log(`📊 Vector clustering found ${clusterCandidates.length} candidates`);
-      
-      // Debug: Log details of first few clusters
-      clusterCandidates.slice(0, 3).forEach((cluster, i) => {
-        console.log(`📊 Cluster ${i + 1}: ${cluster.members.length} articles, ${Array.from(cluster.sources).length} sources, similarity: ${cluster.avgSimilarity.toFixed(3)}`);
-      });
     }
     
     // Fallback to keyword-based clustering if needed
@@ -725,48 +886,12 @@ export class ClusteringServiceManager {
       console.log(`📊 Falling back to keyword-based clustering...`);
       method = 'keyword';
       
-      // Get articles without embedding requirement
       const allArticles = await this.storage.getRecentArticles(userId, feedIds, hoursBack);
       console.log(`📊 Found ${allArticles.length} total articles for fallback clustering`);
       
       if (allArticles.length > 0) {
-        clusterCandidates = fallbackClusterByKeywords(allArticles);
+        clusterCandidates = fallbackClusterByKeywords(allArticles, settings);
         console.log(`📊 Keyword clustering found ${clusterCandidates.length} candidates`);
-        
-        // Try time-based clustering if keyword clustering didn't work well
-        if (clusterCandidates.length < 5) {
-          console.log(`📊 Trying time-based clustering...`);
-          const timeClusters = clusterByTimeWindows(allArticles);
-          if (timeClusters.length > clusterCandidates.length) {
-            clusterCandidates = timeClusters;
-            console.log(`📊 Time-based clustering found ${clusterCandidates.length} candidates`);
-          }
-        }
-        
-        // If still no clusters, create individual trending topics from top articles
-        if (clusterCandidates.length === 0) {
-          console.log(`📊 Creating individual trending topics from top articles...`);
-          method = 'individual';
-          
-          // Sort by engagement and take top articles
-          const topArticles = allArticles
-            .map(article => ({
-              article,
-              engagement: calculateEngagementScore(article)
-            }))
-            .sort((a, b) => b.engagement - a.engagement)
-            .slice(0, 15) // Increase to 15 trending topics
-            .map(item => item.article);
-          
-          // Create individual clusters for each top article
-          clusterCandidates = topArticles.map(article => ({
-            members: [article],
-            avgSimilarity: 1.0,
-            sources: new Set([article.feedName])
-          }));
-          
-          console.log(`📊 Created ${clusterCandidates.length} individual trending topics`);
-        }
       }
     }
     
@@ -782,8 +907,6 @@ export class ClusteringServiceManager {
     }
     
     console.log(`📊 Processing ${clusterCandidates.length} cluster candidates with method: ${method}`);
-    
-    console.log(`📊 Found ${clusterCandidates.length} cluster candidates`);
     
     // Generate labels and store clusters
     const createdClusters: ArticleCluster[] = [];

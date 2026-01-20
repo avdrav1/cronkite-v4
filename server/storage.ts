@@ -220,6 +220,13 @@ export interface IStorage {
   getArticleIdsByClusterId(clusterId: string): Promise<string[]>;
   refreshClusterCounts(): Promise<number>;
   deleteEmptyClusters(): Promise<number>;
+  getAdminSettings(): Promise<{ 
+    min_cluster_sources?: number;
+    min_cluster_articles?: number;
+    cluster_similarity_threshold?: string;
+    keyword_overlap_min?: number;
+    cluster_time_window_hours?: number;
+  } | undefined>;
   
   // Feed Scheduler Management (Requirements: 3.1, 3.2, 3.3, 6.2, 6.6)
   getFeedById(feedId: string): Promise<Feed | undefined>;
@@ -453,10 +460,23 @@ export class MemStorage implements IStorage {
       ai_summaries_enabled: settings?.ai_summaries_enabled ?? true,
       ai_clustering_enabled: settings?.ai_clustering_enabled ?? true,
       ai_daily_limit: settings?.ai_daily_limit ?? "100",
+      medium_priority_hour: settings?.medium_priority_hour ?? 9,
+      low_priority_day: settings?.low_priority_day ?? 5,
+      low_priority_hour: settings?.low_priority_hour ?? 9,
+      ai_clustering_frequency: settings?.ai_clustering_frequency ?? 1,
+      min_cluster_sources: settings?.min_cluster_sources ?? 3,
+      min_cluster_articles: settings?.min_cluster_articles ?? 3,
+      cluster_similarity_threshold: settings?.cluster_similarity_threshold ?? "0.60",
+      keyword_overlap_min: settings?.keyword_overlap_min ?? 3,
+      cluster_time_window_hours: settings?.cluster_time_window_hours ?? 48,
       theme: settings?.theme ?? "system",
       accent_color: settings?.accent_color ?? "blue",
       compact_view: settings?.compact_view ?? false,
       show_images: settings?.show_images ?? true,
+      social_feed_enabled: settings?.social_feed_enabled ?? true,
+      show_friend_activity: settings?.show_friend_activity ?? true,
+      social_feed_priority: settings?.social_feed_priority ?? "mixed",
+      share_reading_activity: settings?.share_reading_activity ?? true,
       created_at: new Date(),
       updated_at: new Date()
     };
@@ -2456,6 +2476,33 @@ export class MemStorage implements IStorage {
       }
     }
     return deleted;
+  }
+
+  async getAdminSettings(): Promise<{ 
+    min_cluster_sources?: number;
+    min_cluster_articles?: number;
+    cluster_similarity_threshold?: string;
+    keyword_overlap_min?: number;
+    cluster_time_window_hours?: number;
+  } | undefined> {
+    // Find first admin user
+    const adminProfile = Array.from(this.profiles.values()).find(p => p.is_admin);
+    if (!adminProfile) {
+      return undefined;
+    }
+    
+    const settings = this.userSettings.get(adminProfile.id);
+    if (!settings) {
+      return undefined;
+    }
+    
+    return {
+      min_cluster_sources: settings.min_cluster_sources,
+      min_cluster_articles: settings.min_cluster_articles,
+      cluster_similarity_threshold: settings.cluster_similarity_threshold,
+      keyword_overlap_min: settings.keyword_overlap_min,
+      cluster_time_window_hours: settings.cluster_time_window_hours
+    };
   }
 
   // ============================================================================

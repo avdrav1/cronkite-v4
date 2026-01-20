@@ -7169,6 +7169,39 @@ export async function registerRoutes(
     }
   });
 
+  // GET /api/admin/clusters/settings - Get cluster configuration settings
+  app.get('/api/admin/clusters/settings', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const storage = await getStorage();
+      const settings = await storage.getAdminSettings();
+      res.json({ success: true, settings: settings || {} });
+    } catch (error) {
+      console.error('Admin get cluster settings error:', error);
+      res.status(500).json({ error: 'Failed to get cluster settings' });
+    }
+  });
+
+  // PUT /api/admin/clusters/settings - Update cluster configuration settings
+  app.put('/api/admin/clusters/settings', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.user as any)?.id;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const storage = await getStorage();
+      const updates = req.body;
+      
+      // Update user settings with new cluster configuration
+      await storage.updateUserSettings(userId, updates);
+      
+      res.json({ success: true, message: 'Cluster settings updated' });
+    } catch (error) {
+      console.error('Admin update cluster settings error:', error);
+      res.status(500).json({ error: 'Failed to update cluster settings' });
+    }
+  });
+
   // POST /api/admin/clusters/cleanup - Delete all invalid clusters (< 2 sources)
   app.post('/api/admin/clusters/cleanup', requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
