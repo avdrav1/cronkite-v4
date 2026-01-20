@@ -2169,20 +2169,20 @@ export class SupabaseStorage implements IStorage {
     
     console.log(`🧹 deleteEmptyClusters: ${clusters.length} total clusters, ${toDelete.length} to delete`);
     
-    if (toDelete.length > 0) {
-      const { error: updateErr } = await this.supabase
+    // Batch deletes to avoid Supabase query size limits
+    const batchSize = 100;
+    for (let i = 0; i < toDelete.length; i += batchSize) {
+      const batch = toDelete.slice(i, i + batchSize);
+      
+      await this.supabase
         .from('articles')
         .update({ cluster_id: null })
-        .in('cluster_id', toDelete);
+        .in('cluster_id', batch);
       
-      if (updateErr) console.error('🧹 Error clearing cluster_id:', updateErr.message);
-      
-      const { error: deleteErr } = await this.supabase
+      await this.supabase
         .from('clusters')
         .delete()
-        .in('id', toDelete);
-      
-      if (deleteErr) console.error('🧹 Error deleting clusters:', deleteErr.message);
+        .in('id', batch);
     }
     
     return toDelete.length;
