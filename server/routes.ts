@@ -7222,28 +7222,47 @@ export async function registerRoutes(
   });
 
   // POST /api/admin/clusters/regenerate - Delete all clusters and trigger regeneration
+
+  // POST /api/admin/clusters/regenerate - Delete all clusters and trigger regeneration
   app.post('/api/admin/clusters/regenerate', requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
-      const storage = await getStorage();
+      // Respond immediately, do work in background
+      res.json({ success: true, message: 'Cluster regeneration started in background.' });
       
-      // Get all clusters
-      const clusters = await storage.getClusters({ includeExpired: true, limit: 10000 });
+      // Do the work asynchronously
+      (async () => {
+        const storage = await getStorage();
+        
+        // Use SQL to delete all clusters quickly
+        const { data: clusters } = await (storage as any).supabase
+          .from('clusters')
+          .select('id');
+        
+        if (clusters && clusters.length > 0) {
+          // Clear cluster_id from all articles
+          await (storage as any).supabase
+            .from('articles')
+            .update({ cluster_id: null })
+            .not('cluster_id', 'is', null);
+          
+          // Delete all clusters
+          await (storage as any).supabase
+            .from('clusters')
+            .delete()
+            .not('id', 'is', null);
+          
+          console.log(`🔄 Deleted ${clusters.length} clusters, triggering regeneration...`);
+        }
+        
+        // Trigger clustering
+        const { triggerClusterGeneration } = await import('./ai-background-scheduler');
+        await triggerClusterGeneration();
+        console.log('✅ Cluster regeneration complete');
+      })().catch(err => console.error('Regeneration error:', err));
       
-      // Delete all clusters
-      for (const cluster of clusters) {
-        await storage.deleteCluster(cluster.id);
-      }
-      
-      console.log(`🔄 Deleted ${clusters.length} clusters, triggering regeneration...`);
-      
-      // Trigger clustering in background
-      const { triggerClusterGeneration } = await import('./ai-background-scheduler');
-      triggerClusterGeneration().catch(err => console.error('Clustering error:', err));
-      
-      res.json({ success: true, deleted: clusters.length, message: `Deleted ${clusters.length} clusters. Regeneration started.` });
     } catch (error) {
       console.error('Admin regenerate clusters error:', error);
-      res.status(500).json({ error: 'Failed to regenerate clusters' });
+      res.status(500).json({ error: 'Failed to start regeneration' });
     }
   });
 
