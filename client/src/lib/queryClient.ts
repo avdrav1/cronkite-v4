@@ -12,6 +12,7 @@ export async function apiRequest(
   method: string,
   url: string,
   data?: unknown | undefined,
+  options?: { timeout?: number },
 ): Promise<Response> {
   const headers: Record<string, string> = {};
   
@@ -48,7 +49,7 @@ export async function apiRequest(
 
   // Add timeout to prevent hanging requests
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+  const timeoutId = setTimeout(() => controller.abort(), options?.timeout ?? 10000);
 
   try {
     let res = await fetch(url, {

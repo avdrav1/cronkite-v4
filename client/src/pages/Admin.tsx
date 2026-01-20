@@ -886,7 +886,7 @@ function ClusterAdmin() {
     if (!confirm(`Delete all ${summary?.invalid || 0} invalid clusters?`)) return;
     try {
       setIsCleaningUp(true);
-      const response = await apiRequest('POST', '/api/admin/clusters/cleanup');
+      const response = await apiRequest('POST', '/api/admin/clusters/cleanup', undefined, { timeout: 60000 });
       const data = await response.json();
       if (data.success) {
         await fetchClusters();
