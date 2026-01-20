@@ -7221,5 +7221,31 @@ export async function registerRoutes(
     }
   });
 
+  // POST /api/admin/clusters/regenerate - Delete all clusters and trigger regeneration
+  app.post('/api/admin/clusters/regenerate', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const storage = await getStorage();
+      
+      // Get all clusters
+      const clusters = await storage.getClusters({ includeExpired: true, limit: 10000 });
+      
+      // Delete all clusters
+      for (const cluster of clusters) {
+        await storage.deleteCluster(cluster.id);
+      }
+      
+      console.log(`🔄 Deleted ${clusters.length} clusters, triggering regeneration...`);
+      
+      // Trigger clustering in background
+      const { triggerClusterGeneration } = await import('./ai-background-scheduler');
+      triggerClusterGeneration().catch(err => console.error('Clustering error:', err));
+      
+      res.json({ success: true, deleted: clusters.length, message: `Deleted ${clusters.length} clusters. Regeneration started.` });
+    } catch (error) {
+      console.error('Admin regenerate clusters error:', error);
+      res.status(500).json({ error: 'Failed to regenerate clusters' });
+    }
+  });
+
   return httpServer;
 }

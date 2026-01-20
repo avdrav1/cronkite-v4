@@ -937,6 +937,22 @@ function ClusterAdmin() {
     }
   };
 
+  const regenerateClusters = async () => {
+    if (!confirm(`Delete ALL ${summary?.total || 0} clusters and regenerate from scratch? This may take a few minutes.`)) return;
+    try {
+      setIsCleaningUp(true);
+      const response = await apiRequest('POST', '/api/admin/clusters/regenerate', undefined, { timeout: 120000 });
+      const data = await response.json();
+      if (data.success) {
+        await fetchClusters();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to regenerate clusters');
+    } finally {
+      setIsCleaningUp(false);
+    }
+  };
+
   useEffect(() => { 
     fetchClusters();
     fetchSettings();
@@ -992,6 +1008,15 @@ function ClusterAdmin() {
                 Cleanup {summary.invalid} Invalid
               </Button>
             )}
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={regenerateClusters}
+              disabled={isCleaningUp}
+            >
+              {isCleaningUp ? <Spinner className="h-4 w-4 mr-2" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+              Re-cluster All
+            </Button>
           </div>
         </div>
         <CardDescription>
