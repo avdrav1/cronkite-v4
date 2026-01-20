@@ -2114,18 +2114,21 @@ export class SupabaseStorage implements IStorage {
   }
 
   async refreshClusterCounts(): Promise<number> {
-    const clusters = await this.getClusters({ includeExpired: false, limit: 100 });
+    // Single query to get article counts per cluster
+    const { data: counts } = await this.supabase
+      .from('articles')
+      .select('cluster_id')
+      .not('cluster_id', 'is', null);
+    
+    const countMap = new Map<string, number>();
+    (counts || []).forEach(a => countMap.set(a.cluster_id, (countMap.get(a.cluster_id) || 0) + 1));
+    
+    const clusters = await this.getClusters({ includeExpired: false, limit: 1000 });
     let updated = 0;
     
     for (const cluster of clusters) {
-      const { count } = await this.supabase
-        .from('articles')
-        .select('*', { count: 'exact', head: true })
-        .eq('cluster_id', cluster.id);
-      
-      const articleCount = count || 0;
+      const articleCount = countMap.get(cluster.id) || 0;
       if (cluster.article_count !== articleCount) {
-        // Use direct update instead of updateCluster to avoid .single() issue
         await this.supabase
           .from('clusters')
           .update({ article_count: articleCount, updated_at: new Date().toISOString() })
@@ -2137,43 +2140,30 @@ export class SupabaseStorage implements IStorage {
   }
 
   async deleteEmptyClusters(): Promise<number> {
-    const clusters = await this.getClusters({ includeExpired: false, limit: 100 });
-    const toDelete: string[] = [];
+    // Single query to get all cluster articles with feed_id
+    const { data: articles } = await this.supabase
+      .from('articles')
+      .select('cluster_id, feed_id')
+      .not('cluster_id', 'is', null);
     
-    // Batch check which clusters to delete
-    for (const cluster of clusters) {
-      const { count } = await this.supabase
-        .from('articles')
-        .select('feed_id', { count: 'exact', head: true })
-        .eq('cluster_id', cluster.id);
-      
-      if (!count || count === 0) {
-        toDelete.push(cluster.id);
-        continue;
-      }
-      
-      // Check source diversity with a single query
-      const { data: feedIds } = await this.supabase
-        .from('articles')
-        .select('feed_id')
-        .eq('cluster_id', cluster.id)
-        .limit(50);
-      
-      const uniqueFeeds = new Set((feedIds || []).map(a => a.feed_id));
-      if (uniqueFeeds.size < 2) {
-        toDelete.push(cluster.id);
-      }
-    }
+    // Build map of cluster_id -> unique feed_ids
+    const clusterFeeds = new Map<string, Set<string>>();
+    (articles || []).forEach(a => {
+      if (!clusterFeeds.has(a.cluster_id)) clusterFeeds.set(a.cluster_id, new Set());
+      clusterFeeds.get(a.cluster_id)!.add(a.feed_id);
+    });
     
-    // Batch delete
+    const clusters = await this.getClusters({ includeExpired: false, limit: 1000 });
+    const toDelete = clusters
+      .filter(c => (clusterFeeds.get(c.id)?.size || 0) < 2)
+      .map(c => c.id);
+    
     if (toDelete.length > 0) {
-      // Clear cluster_id from articles first
       await this.supabase
         .from('articles')
         .update({ cluster_id: null })
         .in('cluster_id', toDelete);
       
-      // Delete clusters
       await this.supabase
         .from('clusters')
         .delete()
