@@ -91,6 +91,7 @@ export interface IStorage {
   
   // User Feed Subscription Management
   getUserFeeds(userId: string): Promise<Feed[]>;
+  getUsersWithFeeds(): Promise<string[]>; // Returns array of user IDs who have at least one feed
   subscribeToFeeds(userId: string, feedIds: string[]): Promise<void>;
   unsubscribeFromFeed(userId: string, feedId: string): Promise<void>;
   clearUserSubscriptions(userId: string): Promise<number>; // Returns count of removed subscriptions
@@ -124,7 +125,21 @@ export interface IStorage {
   updateArticle(id: string, updates: Partial<Article>): Promise<Article>;
   getArticleByGuid(feedId: string, guid: string): Promise<Article | undefined>;
   getArticlesByFeedId(feedId: string, limit?: number): Promise<Article[]>;
-  cleanupOldArticles(userId: string, maxArticles: number): Promise<number>;
+  
+  // Article Cleanup Support (Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 8.1, 8.2, 8.3)
+  // Note: userId parameter is kept for interface compatibility but implementation
+  // queries for articles protected by ANY user (Requirement 6.5)
+  getProtectedArticles(userId: string, feedId?: string): Promise<string[]>;
+  getArticlesWithComments(feedId?: string): Promise<string[]>;
+  batchDeleteArticles(articleIds: string[]): Promise<number>;
+  logCleanup(log: {
+    userId: string;
+    feedId?: string;
+    triggerType: string;
+    articlesDeleted: number;
+    durationMs: number;
+    errorMessage?: string;
+  }): Promise<void>;
   
   // User Article Management
   getUserArticleState(userId: string, articleId: string): Promise<UserArticle | undefined>;
@@ -679,6 +694,15 @@ export class MemStorage implements IStorage {
     return this.userFeeds.get(userId) || [];
   }
 
+  async getUsersWithFeeds(): Promise<string[]> {
+    // Get all unique user IDs who have at least one feed
+    const userIds = Array.from(this.userFeeds.keys()).filter(userId => {
+      const feeds = this.userFeeds.get(userId);
+      return feeds && feeds.length > 0;
+    });
+    return userIds;
+  }
+
   async subscribeToFeeds(userId: string, feedIds: string[]): Promise<void> {
     const user = this.users.get(userId);
     if (!user) {
@@ -938,24 +962,70 @@ export class MemStorage implements IStorage {
     return limit ? feedArticles.slice(0, limit) : feedArticles;
   }
 
-  async cleanupOldArticles(userId: string, maxArticles: number): Promise<number> {
-    // Get user's feeds
-    const userFeeds = Array.from(this.userFeeds.values())
-      .filter(uf => uf.user_id === userId)
-      .map(uf => uf.feed_id);
+  // Article Cleanup Support (Requirements: 6.1, 6.2, 6.3, 6.4, 6.5)
+  async getProtectedArticles(userId: string, feedId?: string): Promise<string[]> {
+    const protectedIds: string[] = [];
     
-    // Get all articles from user's feeds
-    const articles = Array.from(this.articles.values())
-      .filter(a => userFeeds.includes(a.feed_id))
-      .sort((a, b) => (b.published_at?.getTime() || 0) - (a.published_at?.getTime() || 0));
+    // Requirements 6.1, 6.2, 6.5: Find all starred or read articles by ANY user
+    // Note: userId parameter is kept for interface compatibility but we query all users
+    this.userArticles.forEach((userArticle, key) => {
+      // Check if article is starred or read by ANY user (not just the specified userId)
+      if (userArticle.is_starred || userArticle.is_read) {
+        // If feedId is specified, check if article belongs to that feed
+        if (feedId) {
+          const article = this.articles.get(userArticle.article_id);
+          if (article && article.feed_id === feedId) {
+            protectedIds.push(userArticle.article_id);
+          }
+        } else {
+          protectedIds.push(userArticle.article_id);
+        }
+      }
+    });
     
-    if (articles.length <= maxArticles) return 0;
+    return protectedIds;
+  }
+
+  async getArticlesWithComments(feedId?: string): Promise<string[]> {
+    // MemStorage doesn't implement comments, so return empty array
+    // In a real implementation with comments, this would query the comments map
+    return [];
+  }
+
+  async batchDeleteArticles(articleIds: string[]): Promise<number> {
+    let deleted = 0;
     
-    // Delete old articles
-    const toDelete = articles.slice(maxArticles);
-    toDelete.forEach(a => this.articles.delete(a.id));
+    for (const articleId of articleIds) {
+      if (this.articles.has(articleId)) {
+        this.articles.delete(articleId);
+        deleted++;
+        
+        // Also delete related user_articles entries
+        const keysToDelete: string[] = [];
+        this.userArticles.forEach((_, key) => {
+          if (key.endsWith(`:${articleId}`)) {
+            keysToDelete.push(key);
+          }
+        });
+        keysToDelete.forEach(key => this.userArticles.delete(key));
+      }
+    }
     
-    return toDelete.length;
+    return deleted;
+  }
+
+  async logCleanup(log: {
+    userId: string;
+    feedId?: string;
+    triggerType: string;
+    articlesDeleted: number;
+    durationMs: number;
+    errorMessage?: string;
+  }): Promise<void> {
+    // MemStorage doesn't persist cleanup logs
+    // In a real implementation, this would store to a cleanupLogs map
+    // For now, just log to console for debugging
+    console.log('MemStorage cleanup log:', log);
   }
 
   // User Article Management

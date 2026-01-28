@@ -12,8 +12,11 @@
   node_bundler = "esbuild"
   external_node_modules = ["express", "pg", "pg-native"]
 
-# Note: ai-scheduler uses inline config export for scheduling
+# Note: Scheduled functions use inline config export for scheduling
 # Schedule is defined in the function file itself (export const config)
+# - ai-scheduler: runs every 15 minutes
+# - feed-sync-scheduler: runs every hour
+# - scheduled-cleanup: runs daily at 2 AM
 
 # API route proxying to Netlify Functions
 [[redirects]]

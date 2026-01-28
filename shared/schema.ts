@@ -54,8 +54,24 @@ export const userSettings = pgTable("user_settings", {
   show_friend_activity: boolean("show_friend_activity").notNull().default(true),
   social_feed_priority: text("social_feed_priority").notNull().default("mixed"), // 'social_only', 'mixed', 'regular_only'
   share_reading_activity: boolean("share_reading_activity").notNull().default(true),
+  // Cleanup settings (Requirements: 5.1, 5.2, 5.4)
+  articles_per_feed: integer("articles_per_feed").default(100),
+  unread_article_age_days: integer("unread_article_age_days").default(30),
+  enable_auto_cleanup: boolean("enable_auto_cleanup").default(true),
   created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updated_at: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Cleanup log table for article cleanup monitoring (Requirements: 8.2)
+export const cleanupLog = pgTable("cleanup_log", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  user_id: uuid("user_id").references(() => profiles.id, { onDelete: "cascade" }),
+  feed_id: uuid("feed_id").references(() => feeds.id, { onDelete: "set null" }),
+  trigger_type: text("trigger_type").notNull(), // 'sync', 'scheduled', 'manual'
+  articles_deleted: integer("articles_deleted").notNull().default(0),
+  duration_ms: integer("duration_ms").notNull(),
+  error_message: text("error_message"),
+  created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // User interests table for onboarding
@@ -304,6 +320,9 @@ export const selectAiUsageLogSchema = createSelectSchema(aiUsageLog);
 export const insertAiUsageDailySchema = createInsertSchema(aiUsageDaily);
 export const selectAiUsageDailySchema = createSelectSchema(aiUsageDaily);
 
+export const insertCleanupLogSchema = createInsertSchema(cleanupLog);
+export const selectCleanupLogSchema = createSelectSchema(cleanupLog);
+
 // Feed management constants (Requirements: 3.1)
 export const MAX_FEEDS_PER_USER = 25;
 export const FEED_LIMIT_WARNING_THRESHOLD = 20;
@@ -344,6 +363,13 @@ export type InsertAIUsageLog = typeof aiUsageLog.$inferInsert;
 // AI daily usage types (Requirements: 8.2, 8.3, 8.4, 8.6)
 export type AIUsageDaily = typeof aiUsageDaily.$inferSelect;
 export type InsertAIUsageDaily = typeof aiUsageDaily.$inferInsert;
+
+// Cleanup log types (Requirements: 8.2)
+export type CleanupLogEntry = typeof cleanupLog.$inferSelect;
+export type InsertCleanupLogEntry = typeof cleanupLog.$inferInsert;
+
+// Cleanup trigger type for type safety (Requirements: 8.2)
+export type CleanupTriggerType = 'sync' | 'scheduled' | 'manual';
 
 // Feed priority type for type safety (Requirements: 3.1, 3.2, 3.3)
 export type FeedPriority = 'high' | 'medium' | 'low';

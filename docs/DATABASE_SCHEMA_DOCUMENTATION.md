@@ -41,7 +41,7 @@ This document provides comprehensive documentation for the Cronkite database sch
          │              System Operations                  │
          │                                                 │
          │ • feed_sync_log    • ai_usage                  │
-         │ • digest_history                               │
+         │ • cleanup_log      • digest_history            │
          └─────────────────────────────────────────────────┘
 ```
 
@@ -93,12 +93,21 @@ CREATE TABLE user_settings (
     -- Appearance preferences
     theme TEXT DEFAULT 'system',
     accent_color TEXT DEFAULT 'blue',
+    -- Cleanup preferences (Article Cleanup System)
+    articles_per_feed INTEGER DEFAULT 100,
+    unread_article_age_days INTEGER DEFAULT 30,
+    enable_auto_cleanup BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     
     CONSTRAINT user_settings_user_id_unique UNIQUE(user_id)
 );
 ```
+
+**Cleanup Settings:**
+- `articles_per_feed`: Maximum articles to keep per feed (range: 50-500, default: 100)
+- `unread_article_age_days`: Maximum age in days for unread articles (range: 7-90, default: 30)
+- `enable_auto_cleanup`: Whether automatic cleanup is enabled (default: true)
 
 #### user_interests
 Stores user interest categories from onboarding.
@@ -279,6 +288,37 @@ CREATE TABLE feed_sync_log (
 ```
 
 **Automatic Cleanup:** Trigger maintains only the last 100 logs per feed.
+
+#### cleanup_log
+Article cleanup operation history and monitoring.
+
+```sql
+CREATE TABLE cleanup_log (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
+    feed_id UUID REFERENCES feeds(id) ON DELETE SET NULL,
+    trigger_type TEXT NOT NULL, -- 'sync', 'scheduled', 'manual'
+    articles_deleted INTEGER NOT NULL DEFAULT 0,
+    duration_ms INTEGER NOT NULL,
+    error_message TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_cleanup_log_user_id ON cleanup_log(user_id);
+CREATE INDEX idx_cleanup_log_created_at ON cleanup_log(created_at);
+```
+
+**Key Features:**
+- Tracks all cleanup operations (sync-triggered, scheduled, manual)
+- Records articles deleted count and operation duration
+- Stores error messages for failed cleanups
+- Indexed for efficient querying by user and date
+- Used for admin monitoring and statistics
+
+**Trigger Types:**
+- `sync`: Cleanup triggered after feed sync
+- `scheduled`: Cleanup triggered by daily scheduled job
+- `manual`: Cleanup triggered manually by admin
 
 #### ai_usage
 Daily AI operation tracking and limits.
@@ -612,6 +652,13 @@ CREATE INDEX idx_user_articles_read_status ON user_articles(user_id, is_read, re
 CREATE INDEX idx_user_articles_starred ON user_articles(user_id, is_starred) WHERE is_starred = TRUE;
 CREATE INDEX idx_articles_feed_published ON articles(feed_id, published_at DESC);
 
+-- Cleanup system indexes
+CREATE INDEX idx_articles_feed_published ON articles(feed_id, published_at DESC);
+CREATE INDEX idx_user_articles_protection ON user_articles(user_id, article_id) 
+    WHERE is_starred = TRUE OR is_read = TRUE;
+CREATE INDEX idx_cleanup_log_user_id ON cleanup_log(user_id);
+CREATE INDEX idx_cleanup_log_created_at ON cleanup_log(created_at);
+
 -- RLS performance indexes
 CREATE INDEX idx_feeds_user_id_rls ON feeds(user_id) WHERE user_id IS NOT NULL;
 CREATE INDEX idx_user_articles_user_id_rls ON user_articles(user_id) WHERE user_id IS NOT NULL;
@@ -776,6 +823,115 @@ DO UPDATE SET
     is_read = TRUE,
     read_at = NOW(),
     updated_at = NOW();
+```
+
+### Article Cleanup Queries
+
+#### Get Protected Articles for User
+```sql
+-- Get all protected article IDs (starred, read, or commented)
+SELECT DISTINCT ua.article_id
+FROM user_articles ua
+WHERE ua.user_id = $1
+AND (ua.is_starred = TRUE OR ua.is_read = TRUE)
+
+UNION
+
+SELECT DISTINCT ac.article_id
+FROM article_comments ac
+WHERE ac.user_id = $1;
+```
+
+#### Get Articles Exceeding Per-Feed Limit
+```sql
+-- Get article IDs to delete based on per-feed limit
+WITH ranked_articles AS (
+    SELECT 
+        a.id,
+        a.feed_id,
+        a.published_at,
+        ROW_NUMBER() OVER (
+            PARTITION BY a.feed_id 
+            ORDER BY a.published_at DESC
+        ) as rank
+    FROM articles a
+    JOIN feeds f ON a.feed_id = f.id
+    LEFT JOIN user_articles ua ON a.id = ua.article_id AND ua.user_id = f.user_id
+    WHERE f.user_id = $1
+    AND f.id = $2
+    AND (ua.is_read IS NULL OR ua.is_read = FALSE)
+    AND (ua.is_starred IS NULL OR ua.is_starred = FALSE)
+    AND a.id NOT IN (
+        SELECT article_id FROM article_comments WHERE user_id = $1
+    )
+)
+SELECT id
+FROM ranked_articles
+WHERE rank > $3  -- articles_per_feed limit
+ORDER BY published_at ASC;
+```
+
+#### Get Articles Exceeding Age Threshold
+```sql
+-- Get article IDs to delete based on age threshold
+SELECT a.id
+FROM articles a
+JOIN feeds f ON a.feed_id = f.id
+LEFT JOIN user_articles ua ON a.id = ua.article_id AND ua.user_id = f.user_id
+WHERE f.user_id = $1
+AND f.id = $2
+AND a.published_at < NOW() - INTERVAL '1 day' * $3  -- unread_article_age_days
+AND (ua.is_read IS NULL OR ua.is_read = FALSE)
+AND (ua.is_starred IS NULL OR ua.is_starred = FALSE)
+AND a.id NOT IN (
+    SELECT article_id FROM article_comments WHERE user_id = $1
+)
+ORDER BY a.published_at ASC;
+```
+
+#### Get Cleanup Statistics
+```sql
+-- Get aggregate cleanup statistics
+SELECT 
+    COUNT(*) as total_cleanups,
+    SUM(articles_deleted) as total_articles_deleted,
+    AVG(duration_ms) as average_duration,
+    SUM(CASE WHEN error_message IS NOT NULL THEN 1 ELSE 0 END)::FLOAT / COUNT(*) as error_rate,
+    (
+        SELECT COUNT(*) 
+        FROM cleanup_log 
+        WHERE created_at > NOW() - INTERVAL '24 hours'
+    ) as cleanups_last_24h,
+    (
+        SELECT SUM(articles_deleted) 
+        FROM cleanup_log 
+        WHERE created_at > NOW() - INTERVAL '24 hours'
+    ) as articles_deleted_last_24h
+FROM cleanup_log;
+```
+
+#### Get Cleanup Logs with Pagination
+```sql
+-- Get paginated cleanup logs with optional filters
+SELECT 
+    cl.id,
+    cl.user_id,
+    cl.feed_id,
+    cl.trigger_type,
+    cl.articles_deleted,
+    cl.duration_ms,
+    cl.error_message,
+    cl.created_at,
+    p.display_name as user_name,
+    f.name as feed_name
+FROM cleanup_log cl
+LEFT JOIN profiles p ON cl.user_id = p.id
+LEFT JOIN feeds f ON cl.feed_id = f.id
+WHERE ($1::UUID IS NULL OR cl.user_id = $1)
+AND ($2::TEXT IS NULL OR cl.trigger_type = $2)
+AND ($3::BOOLEAN IS NULL OR (cl.error_message IS NOT NULL) = $3)
+ORDER BY cl.created_at DESC
+LIMIT $4 OFFSET $5;
 ```
 
 ### AI and Clustering Queries

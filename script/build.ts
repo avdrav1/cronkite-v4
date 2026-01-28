@@ -172,6 +172,27 @@ async function buildAll() {
     console.log("⚠️ Feed-sync-scheduler function not found, skipping");
   }
 
+  // Build the scheduled-cleanup scheduled function
+  console.log("⚡ Building scheduled-cleanup (Netlify Scheduled Function)...");
+  if (existsSync("netlify/functions/scheduled-cleanup.ts")) {
+    await esbuild({
+      entryPoints: ["netlify/functions/scheduled-cleanup.ts"],
+      platform: "node",
+      bundle: true,
+      format: "esm",
+      outfile: "dist/functions/scheduled-cleanup.mjs",
+      define: {
+        "process.env.NODE_ENV": '"production"',
+      },
+      minify: true,
+      external: externals,
+      logLevel: "info",
+    });
+    console.log("✅ Scheduled-cleanup function built");
+  } else {
+    console.log("⚠️ Scheduled-cleanup function not found, skipping");
+  }
+
   // Build the diagnostic function
   console.log("⚡ Building diagnostic (Netlify Diagnostic Function)...");
   if (existsSync("netlify/functions/diagnostic.ts")) {

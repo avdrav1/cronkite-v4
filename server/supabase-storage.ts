@@ -589,6 +589,33 @@ export class SupabaseStorage implements IStorage {
     );
   }
 
+  async getUsersWithFeeds(): Promise<string[]> {
+    return this.executeWithFallback(
+      async () => {
+        // Get distinct user IDs from feeds table where user has at least one feed
+        const { data, error } = await this.supabase
+          .from('feeds')
+          .select('user_id')
+          .eq('status', 'active');
+        
+        if (error) {
+          throw new Error(`Failed to get users with feeds: ${error.message}`);
+        }
+        
+        // Extract unique user IDs
+        const userIds = [...new Set((data || []).map(feed => feed.user_id))];
+        return userIds;
+      },
+      async () => {
+        if (this.fallbackStorage) {
+          return await this.fallbackStorage.getUsersWithFeeds();
+        }
+        return [];
+      },
+      'getUsersWithFeeds'
+    );
+  }
+
   async subscribeToFeeds(userId: string, feedIds: string[]): Promise<void> {
     // Get recommended feeds to create user feeds from
     const { data: recommendedFeeds, error: fetchError } = await this.supabase
@@ -1012,94 +1039,249 @@ export class SupabaseStorage implements IStorage {
     return (data || []) as Article[];
   }
 
-  async cleanupOldArticles(userId: string, maxArticles: number): Promise<number> {
-    console.log(`🧹 cleanupOldArticles called: userId=${userId}, maxArticles=${maxArticles}`);
+  /**
+   * Get protected article IDs for a user (starred or read)
+   * Requirements: 6.1, 6.2 - Identify articles that should never be deleted
+   * 
+   * @param userId - ID of the user
+   * @param feedId - Optional feed ID to filter by specific feed
+   * @returns Promise<string[]> - Array of protected article IDs
+   */
+  async getProtectedArticles(userId: string, feedId?: string): Promise<string[]> {
+    console.log(`🛡️  getProtectedArticles called: userId=${userId}, feedId=${feedId || 'all'}`);
     
-    // Get user's feed IDs from feeds table (feeds have user_id column)
-    const { data: userFeeds, error: feedError } = await this.supabase
-      .from('feeds')
-      .select('id')
-      .eq('user_id', userId);
-    
-    if (feedError) {
-      console.error('🧹 Cleanup: Failed to get user feeds:', feedError);
-      return 0;
-    }
-    
-    if (!userFeeds || userFeeds.length === 0) {
-      console.log('🧹 Cleanup: No user feeds found');
-      return 0;
-    }
-    
-    const feedIds = userFeeds.map(uf => uf.id);
-    console.log(`🧹 Cleanup: Found ${feedIds.length} feeds for user`);
-    
-    // Get article IDs that are starred or read (protected)
-    const { data: protectedArticles } = await this.supabase
-      .from('user_articles')
-      .select('article_id')
-      .eq('user_id', userId)
-      .or('is_starred.eq.true,is_read.eq.true');
-    
-    const protectedIds = new Set((protectedArticles || []).map(a => a.article_id));
-    console.log(`🧹 Cleanup: ${protectedIds.size} articles protected (starred/read)`);
-    
-    // First, count total articles
-    const { count: totalCount } = await this.supabase
-      .from('articles')
-      .select('*', { count: 'exact', head: true })
-      .in('feed_id', feedIds);
-    
-    console.log(`🧹 Cleanup: Total articles in user feeds: ${totalCount}`);
-    
-    // Get article IDs to potentially delete (skip the most recent maxArticles)
-    const { data: candidatesToDelete, error: selectError } = await this.supabase
-      .from('articles')
-      .select('id')
-      .in('feed_id', feedIds)
-      .order('published_at', { ascending: false })
-      .range(maxArticles, maxArticles + 5000);
-    
-    if (selectError) {
-      console.error('🧹 Cleanup select error:', selectError);
-      return 0;
-    }
-    
-    if (!candidatesToDelete || candidatesToDelete.length === 0) {
-      console.log(`🧹 Cleanup: No articles to delete (total: ${totalCount}, max: ${maxArticles})`);
-      return 0;
-    }
-    
-    // Filter out protected articles (starred or read)
-    const deleteIds = candidatesToDelete
-      .map(a => a.id)
-      .filter(id => !protectedIds.has(id));
-    
-    console.log(`🧹 Cleanup: ${candidatesToDelete.length} candidates, ${deleteIds.length} deletable (after protecting starred/read)`);
-    
-    if (deleteIds.length === 0) {
-      console.log('🧹 Cleanup: All candidate articles are protected');
-      return 0;
-    }
-    
-    // Delete in batches of 500 to avoid query limits
-    let totalDeleted = 0;
-    for (let i = 0; i < deleteIds.length; i += 500) {
-      const batch = deleteIds.slice(i, i + 500);
-      const { error } = await this.supabase
-        .from('articles')
-        .delete()
-        .in('id', batch);
+    try {
+      // Requirements 6.1, 6.2, 6.5: Query for articles protected by ANY user, not just the specified user
+      // An article is protected if ANY user has starred or read it
+      let query = this.supabase
+        .from('user_articles')
+        .select('article_id')
+        .or('is_starred.eq.true,is_read.eq.true');
+      // NOTE: Removed .eq('user_id', userId) to check ALL users
+      
+      // If feedId is provided, we need to join with articles to filter by feed
+      if (feedId) {
+        // First get all protected article IDs from any user
+        const { data: protectedArticles, error } = await query;
+        
+        if (error) {
+          console.error('🛡️  Error fetching protected articles:', error);
+          return [];
+        }
+        
+        if (!protectedArticles || protectedArticles.length === 0) {
+          return [];
+        }
+        
+        const articleIds = protectedArticles.map(a => a.article_id);
+        
+        // Then filter by feed_id
+        const { data: feedArticles, error: feedError } = await this.supabase
+          .from('articles')
+          .select('id')
+          .eq('feed_id', feedId)
+          .in('id', articleIds);
+        
+        if (feedError) {
+          console.error('🛡️  Error filtering by feed:', feedError);
+          return [];
+        }
+        
+        const result = (feedArticles || []).map(a => a.id);
+        console.log(`🛡️  Found ${result.length} protected articles (by any user) in feed ${feedId}`);
+        return result;
+      }
+      
+      // No feed filter - return all protected articles from any user
+      const { data: protectedArticles, error } = await query;
       
       if (error) {
-        console.error('🧹 Cleanup delete error:', error);
-        break;
+        console.error('🛡️  Error fetching protected articles:', error);
+        return [];
       }
-      totalDeleted += batch.length;
+      
+      const result = (protectedArticles || []).map(a => a.article_id);
+      console.log(`🛡️  Found ${result.length} protected articles (by any user)`);
+      return result;
+      
+    } catch (error) {
+      console.error('🛡️  Exception in getProtectedArticles:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get article IDs that have comments
+   * Requirements: 6.3, 6.4 - Articles with comments should never be deleted
+   * 
+   * @param feedId - Optional feed ID to filter by specific feed
+   * @returns Promise<string[]> - Array of article IDs with comments
+   */
+  async getArticlesWithComments(feedId?: string): Promise<string[]> {
+    console.log(`💬 getArticlesWithComments called: feedId=${feedId || 'all'}`);
+    
+    try {
+      // Query article_comments for distinct article_ids
+      // Only include non-deleted comments
+      let query = this.supabase
+        .from('article_comments')
+        .select('article_id')
+        .is('deleted_at', null);
+      
+      const { data: comments, error } = await query;
+      
+      if (error) {
+        console.error('💬 Error fetching articles with comments:', error);
+        return [];
+      }
+      
+      if (!comments || comments.length === 0) {
+        return [];
+      }
+      
+      // Get unique article IDs
+      const articleIds = [...new Set(comments.map(c => c.article_id))];
+      
+      // If feedId is provided, filter by feed
+      if (feedId) {
+        const { data: feedArticles, error: feedError } = await this.supabase
+          .from('articles')
+          .select('id')
+          .eq('feed_id', feedId)
+          .in('id', articleIds);
+        
+        if (feedError) {
+          console.error('💬 Error filtering by feed:', feedError);
+          return [];
+        }
+        
+        const result = (feedArticles || []).map(a => a.id);
+        console.log(`💬 Found ${result.length} articles with comments in feed ${feedId}`);
+        return result;
+      }
+      
+      console.log(`💬 Found ${articleIds.length} articles with comments`);
+      return articleIds;
+      
+    } catch (error) {
+      console.error('💬 Exception in getArticlesWithComments:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Delete articles in batches
+   * Requirements: 7.1, 7.2, 7.3 - Batch deletion with error handling
+   * 
+   * This method deletes articles from the database in batches of 500 to avoid
+   * query timeouts. Cascading deletes will automatically remove related records
+   * (user_articles, article_comments, etc.) as defined in the database schema.
+   * 
+   * Each batch is processed independently - if one batch fails, the method
+   * continues with remaining batches and returns the total count of successfully
+   * deleted articles.
+   * 
+   * @param articleIds - Array of article IDs to delete
+   * @returns Promise<number> - Number of articles successfully deleted
+   */
+  async batchDeleteArticles(articleIds: string[]): Promise<number> {
+    if (articleIds.length === 0) {
+      return 0;
     }
     
-    console.log(`🧹 Cleanup: Deleted ${totalDeleted} articles`);
+    const BATCH_SIZE = 500;
+    let totalDeleted = 0;
+    
+    console.log(`🗑️  batchDeleteArticles: Deleting ${articleIds.length} articles in batches of ${BATCH_SIZE}`);
+    
+    // Process deletions in batches
+    for (let i = 0; i < articleIds.length; i += BATCH_SIZE) {
+      const batch = articleIds.slice(i, i + BATCH_SIZE);
+      const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+      const totalBatches = Math.ceil(articleIds.length / BATCH_SIZE);
+      
+      try {
+        console.log(`🗑️  Processing batch ${batchNumber}/${totalBatches} (${batch.length} articles)`);
+        
+        // Supabase/PostgreSQL will handle cascading deletes automatically
+        // based on the foreign key constraints defined in the schema:
+        // - user_articles: ON DELETE CASCADE
+        // - article_comments: ON DELETE CASCADE
+        // - embedding_queue: ON DELETE CASCADE
+        const { error, count } = await this.supabase
+          .from('articles')
+          .delete({ count: 'exact' })
+          .in('id', batch);
+        
+        if (error) {
+          console.error(`❌ Error deleting batch ${batchNumber}:`, error);
+          // Continue with next batch instead of throwing
+          // This ensures partial success is possible
+          continue;
+        }
+        
+        const deletedCount = count ?? batch.length;
+        totalDeleted += deletedCount;
+        console.log(`✅ Batch ${batchNumber} complete: ${deletedCount} articles deleted`);
+        
+      } catch (error) {
+        console.error(`❌ Exception in batch ${batchNumber}:`, error);
+        // Continue with next batch
+        continue;
+      }
+    }
+    
+    console.log(`🗑️  batchDeleteArticles complete: ${totalDeleted}/${articleIds.length} articles deleted`);
     return totalDeleted;
+  }
+
+  /**
+   * Log cleanup operation to cleanup_log table
+   * Requirements: 3.3, 8.1, 8.2, 8.3 - Track cleanup operations for monitoring
+   * 
+   * This method logs all cleanup operations including:
+   * - User ID and feed ID (if applicable)
+   * - Trigger type (sync, scheduled, manual)
+   * - Number of articles deleted
+   * - Duration in milliseconds
+   * - Error message (if cleanup failed)
+   * 
+   * Logging errors are handled gracefully and do not cause cleanup to fail.
+   * 
+   * @param log - Cleanup log entry data
+   * @returns Promise<void>
+   */
+  async logCleanup(log: {
+    userId: string;
+    feedId?: string;
+    triggerType: string;
+    articlesDeleted: number;
+    durationMs: number;
+    errorMessage?: string;
+  }): Promise<void> {
+    try {
+      const { error } = await this.supabase
+        .from('cleanup_log')
+        .insert({
+          user_id: log.userId,
+          feed_id: log.feedId ?? null,
+          trigger_type: log.triggerType,
+          articles_deleted: log.articlesDeleted,
+          duration_ms: log.durationMs,
+          error_message: log.errorMessage ?? null,
+        });
+      
+      if (error) {
+        // Log the error but don't throw - logging failures should not cause cleanup to fail
+        console.error('⚠️  Failed to log cleanup operation:', error);
+        console.error('   Log data:', log);
+      }
+    } catch (error) {
+      // Catch any exceptions and log them, but don't propagate
+      // This ensures that logging errors never cause cleanup operations to fail
+      console.error('⚠️  Exception while logging cleanup operation:', error);
+      console.error('   Log data:', log);
+    }
   }
 
   // User Article Management

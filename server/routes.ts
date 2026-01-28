@@ -14,7 +14,8 @@ import { categoryMappingService } from "@shared/category-mapping";
 import { generateArticleSummary, isAISummaryAvailable, clusterArticles, isClusteringAvailable } from "./ai-summary";
 import { requireFeedOwnership, validateFeedOwnership } from "./feed-ownership";
 import { createSimilarArticlesService } from "./similar-articles-service";
-import { config } from "./config";
+import { ArticleCleanupService } from "./article-cleanup-service";
+import { config, cleanupConfig } from "./config";
 import { 
   insertProfileSchema, 
   selectProfileSchema,
@@ -47,6 +48,21 @@ const updateProfileSchema = z.object({
   avatar_url: z.string().url().nullable().optional(),
   timezone: z.string().optional(),
   region_code: z.string().nullable().optional()
+});
+
+// Cleanup settings validation schema
+const updateCleanupSettingsSchema = z.object({
+  articles_per_feed: z.number()
+    .int()
+    .min(cleanupConfig.minArticlesPerFeed, `Articles per feed must be at least ${cleanupConfig.minArticlesPerFeed}`)
+    .max(cleanupConfig.maxArticlesPerFeed, `Articles per feed must be at most ${cleanupConfig.maxArticlesPerFeed}`)
+    .optional(),
+  unread_article_age_days: z.number()
+    .int()
+    .min(cleanupConfig.minUnreadAgeDays, `Unread article age must be at least ${cleanupConfig.minUnreadAgeDays} days`)
+    .max(cleanupConfig.maxUnreadAgeDays, `Unread article age must be at most ${cleanupConfig.maxUnreadAgeDays} days`)
+    .optional(),
+  enable_auto_cleanup: z.boolean().optional()
 });
 
 const updateUserSettingsSchema = insertUserSettingsSchema.partial().omit({
@@ -888,6 +904,79 @@ export async function registerRoutes(
     }
   });
   
+  // GET /api/users/cleanup-settings - Get user cleanup settings
+  // Requirements: 5.1, 5.2, 5.5 - Allow users to retrieve their cleanup settings
+  app.get('/api/users/cleanup-settings', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      
+      const storage = await getStorage();
+      const userSettings = await storage.getUserSettings(userId);
+      
+      // Return settings with defaults if not configured
+      const cleanupSettings = {
+        articles_per_feed: userSettings?.articles_per_feed ?? cleanupConfig.defaultArticlesPerFeed,
+        unread_article_age_days: userSettings?.unread_article_age_days ?? cleanupConfig.defaultUnreadAgeDays,
+        enable_auto_cleanup: userSettings?.enable_auto_cleanup ?? true,
+      };
+      
+      res.json({
+        settings: cleanupSettings
+      });
+    } catch (error) {
+      console.error('Get cleanup settings error:', error);
+      res.status(500).json({
+        error: 'Failed to get cleanup settings',
+        message: 'An error occurred while retrieving cleanup settings'
+      });
+    }
+  });
+
+  // PUT /api/users/cleanup-settings - Update user cleanup settings
+  // Requirements: 5.1, 5.2, 5.3 - Allow users to update their cleanup settings with validation
+  app.put('/api/users/cleanup-settings', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      
+      // Validate request body
+      const validatedSettings = updateCleanupSettingsSchema.parse(req.body);
+      
+      const storage = await getStorage();
+      
+      // Update user settings
+      await storage.updateUserSettings(userId, validatedSettings);
+      
+      // Fetch updated settings to return
+      const userSettings = await storage.getUserSettings(userId);
+      
+      // Return updated settings with defaults
+      const cleanupSettings = {
+        articles_per_feed: userSettings?.articles_per_feed ?? cleanupConfig.defaultArticlesPerFeed,
+        unread_article_age_days: userSettings?.unread_article_age_days ?? cleanupConfig.defaultUnreadAgeDays,
+        enable_auto_cleanup: userSettings?.enable_auto_cleanup ?? true,
+      };
+      
+      res.json({
+        settings: cleanupSettings
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          error: 'Validation error',
+          message: 'Invalid cleanup settings',
+          details: error.errors
+        });
+      }
+      
+      console.error('Update cleanup settings error:', error);
+      res.status(500).json({
+        error: 'Failed to update cleanup settings',
+        message: 'An error occurred while updating cleanup settings'
+      });
+    }
+  });
+
+  
   // POST /api/users/interests - Set user interests
   app.post('/api/users/interests', requireAuth, async (req: Request, res: Response) => {
     try {
@@ -1670,12 +1759,37 @@ export async function registerRoutes(
           
           console.log(`RSS sync completed for user ${userId}: ${successCount} success, ${failureCount} failed, ${newArticlesCount} new articles, ${integrationResult.totalEmbeddingsQueued} embeddings queued`);
           
-          // Cleanup old articles to maintain cap
+          // Cleanup old articles using new cleanup service
+          // Requirements: 3.1, 3.4 - Trigger cleanup after successful sync
           try {
-            const deletedCount = await storage.cleanupOldArticles(userId, config.maxArticlesPerUserFeed);
-            if (deletedCount > 0) {
-              console.log(`Cleaned up ${deletedCount} old articles for user ${userId}`);
+            const cleanupService = new ArticleCleanupService(storage);
+            let totalCleanedArticles = 0;
+            
+            // Call cleanup for each successfully synced feed
+            for (let i = 0; i < results.length; i++) {
+              const result = results[i];
+              if (result.success) {
+                const feed = feedsToSync[i];
+                try {
+                  const cleanupResult = await cleanupService.cleanupFeedArticles(userId, feed.id);
+                  totalCleanedArticles += cleanupResult.articlesDeleted;
+                  
+                  if (cleanupResult.error) {
+                    console.error(`Cleanup error for feed ${feed.id}:`, cleanupResult.error);
+                  } else if (cleanupResult.articlesDeleted > 0) {
+                    console.log(`Cleaned up ${cleanupResult.articlesDeleted} articles for feed ${feed.id} (${feed.name})`);
+                  }
+                } catch (feedCleanupError) {
+                  console.error(`Cleanup failed for feed ${feed.id}:`, feedCleanupError);
+                  // Continue with other feeds
+                }
+              }
             }
+            
+            if (totalCleanedArticles > 0) {
+              console.log(`Total cleanup: ${totalCleanedArticles} articles deleted across ${successCount} feeds`);
+            }
+            
             // Always maintain cluster integrity after sync (counts may be stale)
             const updatedClusters = await storage.refreshClusterCounts();
             const deletedClusters = await storage.deleteEmptyClusters();
@@ -1722,12 +1836,38 @@ export async function registerRoutes(
       // Don't await the sync, let it run in background
       syncPromise
         .then(async (integrationResult) => {
-          // Cleanup old articles after background sync
+          // Cleanup old articles after background sync using new cleanup service
+          // Requirements: 3.1, 3.4 - Trigger cleanup after successful sync
           try {
-            const deletedCount = await storage.cleanupOldArticles(userId, config.maxArticlesPerUserFeed);
-            if (deletedCount > 0) {
-              console.log(`Background sync: Cleaned up ${deletedCount} old articles for user ${userId}`);
+            const cleanupService = new ArticleCleanupService(storage);
+            const results = integrationResult.syncResults;
+            let totalCleanedArticles = 0;
+            
+            // Call cleanup for each successfully synced feed
+            for (let i = 0; i < results.length; i++) {
+              const result = results[i];
+              if (result.success) {
+                const feed = feedsToSync[i];
+                try {
+                  const cleanupResult = await cleanupService.cleanupFeedArticles(userId, feed.id);
+                  totalCleanedArticles += cleanupResult.articlesDeleted;
+                  
+                  if (cleanupResult.error) {
+                    console.error(`Background sync: Cleanup error for feed ${feed.id}:`, cleanupResult.error);
+                  } else if (cleanupResult.articlesDeleted > 0) {
+                    console.log(`Background sync: Cleaned up ${cleanupResult.articlesDeleted} articles for feed ${feed.id} (${feed.name})`);
+                  }
+                } catch (feedCleanupError) {
+                  console.error(`Background sync: Cleanup failed for feed ${feed.id}:`, feedCleanupError);
+                  // Continue with other feeds
+                }
+              }
             }
+            
+            if (totalCleanedArticles > 0) {
+              console.log(`Background sync: Total cleanup: ${totalCleanedArticles} articles deleted`);
+            }
+            
             // Always maintain cluster integrity after sync (counts may be stale)
             const updatedClusters = await storage.refreshClusterCounts();
             const deletedClusters = await storage.deleteEmptyClusters();
@@ -2393,7 +2533,7 @@ export async function registerRoutes(
       });
       
       // Cap at configured limit to prevent Lambda response size limit (6MB)
-      const cappedArticles = articlesWithState.slice(0, config.maxArticlesPerUserFeed);
+      const cappedArticles = articlesWithState.slice(0, config.apiResponseMaxArticles);
       
       res.json({
         articles: cappedArticles,
@@ -7263,6 +7403,142 @@ export async function registerRoutes(
     } catch (error) {
       console.error('Admin regenerate clusters error:', error);
       res.status(500).json({ error: 'Failed to start regeneration' });
+    }
+  });
+
+  // GET /api/admin/cleanup-stats - Get cleanup operation statistics
+  app.get('/api/admin/cleanup-stats', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const storage = await getStorage();
+      const supabase = (storage as any).supabase;
+      
+      if (!supabase) {
+        return res.status(500).json({ error: 'Database connection not available' });
+      }
+      
+      // Calculate cutoff time for last 24 hours
+      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      
+      // Query cleanup_log for statistics over last 24 hours
+      const { data: logs, error } = await supabase
+        .from('cleanup_log')
+        .select('*')
+        .gte('created_at', twentyFourHoursAgo)
+        .order('created_at', { ascending: false });
+      
+      if (error) {
+        console.error('Error fetching cleanup logs:', error);
+        return res.status(500).json({ error: 'Failed to fetch cleanup statistics' });
+      }
+      
+      // Calculate aggregated statistics
+      const totalOperations = logs.length;
+      const totalDeletions = logs.reduce((sum, log) => sum + (log.articles_deleted || 0), 0);
+      const totalDuration = logs.reduce((sum, log) => sum + (log.duration_ms || 0), 0);
+      const errorCount = logs.filter(log => log.error_message !== null).length;
+      
+      const averageDuration = totalOperations > 0 ? Math.round(totalDuration / totalOperations) : 0;
+      const errorRate = totalOperations > 0 ? (errorCount / totalOperations) * 100 : 0;
+      
+      // Group by trigger type
+      const byTriggerType = logs.reduce((acc, log) => {
+        const type = log.trigger_type || 'unknown';
+        if (!acc[type]) {
+          acc[type] = { count: 0, deletions: 0 };
+        }
+        acc[type].count++;
+        acc[type].deletions += log.articles_deleted || 0;
+        return acc;
+      }, {} as Record<string, { count: number; deletions: number }>);
+      
+      res.json({
+        success: true,
+        stats: {
+          period: 'last_24_hours',
+          totalOperations,
+          totalDeletions,
+          averageDuration,
+          errorRate: Math.round(errorRate * 100) / 100, // Round to 2 decimal places
+          errorCount,
+          byTriggerType,
+        },
+      });
+    } catch (error) {
+      console.error('Admin get cleanup stats error:', error);
+      res.status(500).json({ error: 'Failed to get cleanup statistics' });
+    }
+  });
+
+  // GET /api/admin/cleanup-logs - Get paginated cleanup logs with filtering
+  app.get('/api/admin/cleanup-logs', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const storage = await getStorage();
+      const supabase = (storage as any).supabase;
+      
+      if (!supabase) {
+        return res.status(500).json({ error: 'Database connection not available' });
+      }
+      
+      // Parse query parameters
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = Math.min(parseInt(req.query.limit as string) || 50, 100); // Max 100 per page
+      const userId = req.query.user_id as string | undefined;
+      const feedId = req.query.feed_id as string | undefined;
+      const triggerType = req.query.trigger_type as string | undefined;
+      
+      // Calculate offset for pagination
+      const offset = (page - 1) * limit;
+      
+      // Build query with filters
+      let query = supabase
+        .from('cleanup_log')
+        .select('*', { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1);
+      
+      // Apply filters if provided
+      if (userId) {
+        query = query.eq('user_id', userId);
+      }
+      if (feedId) {
+        query = query.eq('feed_id', feedId);
+      }
+      if (triggerType) {
+        query = query.eq('trigger_type', triggerType);
+      }
+      
+      const { data: logs, error, count } = await query;
+      
+      if (error) {
+        console.error('Error fetching cleanup logs:', error);
+        return res.status(500).json({ error: 'Failed to fetch cleanup logs' });
+      }
+      
+      // Calculate pagination metadata
+      const totalPages = count ? Math.ceil(count / limit) : 0;
+      const hasNextPage = page < totalPages;
+      const hasPreviousPage = page > 1;
+      
+      res.json({
+        success: true,
+        logs: logs || [],
+        pagination: {
+          page,
+          limit,
+          total: count || 0,
+          totalPages,
+          hasNextPage,
+          hasPreviousPage,
+        },
+        filters: {
+          userId: userId || null,
+          feedId: feedId || null,
+          triggerType: triggerType || null,
+        },
+      });
+    } catch (error) {
+      console.error('Admin get cleanup logs error:', error);
+      res.status(500).json({ error: 'Failed to get cleanup logs' });
     }
   });
 
