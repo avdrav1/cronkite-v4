@@ -1246,6 +1246,19 @@ export class SupabaseStorage implements IStorage {
       try {
         console.log(`🗑️  Processing batch ${batchNumber}/${totalBatches} (${batch.length} articles)`);
         
+        // Step 1: Remove articles from clusters first to avoid constraint violations
+        // This prevents the "clusters_article_count_non_negative" constraint error
+        const { error: clusterError } = await this.supabase
+          .from('articles')
+          .update({ cluster_id: null })
+          .in('id', batch);
+        
+        if (clusterError) {
+          console.warn(`⚠️  Warning: Could not remove articles from clusters:`, clusterError);
+          // Continue anyway - the delete might still work
+        }
+        
+        // Step 2: Delete the articles
         // Supabase/PostgreSQL will handle cascading deletes automatically
         // based on the foreign key constraints defined in the schema:
         // - user_articles: ON DELETE CASCADE
