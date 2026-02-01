@@ -303,8 +303,10 @@ const CLIENT_SECRET_PATTERNS = [
  * These are legitimate code patterns that look like secrets but aren't
  */
 const SAFE_PATTERNS = [
-  // React error URLs
+  // React error and documentation URLs
   /https:\/\/react\.dev\/errors\//gi,
+  /https:\/\/react\.dev\/link\//gi,
+  /https:\/\/reactjs\.org\//gi,
   // MDN documentation URLs
   /https:\/\/developer\.mozilla\.org\//gi,
   // GitHub discussion URLs

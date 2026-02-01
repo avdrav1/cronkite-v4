@@ -1020,23 +1020,54 @@ export class SupabaseStorage implements IStorage {
       embedding_status, embedding_generated_at, embedding_error, content_hash, created_at
     `;
     
-    let query = this.supabase
-      .from('articles')
-      .select(articleColumnsWithoutEmbedding)
-      .eq('feed_id', feedId)
-      .order('published_at', { ascending: false });
-    
+    // If a specific limit is requested, use it directly
     if (limit) {
-      query = query.limit(limit);
+      const { data, error } = await this.supabase
+        .from('articles')
+        .select(articleColumnsWithoutEmbedding)
+        .eq('feed_id', feedId)
+        .order('published_at', { ascending: false })
+        .limit(limit);
+      
+      if (error) {
+        throw new Error(`Failed to get articles: ${error.message}`);
+      }
+      
+      return (data || []) as Article[];
     }
     
-    const { data, error } = await query;
+    // No limit specified - fetch ALL articles using pagination
+    // Supabase has a default limit of 1000 rows, so we need to paginate
+    const PAGE_SIZE = 1000;
+    const allArticles: Article[] = [];
+    let offset = 0;
+    let hasMore = true;
     
-    if (error) {
-      throw new Error(`Failed to get articles: ${error.message}`);
+    while (hasMore) {
+      const { data, error } = await this.supabase
+        .from('articles')
+        .select(articleColumnsWithoutEmbedding)
+        .eq('feed_id', feedId)
+        .order('published_at', { ascending: false })
+        .range(offset, offset + PAGE_SIZE - 1);
+      
+      if (error) {
+        throw new Error(`Failed to get articles: ${error.message}`);
+      }
+      
+      const articles = (data || []) as Article[];
+      allArticles.push(...articles);
+      
+      // If we got fewer than PAGE_SIZE, we've reached the end
+      if (articles.length < PAGE_SIZE) {
+        hasMore = false;
+      } else {
+        offset += PAGE_SIZE;
+      }
     }
     
-    return (data || []) as Article[];
+    console.log(`📊 getArticlesByFeedId: Retrieved ${allArticles.length} total articles for feed ${feedId}`);
+    return allArticles;
   }
 
   /**
@@ -1053,56 +1084,68 @@ export class SupabaseStorage implements IStorage {
     try {
       // Requirements 6.1, 6.2, 6.5: Query for articles protected by ANY user, not just the specified user
       // An article is protected if ANY user has starred or read it
-      let query = this.supabase
-        .from('user_articles')
-        .select('article_id')
-        .or('is_starred.eq.true,is_read.eq.true');
-      // NOTE: Removed .eq('user_id', userId) to check ALL users
+      // Use pagination to handle large datasets (Supabase default limit is 1000)
+      const PAGE_SIZE = 1000;
+      const allProtectedIds: string[] = [];
+      let offset = 0;
+      let hasMore = true;
       
-      // If feedId is provided, we need to join with articles to filter by feed
-      if (feedId) {
-        // First get all protected article IDs from any user
-        const { data: protectedArticles, error } = await query;
+      while (hasMore) {
+        const { data: protectedArticles, error } = await this.supabase
+          .from('user_articles')
+          .select('article_id')
+          .or('is_starred.eq.true,is_read.eq.true')
+          .range(offset, offset + PAGE_SIZE - 1);
         
         if (error) {
           console.error('🛡️  Error fetching protected articles:', error);
-          return [];
+          return allProtectedIds; // Return what we have so far
         }
         
         if (!protectedArticles || protectedArticles.length === 0) {
-          return [];
+          hasMore = false;
+        } else {
+          allProtectedIds.push(...protectedArticles.map(a => a.article_id));
+          if (protectedArticles.length < PAGE_SIZE) {
+            hasMore = false;
+          } else {
+            offset += PAGE_SIZE;
+          }
         }
-        
-        const articleIds = protectedArticles.map(a => a.article_id);
-        
-        // Then filter by feed_id
-        const { data: feedArticles, error: feedError } = await this.supabase
-          .from('articles')
-          .select('id')
-          .eq('feed_id', feedId)
-          .in('id', articleIds);
-        
-        if (feedError) {
-          console.error('🛡️  Error filtering by feed:', feedError);
-          return [];
-        }
-        
-        const result = (feedArticles || []).map(a => a.id);
-        console.log(`🛡️  Found ${result.length} protected articles (by any user) in feed ${feedId}`);
-        return result;
       }
       
-      // No feed filter - return all protected articles from any user
-      const { data: protectedArticles, error } = await query;
+      // Deduplicate (same article can be protected by multiple users)
+      const uniqueProtectedIds = [...new Set(allProtectedIds)];
       
-      if (error) {
-        console.error('🛡️  Error fetching protected articles:', error);
-        return [];
+      // If feedId is provided, filter by feed
+      if (feedId && uniqueProtectedIds.length > 0) {
+        // Filter by feed_id - need to batch this too if there are many IDs
+        const BATCH_SIZE = 500; // Supabase IN clause limit
+        const feedArticleIds: string[] = [];
+        
+        for (let i = 0; i < uniqueProtectedIds.length; i += BATCH_SIZE) {
+          const batch = uniqueProtectedIds.slice(i, i + BATCH_SIZE);
+          
+          const { data: feedArticles, error: feedError } = await this.supabase
+            .from('articles')
+            .select('id')
+            .eq('feed_id', feedId)
+            .in('id', batch);
+          
+          if (feedError) {
+            console.error('🛡️  Error filtering by feed:', feedError);
+            continue;
+          }
+          
+          feedArticleIds.push(...(feedArticles || []).map(a => a.id));
+        }
+        
+        console.log(`🛡️  Found ${feedArticleIds.length} protected articles (by any user) in feed ${feedId}`);
+        return feedArticleIds;
       }
       
-      const result = (protectedArticles || []).map(a => a.article_id);
-      console.log(`🛡️  Found ${result.length} protected articles (by any user)`);
-      return result;
+      console.log(`🛡️  Found ${uniqueProtectedIds.length} protected articles (by any user)`);
+      return uniqueProtectedIds;
       
     } catch (error) {
       console.error('🛡️  Exception in getProtectedArticles:', error);
