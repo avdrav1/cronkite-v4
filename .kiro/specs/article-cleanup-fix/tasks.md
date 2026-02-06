@@ -31,7 +31,7 @@ This implementation plan converts the article cleanup fix design into discrete c
     - Export types for CleanupLogEntry
     - Run drizzle-kit generate to sync types
     - _Requirements: 8.2, 5.4_
-
+  
 - [ ] 2. Implement cleanup configuration
   - [x] 2.1 Add cleanup configuration to server/config.ts
     - Add defaultArticlesPerFeed, defaultUnreadAgeDays, min/max ranges

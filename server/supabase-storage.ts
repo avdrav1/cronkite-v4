@@ -1216,9 +1216,19 @@ export class SupabaseStorage implements IStorage {
    * Delete articles in batches
    * Requirements: 7.1, 7.2, 7.3 - Batch deletion with error handling
    * 
-   * This method deletes articles from the database in batches of 500 to avoid
+   * This method deletes articles from the database in batches to avoid
    * query timeouts. Cascading deletes will automatically remove related records
    * (user_articles, article_comments, etc.) as defined in the database schema.
+   * 
+   * IMPORTANT: There's a database trigger (maintain_cluster_article_count) that
+   * decrements cluster.article_count when articles are deleted or have their
+   * cluster_id changed. If the count goes negative, it violates the
+   * clusters_article_count_non_negative constraint.
+   * 
+   * To handle this safely:
+   * 1. First fix any clusters with incorrect article_count
+   * 2. Remove articles from clusters (set cluster_id = null)
+   * 3. Delete the articles
    * 
    * Each batch is processed independently - if one batch fails, the method
    * continues with remaining batches and returns the total count of successfully
@@ -1232,10 +1242,57 @@ export class SupabaseStorage implements IStorage {
       return 0;
     }
     
-    const BATCH_SIZE = 500;
+    // Use small batch size to avoid timeouts on Supabase free tier
+    const BATCH_SIZE = 50;
     let totalDeleted = 0;
     
     console.log(`🗑️  batchDeleteArticles: Deleting ${articleIds.length} articles in batches of ${BATCH_SIZE}`);
+    
+    // Step 0: Get the cluster IDs for articles we're about to delete
+    // so we can fix their counts before deletion
+    const { data: articlesWithClusters } = await this.supabase
+      .from('articles')
+      .select('id, cluster_id')
+      .in('id', articleIds)
+      .not('cluster_id', 'is', null);
+    
+    const affectedClusterIds = [...new Set(
+      (articlesWithClusters || [])
+        .map(a => a.cluster_id)
+        .filter((id): id is string => id !== null)
+    )];
+    
+    console.log(`🔧 Found ${affectedClusterIds.length} clusters affected by deletion`);
+    
+    // Step 1: Fix cluster article counts BEFORE we start deleting
+    // This prevents the constraint violation by ensuring counts are accurate
+    if (affectedClusterIds.length > 0) {
+      console.log(`🔧 Fixing article counts for ${affectedClusterIds.length} affected clusters...`);
+      
+      // Process clusters in small batches to avoid timeout
+      for (let i = 0; i < affectedClusterIds.length; i += 10) {
+        const clusterBatch = affectedClusterIds.slice(i, i + 10);
+        
+        for (const clusterId of clusterBatch) {
+          try {
+            // Count actual articles in this cluster
+            const { count: actualCount } = await this.supabase
+              .from('articles')
+              .select('id', { count: 'exact', head: true })
+              .eq('cluster_id', clusterId);
+            
+            // Update the cluster with the correct count
+            await this.supabase
+              .from('clusters')
+              .update({ article_count: actualCount ?? 0 })
+              .eq('id', clusterId);
+          } catch (err) {
+            console.warn(`⚠️  Could not fix count for cluster ${clusterId}:`, err);
+          }
+        }
+      }
+      console.log(`✅ Cluster counts fixed`);
+    }
     
     // Process deletions in batches
     for (let i = 0; i < articleIds.length; i += BATCH_SIZE) {
@@ -1246,8 +1303,9 @@ export class SupabaseStorage implements IStorage {
       try {
         console.log(`🗑️  Processing batch ${batchNumber}/${totalBatches} (${batch.length} articles)`);
         
-        // Step 1: Remove articles from clusters first to avoid constraint violations
-        // This prevents the "clusters_article_count_non_negative" constraint error
+        // Step 2: Remove articles from clusters first
+        // The trigger will decrement article_count, but since we fixed the counts
+        // above, this should be safe now
         const { error: clusterError } = await this.supabase
           .from('articles')
           .update({ cluster_id: null })
@@ -1255,15 +1313,45 @@ export class SupabaseStorage implements IStorage {
         
         if (clusterError) {
           console.warn(`⚠️  Warning: Could not remove articles from clusters:`, clusterError);
-          // Continue anyway - the delete might still work
+          // If this fails due to constraint, try one at a time
+          if (clusterError.code === '23514') {
+            console.log(`🔄 Retrying cluster removal one article at a time...`);
+            for (const articleId of batch) {
+              try {
+                // Get the cluster for this article
+                const { data: article } = await this.supabase
+                  .from('articles')
+                  .select('cluster_id')
+                  .eq('id', articleId)
+                  .single();
+                
+                if (article?.cluster_id) {
+                  // Fix this specific cluster's count first
+                  const { count } = await this.supabase
+                    .from('articles')
+                    .select('id', { count: 'exact', head: true })
+                    .eq('cluster_id', article.cluster_id);
+                  
+                  await this.supabase
+                    .from('clusters')
+                    .update({ article_count: Math.max(count ?? 0, 1) })
+                    .eq('id', article.cluster_id);
+                  
+                  // Now remove from cluster
+                  await this.supabase
+                    .from('articles')
+                    .update({ cluster_id: null })
+                    .eq('id', articleId);
+                }
+              } catch (e) {
+                console.warn(`⚠️  Could not remove article ${articleId} from cluster`);
+              }
+            }
+          }
         }
         
-        // Step 2: Delete the articles
+        // Step 3: Delete the articles
         // Supabase/PostgreSQL will handle cascading deletes automatically
-        // based on the foreign key constraints defined in the schema:
-        // - user_articles: ON DELETE CASCADE
-        // - article_comments: ON DELETE CASCADE
-        // - embedding_queue: ON DELETE CASCADE
         const { error, count } = await this.supabase
           .from('articles')
           .delete({ count: 'exact' })
@@ -1271,14 +1359,12 @@ export class SupabaseStorage implements IStorage {
         
         if (error) {
           console.error(`❌ Error deleting batch ${batchNumber}:`, error);
-          // Continue with next batch instead of throwing
-          // This ensures partial success is possible
           continue;
         }
         
-        const deletedCount = count ?? batch.length;
-        totalDeleted += deletedCount;
-        console.log(`✅ Batch ${batchNumber} complete: ${deletedCount} articles deleted`);
+        const batchDeleted = count ?? batch.length;
+        totalDeleted += batchDeleted;
+        console.log(`✅ Batch ${batchNumber} complete: ${batchDeleted} articles deleted`);
         
       } catch (error) {
         console.error(`❌ Exception in batch ${batchNumber}:`, error);
