@@ -330,26 +330,8 @@ export class ArticleCleanupService {
    * Clean up articles for a specific feed
    * Requirements: 3.1, 3.2, 3.4 - Main orchestration method for feed cleanup
    * 
-   * This is the primary cleanup method called after feed sync completes.
-   * It orchestrates the entire cleanup process:
-   * 
-   * 1. Get user's cleanup settings (or defaults)
-   * 2. Check if auto-cleanup is enabled
-   * 3. Identify protected articles (starred, read, commented)
-   * 4. Apply per-feed limit strategy
-   * 5. Apply age-based strategy
-   * 6. Combine deletion candidates (union of both strategies)
-   * 7. Execute batch deletion
-   * 8. Log cleanup operation
-   * 
-   * Error handling:
-   * - Errors are caught and logged
-   * - Cleanup failures don't block feed sync operations
-   * - Partial success is tracked (some articles deleted even if errors occur)
-   * 
-   * @param userId - ID of the user
-   * @param feedId - ID of the feed to clean up
-   * @returns Promise<CleanupResult> - Result with articles deleted, duration, and optional error
+   * Tries the fast server-side RPC first. Falls back to JS-based cleanup
+   * if the RPC function hasn't been deployed yet.
    */
   async cleanupFeedArticles(
     userId: string,
@@ -368,93 +350,75 @@ export class ArticleCleanupService {
       // Step 2: Check if auto-cleanup is enabled
       if (!settings.enableAutoCleanup) {
         console.log(`⏭️  Auto-cleanup disabled for user ${userId}, skipping`);
-        
         const durationMs = Date.now() - startTime;
-        
-        // Log the skipped cleanup
-        await this.logCleanup({
-          userId,
-          feedId,
-          triggerType: 'sync',
-          articlesDeleted: 0,
-          durationMs,
-        });
-        
+        await this.logCleanup({ userId, feedId, triggerType: 'sync', articlesDeleted: 0, durationMs });
         return { articlesDeleted: 0, durationMs };
       }
       
-      // Step 3: Get protected article IDs
-      // Requirement 6.5: Multi-user protection - articles protected by ANY user are excluded
-      // This ensures articles are not deleted while any user still values them
-      const protectedIds = await this.getProtectedArticleIds({ userId, feedId });
-      
-      console.log(`🛡️  Protected articles: ${protectedIds.size}`);
-      
-      // Step 4: Apply per-feed limit strategy
-      const limitDeleteIds = await this.getArticlesExceedingFeedLimit(
-        userId,
+      // Step 3: Try fast RPC-based cleanup first
+      const rpcResult = await this.storage.cleanupFeedArticlesViaRPC(
         feedId,
         settings.articlesPerFeed,
-        protectedIds
+        settings.unreadAgeDays
       );
       
+      if (rpcResult >= 0) {
+        // RPC succeeded
+        const durationMs = Date.now() - startTime;
+        console.log(`✅ RPC cleanup complete: ${rpcResult} articles deleted in ${durationMs}ms`);
+        await this.logCleanup({ userId, feedId, triggerType: 'sync', articlesDeleted: rpcResult, durationMs });
+        return { articlesDeleted: rpcResult, durationMs };
+      }
+      
+      // Step 4: RPC not available, fall back to JS-based cleanup
+      console.log(`⚠️  RPC not available, falling back to JS-based cleanup`);
+      return await this.cleanupFeedArticlesJS(userId, feedId, settings);
+      
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const durationMs = Date.now() - startTime;
+      console.error(`❌ Cleanup failed for user ${userId}, feed ${feedId}:`, error);
+      await this.logCleanup({ userId, feedId, triggerType: 'sync', articlesDeleted: 0, durationMs, error: errorMessage });
+      return { articlesDeleted: 0, durationMs, error: errorMessage };
+    }
+  }
+
+  /**
+   * JS-based fallback cleanup (slower, used when RPC is not available)
+   */
+  private async cleanupFeedArticlesJS(
+    userId: string,
+    feedId: string,
+    settings: CleanupSettings
+  ): Promise<CleanupResult> {
+    const startTime = Date.now();
+    
+    try {
+      const protectedIds = await this.getProtectedArticleIds({ userId, feedId });
+      console.log(`🛡️  Protected articles: ${protectedIds.size}`);
+      
+      const limitDeleteIds = await this.getArticlesExceedingFeedLimit(userId, feedId, settings.articlesPerFeed, protectedIds);
       console.log(`📊 Per-feed limit strategy: ${limitDeleteIds.length} articles to delete`);
       
-      // Step 5: Apply age-based strategy
-      const ageDeleteIds = await this.getArticlesExceedingAgeThreshold(
-        userId,
-        feedId,
-        settings.unreadAgeDays,
-        protectedIds
-      );
-      
+      const ageDeleteIds = await this.getArticlesExceedingAgeThreshold(userId, feedId, settings.unreadAgeDays, protectedIds);
       console.log(`📅 Age-based strategy: ${ageDeleteIds.length} articles to delete`);
       
-      // Step 6: Combine deletion candidates (union of both strategies)
-      // Using Set to automatically handle duplicates
       const deleteIds = new Set([...limitDeleteIds, ...ageDeleteIds]);
-      
       console.log(`🔀 Combined strategies: ${deleteIds.size} unique articles to delete`);
       
-      // Step 7: Execute batch deletion
       const articlesDeleted = await this.batchDeleteArticles(Array.from(deleteIds));
-      
       const durationMs = Date.now() - startTime;
       
-      console.log(`✅ Cleanup complete: ${articlesDeleted} articles deleted in ${durationMs}ms`);
-      
-      // Step 8: Log cleanup operation
-      await this.logCleanup({
-        userId,
-        feedId,
-        triggerType: 'sync',
-        articlesDeleted,
-        durationMs,
-      });
-      
+      console.log(`✅ JS cleanup complete: ${articlesDeleted} articles deleted in ${durationMs}ms`);
+      await this.logCleanup({ userId, feedId, triggerType: 'sync', articlesDeleted, durationMs });
       return { articlesDeleted, durationMs };
       
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       const durationMs = Date.now() - startTime;
-      
-      console.error(`❌ Cleanup failed for user ${userId}, feed ${feedId}:`, error);
-      
-      // Log the error
-      await this.logCleanup({
-        userId,
-        feedId,
-        triggerType: 'sync',
-        articlesDeleted: 0,
-        durationMs,
-        error: errorMessage,
-      });
-      
-      return {
-        articlesDeleted: 0,
-        durationMs,
-        error: errorMessage,
-      };
+      console.error(`❌ JS cleanup failed:`, error);
+      await this.logCleanup({ userId, feedId, triggerType: 'sync', articlesDeleted: 0, durationMs, error: errorMessage });
+      return { articlesDeleted: 0, durationMs, error: errorMessage };
     }
   }
 

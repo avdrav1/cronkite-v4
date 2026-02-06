@@ -132,6 +132,7 @@ export interface IStorage {
   getProtectedArticles(userId: string, feedId?: string): Promise<string[]>;
   getArticlesWithComments(feedId?: string): Promise<string[]>;
   batchDeleteArticles(articleIds: string[]): Promise<number>;
+  cleanupFeedArticlesViaRPC(feedId: string, maxArticles?: number, maxAgeDays?: number): Promise<number>;
   logCleanup(log: {
     userId: string;
     feedId?: string;
@@ -1012,6 +1013,11 @@ export class MemStorage implements IStorage {
     }
     
     return deleted;
+  }
+
+  async cleanupFeedArticlesViaRPC(_feedId: string, _maxArticles?: number, _maxAgeDays?: number): Promise<number> {
+    // MemStorage doesn't support RPC, signal fallback
+    return -1;
   }
 
   async logCleanup(log: {

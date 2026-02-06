@@ -1213,88 +1213,19 @@ export class SupabaseStorage implements IStorage {
   }
 
   /**
-   * Delete articles in batches
+   * Delete articles in batches (legacy method, kept for interface compatibility)
    * Requirements: 7.1, 7.2, 7.3 - Batch deletion with error handling
-   * 
-   * This method deletes articles from the database in batches to avoid
-   * query timeouts. Cascading deletes will automatically remove related records
-   * (user_articles, article_comments, etc.) as defined in the database schema.
-   * 
-   * IMPORTANT: There's a database trigger (maintain_cluster_article_count) that
-   * decrements cluster.article_count when articles are deleted or have their
-   * cluster_id changed. If the count goes negative, it violates the
-   * clusters_article_count_non_negative constraint.
-   * 
-   * To handle this safely:
-   * 1. First fix any clusters with incorrect article_count
-   * 2. Remove articles from clusters (set cluster_id = null)
-   * 3. Delete the articles
-   * 
-   * Each batch is processed independently - if one batch fails, the method
-   * continues with remaining batches and returns the total count of successfully
-   * deleted articles.
-   * 
-   * @param articleIds - Array of article IDs to delete
-   * @returns Promise<number> - Number of articles successfully deleted
    */
   async batchDeleteArticles(articleIds: string[]): Promise<number> {
     if (articleIds.length === 0) {
       return 0;
     }
     
-    // Use small batch size to avoid timeouts on Supabase free tier
     const BATCH_SIZE = 50;
     let totalDeleted = 0;
     
     console.log(`🗑️  batchDeleteArticles: Deleting ${articleIds.length} articles in batches of ${BATCH_SIZE}`);
     
-    // Step 0: Get the cluster IDs for articles we're about to delete
-    // so we can fix their counts before deletion
-    const { data: articlesWithClusters } = await this.supabase
-      .from('articles')
-      .select('id, cluster_id')
-      .in('id', articleIds)
-      .not('cluster_id', 'is', null);
-    
-    const affectedClusterIds = [...new Set(
-      (articlesWithClusters || [])
-        .map(a => a.cluster_id)
-        .filter((id): id is string => id !== null)
-    )];
-    
-    console.log(`🔧 Found ${affectedClusterIds.length} clusters affected by deletion`);
-    
-    // Step 1: Fix cluster article counts BEFORE we start deleting
-    // This prevents the constraint violation by ensuring counts are accurate
-    if (affectedClusterIds.length > 0) {
-      console.log(`🔧 Fixing article counts for ${affectedClusterIds.length} affected clusters...`);
-      
-      // Process clusters in small batches to avoid timeout
-      for (let i = 0; i < affectedClusterIds.length; i += 10) {
-        const clusterBatch = affectedClusterIds.slice(i, i + 10);
-        
-        for (const clusterId of clusterBatch) {
-          try {
-            // Count actual articles in this cluster
-            const { count: actualCount } = await this.supabase
-              .from('articles')
-              .select('id', { count: 'exact', head: true })
-              .eq('cluster_id', clusterId);
-            
-            // Update the cluster with the correct count
-            await this.supabase
-              .from('clusters')
-              .update({ article_count: actualCount ?? 0 })
-              .eq('id', clusterId);
-          } catch (err) {
-            console.warn(`⚠️  Could not fix count for cluster ${clusterId}:`, err);
-          }
-        }
-      }
-      console.log(`✅ Cluster counts fixed`);
-    }
-    
-    // Process deletions in batches
     for (let i = 0; i < articleIds.length; i += BATCH_SIZE) {
       const batch = articleIds.slice(i, i + BATCH_SIZE);
       const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
@@ -1303,55 +1234,13 @@ export class SupabaseStorage implements IStorage {
       try {
         console.log(`🗑️  Processing batch ${batchNumber}/${totalBatches} (${batch.length} articles)`);
         
-        // Step 2: Remove articles from clusters first
-        // The trigger will decrement article_count, but since we fixed the counts
-        // above, this should be safe now
-        const { error: clusterError } = await this.supabase
+        // Remove from clusters first
+        await this.supabase
           .from('articles')
           .update({ cluster_id: null })
           .in('id', batch);
         
-        if (clusterError) {
-          console.warn(`⚠️  Warning: Could not remove articles from clusters:`, clusterError);
-          // If this fails due to constraint, try one at a time
-          if (clusterError.code === '23514') {
-            console.log(`🔄 Retrying cluster removal one article at a time...`);
-            for (const articleId of batch) {
-              try {
-                // Get the cluster for this article
-                const { data: article } = await this.supabase
-                  .from('articles')
-                  .select('cluster_id')
-                  .eq('id', articleId)
-                  .single();
-                
-                if (article?.cluster_id) {
-                  // Fix this specific cluster's count first
-                  const { count } = await this.supabase
-                    .from('articles')
-                    .select('id', { count: 'exact', head: true })
-                    .eq('cluster_id', article.cluster_id);
-                  
-                  await this.supabase
-                    .from('clusters')
-                    .update({ article_count: Math.max(count ?? 0, 1) })
-                    .eq('id', article.cluster_id);
-                  
-                  // Now remove from cluster
-                  await this.supabase
-                    .from('articles')
-                    .update({ cluster_id: null })
-                    .eq('id', articleId);
-                }
-              } catch (e) {
-                console.warn(`⚠️  Could not remove article ${articleId} from cluster`);
-              }
-            }
-          }
-        }
-        
-        // Step 3: Delete the articles
-        // Supabase/PostgreSQL will handle cascading deletes automatically
+        // Delete the articles
         const { error, count } = await this.supabase
           .from('articles')
           .delete({ count: 'exact' })
@@ -1362,19 +1251,55 @@ export class SupabaseStorage implements IStorage {
           continue;
         }
         
-        const batchDeleted = count ?? batch.length;
-        totalDeleted += batchDeleted;
-        console.log(`✅ Batch ${batchNumber} complete: ${batchDeleted} articles deleted`);
-        
+        totalDeleted += count ?? batch.length;
+        console.log(`✅ Batch ${batchNumber} complete: ${count} articles deleted`);
       } catch (error) {
         console.error(`❌ Exception in batch ${batchNumber}:`, error);
-        // Continue with next batch
         continue;
       }
     }
     
     console.log(`🗑️  batchDeleteArticles complete: ${totalDeleted}/${articleIds.length} articles deleted`);
     return totalDeleted;
+  }
+
+  /**
+   * Clean up articles for a feed using a server-side database function.
+   * This is much faster than doing it in JS because it runs entirely in PostgreSQL.
+   * Requirements: 1.2, 2.2, 6.1, 7.1
+   * 
+   * @param feedId - Feed to clean up
+   * @param maxArticles - Max articles to keep per feed (default 100)
+   * @param maxAgeDays - Max age in days for unread articles (default 30)
+   * @returns Number of articles deleted
+   */
+  async cleanupFeedArticlesViaRPC(feedId: string, maxArticles: number = 100, maxAgeDays: number = 30): Promise<number> {
+    console.log(`🧹 RPC cleanup: feed=${feedId}, maxArticles=${maxArticles}, maxAgeDays=${maxAgeDays}`);
+    
+    try {
+      const { data, error } = await this.supabase.rpc('cleanup_feed_articles', {
+        p_feed_id: feedId,
+        p_max_articles: maxArticles,
+        p_max_age_days: maxAgeDays,
+      });
+      
+      if (error) {
+        console.error(`❌ RPC cleanup_feed_articles failed:`, error);
+        // If the RPC doesn't exist yet, return -1 to signal fallback
+        if (error.message?.includes('function') || error.code === '42883') {
+          console.warn(`⚠️  cleanup_feed_articles RPC not found, migration needs to be applied`);
+          return -1;
+        }
+        return 0;
+      }
+      
+      const deleted = typeof data === 'number' ? data : 0;
+      console.log(`✅ RPC cleanup complete: ${deleted} articles deleted from feed ${feedId}`);
+      return deleted;
+    } catch (err) {
+      console.error(`❌ Exception in RPC cleanup:`, err);
+      return -1;
+    }
   }
 
   /**
